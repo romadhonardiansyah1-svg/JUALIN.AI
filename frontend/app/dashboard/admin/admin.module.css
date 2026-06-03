@@ -1,0 +1,30 @@
+/* Admin Panel */
+.adminPage { animation: fadeIn 0.3s ease; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.header h2 { font-size: 1.3rem; }
+
+.statsGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+.statCard {
+  padding: 18px 22px; border-radius: var(--radius-md); box-shadow: var(--shadow);
+  border-top: 4px solid transparent; transition: transform 0.2s;
+}
+.statCard:hover { transform: translateY(-2px); }
+.statTop { display: flex; justify-content: space-between; align-items: center; }
+.statLabel { font-size: 0.82rem; color: var(--text-secondary); font-weight: 500; }
+.statValue { font-family: var(--font-heading); font-size: 1.6rem; font-weight: 700; color: var(--text); margin-top: 4px; }
+
+.tableHeader { padding: 20px 24px; border-bottom: 1px solid var(--border-light); }
+.tableHeader h3 { font-size: 1rem; font-weight: 600; }
+
+.systemGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; }
+.cardTitle { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
+
+.sysInfo { display: flex; flex-direction: column; gap: 12px; }
+.sysRow { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
+
+.tierDist { display: flex; flex-direction: column; gap: 14px; }
+.tierRow { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; }
+.tierRow span:first-child { width: 70px; }
+.tierBar { flex: 1; height: 10px; background: var(--border-light); border-radius: 4px; overflow: hidden; }
+
+@media (max-width: 768px) { .statsGrid { grid-template-columns: repeat(2, 1fr); } .systemGrid { grid-template-columns: 1fr; } }

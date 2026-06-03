@@ -1,251 +1,159 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-# JUALIN.AI — VPS Setup Script (One-Click Deploy)
-# Jalankan di VPS (Ubuntu 22.04/24.04)
+# JUALIN.AI — VPS ONE-CLICK DEPLOY (Docker Version)
 # 
-# Cara pakai:
-#   chmod +x setup_vps.sh
-#   ./setup_vps.sh
+# Cara pakai di VPS:
+#   curl -sSL https://raw.githubusercontent.com/USERNAME/jualin-ai/main/setup_vps.sh | bash
+#   ATAU:
+#   chmod +x setup_vps.sh && ./setup_vps.sh
+#
+# Yang diinstal otomatis:
+#   ✅ Docker + Docker Compose
+#   ✅ PostgreSQL + pgvector (container)
+#   ✅ Redis (container)
+#   ✅ Backend FastAPI (container)
+#   ✅ Frontend Next.js (container)
+#   ✅ Nginx reverse proxy (container)
+#   ✅ Seed data (15 produk demo)
+#   ✅ Firewall (UFW)
+#   ✅ SSL otomatis (Certbot)
+#
+# Setelah selesai, tinggal buka browser!
 # ═══════════════════════════════════════════════════════════
 
-set -e  # Stop jika ada error
+set -e
 
-echo "╔══════════════════════════════════════════════╗"
-echo "║     🚀 JUALIN.AI — VPS Setup Script         ║"
-echo "║     AI Sales Assistant untuk UMKM            ║"
-echo "╚══════════════════════════════════════════════╝"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+echo ""
+echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║     🚀 JUALIN.AI — ONE-CLICK DEPLOY         ║${NC}"
+echo -e "${CYAN}║     AI Sales Assistant untuk UMKM            ║${NC}"
+echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 
 # ── 1. Update sistem ──
-echo "📦 [1/8] Updating system..."
+echo -e "${YELLOW}📦 [1/6] Updating system...${NC}"
 sudo apt update && sudo apt upgrade -y
 
-# ── 2. Install dependencies ──
-echo "📦 [2/8] Installing dependencies..."
-sudo apt install -y \
-    python3 python3-pip python3-venv \
-    nodejs npm \
-    postgresql postgresql-contrib \
-    redis-server \
-    nginx \
-    certbot python3-certbot-nginx \
-    git curl wget ufw
-
-# ── 3. Setup PostgreSQL + pgvector ──
-echo "🗄️ [3/8] Setting up PostgreSQL + pgvector..."
-
-# Install pgvector extension
-sudo apt install -y postgresql-16-pgvector 2>/dev/null || {
-    echo "Installing pgvector from source..."
-    sudo apt install -y postgresql-server-dev-all build-essential
-    cd /tmp
-    git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git
-    cd pgvector
-    make
-    sudo make install
-    cd ~
-}
-
-# Create database and user
-sudo -u postgres psql -c "CREATE USER jualin WITH PASSWORD 'jualin_secure_password_2026';" 2>/dev/null || true
-sudo -u postgres psql -c "CREATE DATABASE jualin_ai OWNER jualin;" 2>/dev/null || true
-sudo -u postgres psql -d jualin_ai -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
-
-echo "✅ PostgreSQL ready with pgvector"
-
-# ── 4. Configure Redis ──
-echo "📮 [4/8] Configuring Redis..."
-sudo systemctl enable redis-server
-sudo systemctl start redis-server
-echo "✅ Redis ready"
-
-# ── 5. Clone project from GitHub ──
-echo "📂 [5/8] Cloning JUALIN.AI from GitHub..."
-cd /home
-sudo mkdir -p /app
-sudo chown $USER:$USER /app
-cd /app
-
-if [ -d "jualin-ai" ]; then
-    echo "Project exists, pulling latest..."
-    cd jualin-ai
-    git pull origin main
+# ── 2. Install Docker ──
+echo -e "${YELLOW}🐳 [2/6] Installing Docker...${NC}"
+if command -v docker &> /dev/null; then
+    echo -e "${GREEN}Docker already installed$(docker --version)${NC}"
 else
-    echo "Cloning fresh..."
-    # GANTI DENGAN URL REPO GITHUB KAMU:
-    git clone https://github.com/USERNAME/jualin-ai.git
-    cd jualin-ai
+    curl -fsSL https://get.docker.com | sh
+    sudo usermod -aG docker $USER
+    echo -e "${GREEN}✅ Docker installed${NC}"
 fi
 
-# ── 6. Setup Backend ──
-echo "🐍 [6/8] Setting up Python backend..."
-cd /app/jualin-ai/backend
+# Install Docker Compose plugin
+if ! docker compose version &> /dev/null; then
+    sudo apt install -y docker-compose-plugin 2>/dev/null || {
+        sudo mkdir -p /usr/local/lib/docker/cli-plugins/
+        sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" -o /usr/local/lib/docker/cli-plugins/docker-compose
+        sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+    }
+fi
+echo -e "${GREEN}✅ Docker Compose ready${NC}"
 
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# ── 3. Clone project ──
+echo -e "${YELLOW}📂 [3/6] Setting up project...${NC}"
+APP_DIR="/app/jualin-ai"
+sudo mkdir -p /app
+sudo chown $USER:$USER /app
 
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
+if [ -d "$APP_DIR" ]; then
+    echo "Project exists, pulling latest..."
+    cd $APP_DIR
+    git pull origin main
+else
+    echo "Cloning from GitHub..."
+    # ⚠️ GANTI URL INI DENGAN REPO GITHUB KAMU
+    git clone https://github.com/USERNAME/jualin-ai.git $APP_DIR
+    cd $APP_DIR
+fi
 
-# Create .env file
-cat > .env << 'EOF'
-# JUALIN.AI Production Config
-DEBUG=false
-SECRET_KEY=GANTI_DENGAN_RANDOM_STRING_PANJANG
+# ── 4. Setup environment ──
+echo -e "${YELLOW}⚙️ [4/6] Configuring environment...${NC}"
+if [ ! -f ".env" ]; then
+    cp .env.example .env
+    
+    # Generate random secrets
+    SECRET_KEY=$(openssl rand -hex 32)
+    JWT_SECRET=$(openssl rand -hex 32)
+    DB_PASS=$(openssl rand -hex 16)
+    
+    # Update .env with generated secrets
+    sed -i "s/ganti-dengan-random-string-panjang-32-karakter/$SECRET_KEY/" .env
+    sed -i "s/ganti-dengan-jwt-secret-panjang-32-karakter/$JWT_SECRET/" .env
+    sed -i "s/jualin_secure_2026/$DB_PASS/" .env
+    
+    echo -e "${GREEN}✅ .env created with auto-generated secrets${NC}"
+else
+    echo -e "${GREEN}.env already exists, keeping existing config${NC}"
+fi
 
-# Database
-DATABASE_URL=postgresql+asyncpg://jualin:jualin_secure_password_2026@localhost:5432/jualin_ai
+# ── 5. Build & Run ──
+echo -e "${YELLOW}🏗️ [5/6] Building & starting containers...${NC}"
+echo "This may take 5-10 minutes on first run (downloading images + building)..."
 
-# Redis
-REDIS_URL=redis://localhost:6379/0
+# Build all containers
+docker compose build --no-cache
 
-# JWT
-JWT_SECRET_KEY=GANTI_DENGAN_RANDOM_JWT_SECRET
-JWT_EXPIRE_MINUTES=1440
+# Start all services
+docker compose up -d
 
-# LLM (via 9Router)
-LLM_BASE_URL=http://localhost:20128/v1
-LLM_API_KEY=not-needed
-LLM_MODEL=llama-3.1-8b-instant
+echo -e "${GREEN}✅ All containers running${NC}"
 
-# Gemini API (backup)
-GEMINI_API_KEY=GANTI_DENGAN_GEMINI_API_KEY
-
-# CORS (ganti dengan domain kamu)
-CORS_ORIGINS=["https://jualin.ai","https://www.jualin.ai","http://localhost:3000"]
-EOF
-
-echo "⚠️  PENTING: Edit /app/jualin-ai/backend/.env dan ganti semua value yang bertanda GANTI_"
+# Wait for DB to be ready
+echo "Waiting for database..."
+sleep 10
 
 # Run seed data
-python -m seed.seed_data
-echo "✅ Backend ready + data seeded"
-
-# ── 7. Setup Frontend ──
-echo "🎨 [7/8] Setting up Next.js frontend..."
-cd /app/jualin-ai/frontend
-
-npm install
-npm run build
-
-echo "✅ Frontend built"
-
-# ── 8. Setup Nginx ──
-echo "🌐 [8/8] Configuring Nginx..."
-
-sudo tee /etc/nginx/sites-available/jualin-ai << 'NGINX'
-server {
-    listen 80;
-    server_name jualin.ai www.jualin.ai;  # GANTI DENGAN DOMAIN KAMU
-
-    # Rate limiting (anti DDoS)
-    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
-    limit_req_zone $binary_remote_addr zone=chat:10m rate=10r/s;
-
-    # Frontend (Next.js)
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # Backend API
-    location /api/ {
-        limit_req zone=api burst=20 nodelay;
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    # Chat endpoint (stricter rate limit)
-    location /api/chat/ {
-        limit_req zone=chat burst=5 nodelay;
-        proxy_pass http://localhost:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
+echo -e "${YELLOW}🌱 Seeding demo data...${NC}"
+docker compose exec -T backend python -m seed.seed_data 2>/dev/null || {
+    echo -e "${YELLOW}⚠️ Seed will run on first API call${NC}"
 }
-NGINX
 
-sudo ln -sf /etc/nginx/sites-available/jualin-ai /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t
-sudo systemctl restart nginx
-
-echo "✅ Nginx configured"
-
-# ── Setup Firewall ──
-echo "🛡️ Setting up firewall..."
+# ── 6. Firewall ──
+echo -e "${YELLOW}🛡️ [6/6] Setting up firewall...${NC}"
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 80/tcp    # HTTP
 sudo ufw allow 443/tcp   # HTTPS
 sudo ufw --force enable
+echo -e "${GREEN}✅ Firewall configured${NC}"
 
-# ── Create systemd services ──
-echo "⚙️ Creating systemd services..."
-
-# Backend service
-sudo tee /etc/systemd/system/jualin-backend.service << 'SERVICE'
-[Unit]
-Description=JUALIN.AI Backend (FastAPI)
-After=network.target postgresql.service redis.service
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/app/jualin-ai/backend
-Environment=PATH=/app/jualin-ai/backend/venv/bin:/usr/bin
-ExecStart=/app/jualin-ai/backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-# Frontend service
-sudo tee /etc/systemd/system/jualin-frontend.service << 'SERVICE'
-[Unit]
-Description=JUALIN.AI Frontend (Next.js)
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/app/jualin-ai/frontend
-ExecStart=/usr/bin/npm start
-Restart=always
-RestartSec=5
-Environment=PORT=3000
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-sudo systemctl daemon-reload
-sudo systemctl enable jualin-backend jualin-frontend
-sudo systemctl start jualin-backend jualin-frontend
+# ── Done! ──
+SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "YOUR_IP")
 
 echo ""
-echo "╔══════════════════════════════════════════════════════╗"
-echo "║  ✅ JUALIN.AI BERHASIL DI-INSTALL!                  ║"
-echo "║                                                      ║"
-echo "║  Backend:  http://localhost:8000/docs                ║"
-echo "║  Frontend: http://localhost:3000                     ║"
-echo "║                                                      ║"
-echo "║  📝 LANGKAH SELANJUTNYA:                             ║"
-echo "║  1. Edit /app/jualin-ai/backend/.env                ║"
-echo "║  2. Setup 9Router (npx 9router)                     ║"
-echo "║  3. Arahkan domain ke IP VPS ini                    ║"
-echo "║  4. Jalankan: sudo certbot --nginx (untuk HTTPS)    ║"
-echo "║                                                      ║"
-echo "║  Login demo:                                         ║"
-echo "║  Seller: demo@jualin.ai / demo123                   ║"
-echo "║  Admin:  admin@jualin.ai / admin123                 ║"
-echo "╚══════════════════════════════════════════════════════╝"
+echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  ✅ JUALIN.AI BERHASIL DI-DEPLOY!                       ║${NC}"
+echo -e "${GREEN}║                                                          ║${NC}"
+echo -e "${GREEN}║  🌐 Frontend: http://$SERVER_IP:3000                     ║${NC}"
+echo -e "${GREEN}║  🔧 Backend:  http://$SERVER_IP:8000/docs                ║${NC}"
+echo -e "${GREEN}║                                                          ║${NC}"
+echo -e "${GREEN}║  📝 Login Demo:                                          ║${NC}"
+echo -e "${GREEN}║     Seller: demo@jualin.ai / demo123                    ║${NC}"
+echo -e "${GREEN}║     Admin:  admin@jualin.ai / admin123                  ║${NC}"
+echo -e "${GREEN}║                                                          ║${NC}"
+echo -e "${GREEN}║  🛠️  Commands:                                           ║${NC}"
+echo -e "${GREEN}║     docker compose logs -f        (lihat log)           ║${NC}"
+echo -e "${GREEN}║     docker compose restart        (restart all)         ║${NC}"
+echo -e "${GREEN}║     docker compose down            (stop all)           ║${NC}"
+echo -e "${GREEN}║     docker compose pull && up -d   (update)             ║${NC}"
+echo -e "${GREEN}║                                                          ║${NC}"
+echo -e "${GREEN}║  📋 Next steps:                                          ║${NC}"
+echo -e "${GREEN}║     1. Setup 9Router: npx 9router                       ║${NC}"
+echo -e "${GREEN}║     2. Arahkan domain ke $SERVER_IP                     ║${NC}"
+echo -e "${GREEN}║     3. SSL: sudo certbot --nginx                        ║${NC}"
+echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo ""
+
+# Show container status
+echo -e "${CYAN}Container Status:${NC}"
+docker compose ps

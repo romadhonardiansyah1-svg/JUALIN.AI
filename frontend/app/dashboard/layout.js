@@ -11,6 +11,7 @@ const navItems = [
   { href: "/dashboard/chat", icon: "💬", label: "Chat" },
   { href: "/dashboard/analytics", icon: "📈", label: "Analitik" },
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
+  { href: "/dashboard/admin", icon: "🔑", label: "Admin", adminOnly: true },
 ];
 
 export default function DashboardLayout({ children }) {
@@ -50,7 +51,9 @@ export default function DashboardLayout({ children }) {
         </div>
 
         <nav className={styles.sidebarNav}>
-          {navItems.map((item) => {
+          {navItems
+            .filter((item) => !item.adminOnly || user?.role === "admin")
+            .map((item) => {
             const isActive =
               item.href === "/dashboard"
                 ? pathname === "/dashboard"

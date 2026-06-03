@@ -1,36 +1,104 @@
-version: "3.8"
+# ═══════════════════════════════════════════
+# JUALIN.AI — Docker Compose (Full Stack)
+# 
+# Development: docker compose up -d
+# Production:  docker compose --profile production up -d
+# ═══════════════════════════════════════════
+version: "3.9"
 
 services:
-  postgres:
+  # ── PostgreSQL + pgvector ──
+  db:
     image: pgvector/pgvector:pg16
-    container_name: jualin-postgres
+    container_name: jualin-db
+    restart: always
     environment:
+      POSTGRES_USER: jualin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-jualin_secure_2026}
       POSTGRES_DB: jualin_ai
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U jualin -d jualin_ai"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # ── Redis ──
   redis:
     image: redis:7-alpine
     container_name: jualin-redis
+    restart: always
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 5
 
+  # ── Backend (FastAPI) ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jualin-backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jualin:${DB_PASSWORD:-jualin_secure_2026}@db:5432/jualin_ai
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-jualin-secret-change-in-production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-jwt-secret-change-in-production}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:20128/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-not-needed}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      CORS_ORIGINS: '["http://localhost:3000","http://localhost","https://${DOMAIN:-localhost}"]'
+      DEBUG: ${DEBUG:-false}
+    ports:
+      - "8000:8000"
+    volumes:
+      - model_cache:/root/.cache
+
+  # ── Frontend (Next.js) ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: jualin-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
+  # ── Nginx (Production only) ──
+  nginx:
+    image: nginx:alpine
+    container_name: jualin-nginx
+    restart: always
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    profiles:
+      - production
+
 volumes:
-  postgres_data:
-  redis_data:
+  pgdata:
+  redisdata:
+  model_cache:
