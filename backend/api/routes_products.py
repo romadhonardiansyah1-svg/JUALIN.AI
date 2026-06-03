@@ -13,6 +13,7 @@ from models.database import get_db
 from models.user import User
 from models.product import Product
 from api.routes_auth import get_current_user
+from cache import cache_get, cache_set, cache_invalidate_products
 
 router = APIRouter()
 settings = get_settings()
@@ -91,7 +92,12 @@ async def list_products(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List semua produk seller (multi-tenant: hanya produk milik seller ini)."""
+    """List semua produk seller (cached 5 min, multi-tenant isolated)."""
+    cache_key = f"products:{current_user.id}:list"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+
     result = await db.execute(
         select(Product)
         .where(Product.seller_id == current_user.id)
@@ -99,7 +105,9 @@ async def list_products(
         .order_by(Product.created_at.desc())
     )
     products = result.scalars().all()
-    return [ProductResponse.model_validate(p) for p in products]
+    data = [ProductResponse.model_validate(p).model_dump() for p in products]
+    await cache_set(cache_key, data, ttl=300)
+    return data
 
 
 @router.post("/", response_model=ProductResponse, status_code=201)
@@ -153,6 +161,7 @@ async def create_product(
     db.add(product)
     await db.commit()
     await db.refresh(product)
+    await cache_invalidate_products(current_user.id)
     
     return ProductResponse.model_validate(product)
 
@@ -193,6 +202,7 @@ async def update_product(
     
     await db.commit()
     await db.refresh(product)
+    await cache_invalidate_products(current_user.id)
     
     return ProductResponse.model_validate(product)
 
@@ -216,6 +226,7 @@ async def delete_product(
     
     product.is_active = 0
     await db.commit()
+    await cache_invalidate_products(current_user.id)
     
     return {"message": "Produk berhasil dihapus", "id": product_id}
 
