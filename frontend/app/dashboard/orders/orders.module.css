@@ -1,0 +1,12 @@
+/* Orders Page */
+.ordersPage { animation: fadeIn 0.3s ease; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+.header h2 { font-size: 1.3rem; }
+.filters { display: flex; gap: 8px; }
+.filterBtn {
+  padding: 7px 16px; font-size: 0.8rem; font-weight: 500; border: 1px solid var(--border);
+  background: white; color: var(--text-secondary); border-radius: var(--radius-full);
+  cursor: pointer; transition: all 0.15s;
+}
+.filterBtn:hover { border-color: var(--primary); color: var(--primary); }
+.filterActive { background: var(--primary); color: white; border-color: var(--primary); }

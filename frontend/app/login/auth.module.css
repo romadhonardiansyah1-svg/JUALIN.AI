@@ -1,0 +1,82 @@
+/* Auth Pages (Login & Register) */
+.authPage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--bg) 0%, var(--primary-light) 50%, #DBEAFE 100%);
+  padding: 24px;
+}
+
+.authCard {
+  width: 100%;
+  max-width: 440px;
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 40px 36px;
+  animation: fadeIn 0.4s ease;
+}
+
+.authHeader {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  font-size: 1.5rem;
+  margin-bottom: 24px;
+}
+
+.logoText {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 1.3rem;
+  color: var(--text);
+}
+
+.authHeader h1 {
+  font-size: 1.5rem;
+  margin-top: 8px;
+}
+
+.authHeader p {
+  font-size: 0.9rem;
+  margin-top: 6px;
+}
+
+.authForm {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+.errorMsg {
+  background: #FEE2E2;
+  color: #DC2626;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.authFooter {
+  text-align: center;
+  margin-top: 24px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.authFooter a {
+  color: var(--primary);
+  font-weight: 600;
+}

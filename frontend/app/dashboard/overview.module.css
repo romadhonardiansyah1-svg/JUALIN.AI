@@ -1,0 +1,51 @@
+/* Dashboard Overview */
+.overview { animation: fadeIn 0.3s ease; }
+.loading { text-align: center; padding: 60px; color: var(--text-muted); }
+
+.alertBanner {
+  background: #FEF9C3;
+  border: 1px solid #FDE68A;
+  color: #92400E;
+  padding: 12px 20px;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+}
+
+.statsGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 24px; }
+
+.statTop { display: flex; justify-content: space-between; align-items: center; }
+.statIcon { font-size: 1.5rem; opacity: 0.7; }
+
+.mainGrid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+
+.cardTitle { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 20px; }
+
+/* Simple Bar Chart */
+.chartPlaceholder { padding: 8px 0; }
+.chartBars { display: flex; align-items: flex-end; gap: 16px; height: 200px; }
+.chartBarWrap { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.chartBar {
+  width: 100%; background: linear-gradient(180deg, var(--primary) 0%, #86EFAC 100%);
+  border-radius: 6px 6px 0 0; position: relative; min-height: 8px;
+  transition: height 0.5s ease;
+}
+.chartBarValue {
+  position: absolute; top: -22px; left: 50%; transform: translateX(-50%);
+  font-size: 0.75rem; font-weight: 600; color: var(--text);
+}
+.chartBarLabel { font-size: 0.75rem; color: var(--text-muted); margin-top: 8px; }
+
+/* Quota */
+.quotaInfo { margin-top: 4px; }
+.quotaNumbers { display: flex; align-items: baseline; gap: 4px; margin-bottom: 12px; }
+.quotaUsed { font-family: var(--font-heading); font-size: 2rem; font-weight: 800; color: var(--primary); }
+.quotaTotal { font-size: 1rem; color: var(--text-muted); }
+
+.quickStat { display: flex; align-items: baseline; gap: 8px; }
+.quickStatValue { font-family: var(--font-heading); font-size: 2rem; font-weight: 800; color: var(--text); }
+
+@media (max-width: 768px) {
+  .statsGrid { grid-template-columns: repeat(2, 1fr); }
+  .mainGrid { grid-template-columns: 1fr; }
+}

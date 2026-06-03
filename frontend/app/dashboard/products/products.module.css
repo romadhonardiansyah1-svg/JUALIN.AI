@@ -1,0 +1,52 @@
+/* Products Page */
+.productsPage { animation: fadeIn 0.3s ease; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }
+.title { font-size: 1.3rem; }
+.headerActions { display: flex; gap: 12px; align-items: center; }
+
+.productGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+
+.productCard {
+  background: white; border-radius: var(--radius-md); box-shadow: var(--shadow);
+  overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; border: 1px solid var(--border-light);
+}
+.productCard:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+.outOfStock { opacity: 0.6; }
+
+.productImage {
+  height: 160px; background: var(--bg); display: flex; align-items: center;
+  justify-content: center; border-bottom: 1px solid var(--border-light);
+}
+.productImageIcon { font-size: 3rem; opacity: 0.3; }
+
+.productInfo { padding: 16px; }
+.productName { font-size: 0.95rem; font-weight: 600; margin: 8px 0 6px; color: var(--text); }
+.productPrice { font-weight: 700; color: var(--primary); font-size: 1rem; }
+
+.stockRow { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.stockDot { width: 8px; height: 8px; border-radius: 50%; }
+.stockGreen { background: var(--success); }
+.stockRed { background: var(--danger); }
+
+.productActions {
+  padding: 8px 16px 16px; display: flex; gap: 8px; justify-content: flex-end;
+}
+
+/* Modal */
+.modalOverlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  animation: fadeIn 0.2s ease;
+}
+.modal {
+  background: white; border-radius: var(--radius-lg); padding: 32px;
+  width: 100%; max-width: 520px; box-shadow: var(--shadow-lg);
+}
+.modal h3 { font-size: 1.2rem; margin-bottom: 24px; }
+.modalForm { display: flex; flex-direction: column; gap: 16px; }
+.field { display: flex; flex-direction: column; }
+.fieldRow { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.modalActions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 8px; }
+
+@media (max-width: 1024px) { .productGrid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 768px) { .productGrid { grid-template-columns: repeat(2, 1fr); } .header { flex-direction: column; gap: 16px; } }
