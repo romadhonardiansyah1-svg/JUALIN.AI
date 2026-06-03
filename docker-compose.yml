@@ -79,6 +79,8 @@ services:
     restart: always
     depends_on:
       - backend
+    environment:
+      HOSTNAME: "0.0.0.0"
     ports:
       - "3000:3000"
 
