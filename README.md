@@ -11,7 +11,7 @@
 
 ```bash
 # 1. Clone
-git clone https://github.com/USERNAME/jualin-ai.git
+git clone https://github.com/romadhonardiansyah1-svg/JUALIN.AI.git
 cd jualin-ai
 
 # 2. Start databases
@@ -39,7 +39,7 @@ npm run dev
 
 ```bash
 # Di VPS (Ubuntu 22.04+):
-git clone https://github.com/USERNAME/jualin-ai.git
+git clone https://github.com/romadhonardiansyah1-svg/JUALIN.AI.git
 cd jualin-ai
 cp .env.example .env
 # Edit .env sesuai kebutuhan

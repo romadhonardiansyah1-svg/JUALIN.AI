@@ -3,7 +3,7 @@
 # JUALIN.AI — VPS Quick Install
 #
 # Cara pakai:
-#   curl -sSL https://raw.githubusercontent.com/USERNAME/jualin-ai/main/setup_vps.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/romadhonardiansyah1-svg/JUALIN.AI/main/setup_vps.sh | bash
 #
 # Atau kalau sudah clone:
 #   chmod +x setup_vps.sh && ./setup_vps.sh
@@ -31,7 +31,7 @@ if [ ! -d "$APP_DIR" ]; then
 
     echo "📂 Masukkan URL repo GitHub:"
     read -p "GitHub URL (atau tekan Enter untuk default): " REPO_URL
-    REPO_URL=${REPO_URL:-"https://github.com/USERNAME/jualin-ai.git"}
+    REPO_URL=${REPO_URL:-"https://github.com/romadhonardiansyah1-svg/JUALIN.AI.git"}
 
     git clone "$REPO_URL" $APP_DIR
 fi

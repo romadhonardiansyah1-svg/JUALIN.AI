@@ -7,7 +7,7 @@
 ssh root@IP_VPS_KAMU
 
 # 2. Clone & install
-git clone https://github.com/USERNAME/jualin-ai.git /app/jualin-ai
+git clone https://github.com/romadhonardiansyah1-svg/JUALIN.AI.git /app/jualin-ai
 chmod +x /app/jualin-ai/setup_vps.sh
 /app/jualin-ai/setup_vps.sh
 
