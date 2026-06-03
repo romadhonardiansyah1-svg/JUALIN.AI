@@ -134,6 +134,21 @@ async def send_message(
         await db.commit()
         await db.refresh(conversation)
     
+    # Customer Memory — cek apakah returning customer
+    memory_context = ""
+    try:
+        from services.customer_memory import get_or_create_memory, format_memory_context
+        memory, is_returning = await get_or_create_memory(
+            seller_id=seller.id,
+            session_id=session_id,
+            db=db,
+            phone=conversation.customer_phone or "",
+            name=conversation.customer_name or "Customer",
+        )
+        memory_context = format_memory_context(memory, is_returning)
+    except Exception as e:
+        print(f"⚠️ Memory lookup skipped: {e}")
+    
     # Save customer message
     customer_msg = Message(
         conversation_id=conversation.id,
@@ -152,7 +167,7 @@ async def send_message(
     )
     history = list(reversed(history_result.scalars().all()))
     
-    # Generate AI response
+    # Generate AI response (with memory context injected)
     try:
         from ai.agent import get_ai_response
         ai_response_text = await get_ai_response(
@@ -161,6 +176,7 @@ async def send_message(
             conversation_history=history,
             seller_style=seller.ai_style,
             db=db,
+            memory_context=memory_context,
         )
     except Exception as e:
         print(f"❌ AI Error: {e}")

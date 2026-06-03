@@ -128,12 +128,13 @@ async def get_ai_response(
     conversation_history: list,
     seller_style: str,
     db: AsyncSession,
+    memory_context: str = "",
 ) -> str:
     """
     Main AI agent function:
     1. Get catalog from DB (real-time)
     2. Search relevant products (semantic)
-    3. Build context with guardrails
+    3. Build context with guardrails + customer memory
     4. Call LLM
     5. Apply post-processing guardrails
     """
@@ -154,12 +155,16 @@ async def get_ai_response(
             if p.get("deskripsi"):
                 relevant_text += f"  Detail: {p['deskripsi'][:150]}\n"
     
-    # 3. Build system prompt with catalog + guardrails
+    # 3. Build system prompt with catalog + guardrails + memory
     system_prompt = get_system_prompt(
         seller_style=seller_style,
         catalog=catalog_text,
         relevant_products=relevant_text,
     )
+    
+    # Inject customer memory (if returning customer)
+    if memory_context:
+        system_prompt += "\n" + memory_context
     
     # 4. Build messages for LLM
     messages = [{"role": "system", "content": system_prompt}]
