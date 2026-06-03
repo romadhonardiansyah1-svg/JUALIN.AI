@@ -3,7 +3,7 @@
  * Centralized fetch wrapper with auth header injection
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function fetchAPI(endpoint, options = {}) {
   const token =
