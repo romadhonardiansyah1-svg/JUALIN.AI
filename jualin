@@ -1,0 +1,507 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════
+# JUALIN CLI — Master Command untuk JUALIN.AI
+#
+# Install: sudo cp jualin /usr/local/bin/ && sudo chmod +x /usr/local/bin/jualin
+# Usage:   jualin <command>
+# ═══════════════════════════════════════════════════════════
+
+APP_DIR="/app/jualin-ai"
+ROUTER_DIR="/app/9router"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+banner() {
+    echo ""
+    echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  🤖 JUALIN.AI CLI — v1.0.0          ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+# ══════════════════════════════════════
+# SETUP — Full installation
+# ══════════════════════════════════════
+cmd_setup() {
+    banner
+    echo -e "${BOLD}🚀 Full System Setup${NC}"
+    echo "=================================="
+    echo ""
+
+    # Step 1: System update
+    echo -e "${YELLOW}[1/7] Updating system...${NC}"
+    sudo apt update && sudo apt upgrade -y
+    echo -e "${GREEN}✅ System updated${NC}"
+
+    # Step 2: Install Docker
+    echo -e "${YELLOW}[2/7] Installing Docker...${NC}"
+    if command -v docker &> /dev/null; then
+        echo -e "${GREEN}Docker already installed: $(docker --version)${NC}"
+    else
+        curl -fsSL https://get.docker.com | sh
+        sudo usermod -aG docker $USER
+        echo -e "${GREEN}✅ Docker installed${NC}"
+    fi
+
+    # Docker Compose
+    if ! docker compose version &> /dev/null; then
+        sudo apt install -y docker-compose-plugin 2>/dev/null || {
+            sudo mkdir -p /usr/local/lib/docker/cli-plugins/
+            sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+            sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+        }
+    fi
+    echo -e "${GREEN}✅ Docker Compose ready${NC}"
+
+    # Step 3: Install Node.js (untuk 9Router)
+    echo -e "${YELLOW}[3/7] Installing Node.js...${NC}"
+    if command -v node &> /dev/null; then
+        echo -e "${GREEN}Node.js already installed: $(node --version)${NC}"
+    else
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+        sudo apt install -y nodejs
+        echo -e "${GREEN}✅ Node.js $(node --version) installed${NC}"
+    fi
+
+    # Step 4: Clone / update project
+    echo -e "${YELLOW}[4/7] Setting up project...${NC}"
+    sudo mkdir -p /app
+    sudo chown $USER:$USER /app
+
+    if [ -d "$APP_DIR" ]; then
+        echo "Project exists, pulling latest..."
+        cd $APP_DIR
+        git pull origin main
+    else
+        echo -e "${YELLOW}⚠️  Masukkan URL repo GitHub kamu:${NC}"
+        read -p "GitHub URL: " REPO_URL
+        if [ -z "$REPO_URL" ]; then
+            REPO_URL="https://github.com/USERNAME/jualin-ai.git"
+        fi
+        git clone "$REPO_URL" $APP_DIR
+        cd $APP_DIR
+    fi
+
+    # Step 5: Setup environment
+    echo -e "${YELLOW}[5/7] Configuring environment...${NC}"
+    if [ ! -f "$APP_DIR/.env" ]; then
+        cp $APP_DIR/.env.example $APP_DIR/.env
+
+        SECRET_KEY=$(openssl rand -hex 32)
+        JWT_SECRET=$(openssl rand -hex 32)
+        DB_PASS=$(openssl rand -hex 16)
+
+        sed -i "s/ganti-dengan-random-string-panjang-32-karakter/$SECRET_KEY/" $APP_DIR/.env
+        sed -i "s/ganti-dengan-jwt-secret-panjang-32-karakter/$JWT_SECRET/" $APP_DIR/.env
+        sed -i "s/jualin_secure_2026/$DB_PASS/" $APP_DIR/.env
+
+        echo -e "${GREEN}✅ .env created with auto-generated secrets${NC}"
+    else
+        echo -e "${GREEN}.env already exists${NC}"
+    fi
+
+    # Step 6: Build & Start Docker
+    echo -e "${YELLOW}[6/7] Building & starting containers...${NC}"
+    cd $APP_DIR
+    docker compose build
+    docker compose up -d
+
+    # Wait for DB
+    echo "Waiting for database to be ready..."
+    sleep 15
+
+    # Seed data
+    echo -e "${YELLOW}Seeding demo data...${NC}"
+    docker compose exec -T backend python -m seed.seed_data 2>/dev/null || {
+        echo -e "${YELLOW}⚠️ Seed will run on first startup${NC}"
+    }
+    echo -e "${GREEN}✅ All containers running${NC}"
+
+    # Step 7: Setup 9Router
+    echo -e "${YELLOW}[7/7] Setting up 9Router...${NC}"
+    cmd_9router_setup
+
+    # Firewall
+    echo -e "${YELLOW}Setting up firewall...${NC}"
+    sudo ufw allow 22/tcp
+    sudo ufw allow 80/tcp
+    sudo ufw allow 443/tcp
+    sudo ufw --force enable
+
+    # Install jualin CLI globally
+    sudo cp "$APP_DIR/jualin" /usr/local/bin/jualin 2>/dev/null || true
+    sudo chmod +x /usr/local/bin/jualin 2>/dev/null || true
+
+    # Final
+    SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "YOUR_IP")
+    echo ""
+    echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║  ✅ JUALIN.AI BERHASIL DI-DEPLOY!                   ║${NC}"
+    echo -e "${GREEN}║                                                      ║${NC}"
+    echo -e "${GREEN}║  🌐 Website:  http://$SERVER_IP:3000                 ║${NC}"
+    echo -e "${GREEN}║  🔧 API:     http://$SERVER_IP:8000/docs             ║${NC}"
+    echo -e "${GREEN}║                                                      ║${NC}"
+    echo -e "${GREEN}║  Login Demo:                                         ║${NC}"
+    echo -e "${GREEN}║    Seller: demo@jualin.ai / demo123                  ║${NC}"
+    echo -e "${GREEN}║    Admin:  admin@jualin.ai / admin123                ║${NC}"
+    echo -e "${GREEN}║                                                      ║${NC}"
+    echo -e "${GREEN}║  Commands: jualin status | logs | stop | restart     ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+# ══════════════════════════════════════
+# 9ROUTER — Setup LLM Gateway
+# ══════════════════════════════════════
+cmd_9router_setup() {
+    echo -e "${BOLD}🔀 Setting up 9Router (LLM Gateway)${NC}"
+    echo ""
+
+    mkdir -p $ROUTER_DIR
+    cd $ROUTER_DIR
+
+    # Install 9router
+    if [ ! -f "package.json" ]; then
+        npm init -y > /dev/null 2>&1
+    fi
+    npm install 9router@latest 2>/dev/null || npm install ninerouter@latest 2>/dev/null || {
+        echo -e "${YELLOW}⚠️ 9Router npm package not found, using npx mode${NC}"
+    }
+
+    # Create 9Router config
+    cat > $ROUTER_DIR/config.json << 'ROUTERCONFIG'
+{
+  "port": 20128,
+  "providers": [
+    {
+      "name": "gemini-free",
+      "type": "google",
+      "apiKey": "GEMINI_API_KEY_HERE",
+      "models": ["gemini-2.0-flash"],
+      "priority": 1,
+      "rateLimit": { "rpm": 15, "rpd": 1500 }
+    },
+    {
+      "name": "groq-1",
+      "type": "groq",
+      "apiKey": "GROQ_API_KEY_1_HERE",
+      "models": ["llama-3.1-8b-instant"],
+      "priority": 2,
+      "rateLimit": { "rpm": 30, "rpd": 14400 }
+    },
+    {
+      "name": "groq-2",
+      "type": "groq",
+      "apiKey": "GROQ_API_KEY_2_HERE",
+      "models": ["llama-3.1-8b-instant"],
+      "priority": 3,
+      "rateLimit": { "rpm": 30, "rpd": 14400 }
+    }
+  ],
+  "routing": "round-robin-with-fallback",
+  "retries": 3,
+  "timeout": 30000
+}
+ROUTERCONFIG
+
+    # Ask for API keys
+    echo ""
+    echo -e "${YELLOW}📝 Masukkan API Keys (tekan Enter untuk skip/nanti):${NC}"
+    echo ""
+
+    read -p "   Gemini API Key: " GEMINI_KEY
+    if [ ! -z "$GEMINI_KEY" ]; then
+        sed -i "s/GEMINI_API_KEY_HERE/$GEMINI_KEY/" $ROUTER_DIR/config.json
+        # Also update main .env
+        sed -i "s/GEMINI_API_KEY=.*/GEMINI_API_KEY=$GEMINI_KEY/" $APP_DIR/.env 2>/dev/null
+        echo -e "${GREEN}   ✅ Gemini key saved${NC}"
+    fi
+
+    read -p "   Groq API Key #1: " GROQ_KEY1
+    if [ ! -z "$GROQ_KEY1" ]; then
+        sed -i "s/GROQ_API_KEY_1_HERE/$GROQ_KEY1/" $ROUTER_DIR/config.json
+        echo -e "${GREEN}   ✅ Groq key #1 saved${NC}"
+    fi
+
+    read -p "   Groq API Key #2 (opsional): " GROQ_KEY2
+    if [ ! -z "$GROQ_KEY2" ]; then
+        sed -i "s/GROQ_API_KEY_2_HERE/$GROQ_KEY2/" $ROUTER_DIR/config.json
+        echo -e "${GREEN}   ✅ Groq key #2 saved${NC}"
+    fi
+
+    # Create systemd service for 9Router
+    sudo tee /etc/systemd/system/jualin-9router.service > /dev/null << SERVICE
+[Unit]
+Description=JUALIN.AI 9Router (LLM Gateway)
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$ROUTER_DIR
+ExecStart=/usr/bin/npx 9router --config $ROUTER_DIR/config.json
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable jualin-9router
+    sudo systemctl start jualin-9router 2>/dev/null || true
+
+    # Update backend to point to 9Router
+    if [ -f "$APP_DIR/.env" ]; then
+        sed -i "s|LLM_BASE_URL=.*|LLM_BASE_URL=http://localhost:20128/v1|" $APP_DIR/.env
+    fi
+
+    echo -e "${GREEN}✅ 9Router configured on port 20128${NC}"
+    echo -e "   Config: $ROUTER_DIR/config.json"
+    echo -e "   Edit keys: ${CYAN}jualin 9router${NC}"
+    echo ""
+}
+
+# ══════════════════════════════════════
+# START / STOP / RESTART
+# ══════════════════════════════════════
+cmd_start() {
+    banner
+    echo -e "${YELLOW}▶️  Starting all services...${NC}"
+    cd $APP_DIR
+    docker compose up -d
+    sudo systemctl start jualin-9router 2>/dev/null || true
+    echo -e "${GREEN}✅ All services started${NC}"
+    cmd_status
+}
+
+cmd_stop() {
+    banner
+    echo -e "${YELLOW}⏹️  Stopping all services...${NC}"
+    cd $APP_DIR
+    docker compose down
+    sudo systemctl stop jualin-9router 2>/dev/null || true
+    echo -e "${GREEN}✅ All services stopped${NC}"
+}
+
+cmd_restart() {
+    banner
+    echo -e "${YELLOW}🔄 Restarting all services...${NC}"
+    cd $APP_DIR
+    docker compose restart
+    sudo systemctl restart jualin-9router 2>/dev/null || true
+    echo -e "${GREEN}✅ All services restarted${NC}"
+    cmd_status
+}
+
+# ══════════════════════════════════════
+# STATUS
+# ══════════════════════════════════════
+cmd_status() {
+    banner
+    echo -e "${BOLD}📊 Service Status${NC}"
+    echo "=================================="
+
+    cd $APP_DIR 2>/dev/null
+
+    # Docker containers
+    echo ""
+    echo -e "${CYAN}Docker Containers:${NC}"
+    docker compose ps 2>/dev/null || echo "Docker not running"
+
+    # 9Router
+    echo ""
+    echo -e "${CYAN}9Router:${NC}"
+    if systemctl is-active --quiet jualin-9router 2>/dev/null; then
+        echo -e "  Status: ${GREEN}● Running${NC} (port 20128)"
+    else
+        echo -e "  Status: ${RED}● Stopped${NC}"
+    fi
+
+    # Health check
+    echo ""
+    echo -e "${CYAN}Health Check:${NC}"
+    BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null)
+    FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 2>/dev/null)
+    ROUTER=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:20128/health 2>/dev/null)
+
+    [ "$BACKEND" = "200" ] && echo -e "  Backend:  ${GREEN}✅ OK${NC}" || echo -e "  Backend:  ${RED}❌ Down${NC}"
+    [ "$FRONTEND" = "200" ] && echo -e "  Frontend: ${GREEN}✅ OK${NC}" || echo -e "  Frontend: ${RED}❌ Down${NC}"
+    [ "$ROUTER" = "200" ] && echo -e "  9Router:  ${GREEN}✅ OK${NC}" || echo -e "  9Router:  ${YELLOW}⚠️ Not reachable${NC}"
+
+    # Disk & Memory
+    echo ""
+    echo -e "${CYAN}Resources:${NC}"
+    echo "  Disk:   $(df -h / | awk 'NR==2{print $3"/"$2" ("$5")"}')"
+    echo "  Memory: $(free -h | awk 'NR==2{print $3"/"$2" ("$3/$2*100"%)"}')" 2>/dev/null || true
+    echo ""
+}
+
+# ══════════════════════════════════════
+# LOGS
+# ══════════════════════════════════════
+cmd_logs() {
+    banner
+    SERVICE=${2:-""}
+
+    if [ -z "$SERVICE" ]; then
+        echo -e "${YELLOW}Following all logs (Ctrl+C to stop)...${NC}"
+        cd $APP_DIR
+        docker compose logs -f --tail=50
+    else
+        echo -e "${YELLOW}Following $SERVICE logs...${NC}"
+        cd $APP_DIR
+        docker compose logs -f --tail=100 "$SERVICE"
+    fi
+}
+
+# ══════════════════════════════════════
+# UPDATE
+# ══════════════════════════════════════
+cmd_update() {
+    banner
+    echo -e "${YELLOW}📥 Updating JUALIN.AI...${NC}"
+    cd $APP_DIR
+    git pull origin main
+    docker compose build
+    docker compose up -d
+    echo -e "${GREEN}✅ Updated & restarted${NC}"
+    cmd_status
+}
+
+# ══════════════════════════════════════
+# SEED
+# ══════════════════════════════════════
+cmd_seed() {
+    banner
+    echo -e "${YELLOW}🌱 Seeding demo data...${NC}"
+    cd $APP_DIR
+    docker compose exec backend python -m seed.seed_data
+    echo -e "${GREEN}✅ Demo data seeded (15 produk + demo accounts)${NC}"
+}
+
+# ══════════════════════════════════════
+# 9ROUTER management
+# ══════════════════════════════════════
+cmd_9router() {
+    ACTION=${2:-"status"}
+
+    case "$ACTION" in
+        setup)
+            cmd_9router_setup
+            ;;
+        start)
+            sudo systemctl start jualin-9router
+            echo -e "${GREEN}✅ 9Router started${NC}"
+            ;;
+        stop)
+            sudo systemctl stop jualin-9router
+            echo -e "${GREEN}✅ 9Router stopped${NC}"
+            ;;
+        restart)
+            sudo systemctl restart jualin-9router
+            echo -e "${GREEN}✅ 9Router restarted${NC}"
+            ;;
+        logs)
+            sudo journalctl -u jualin-9router -f --no-pager
+            ;;
+        config)
+            echo -e "${CYAN}9Router config:${NC}"
+            cat $ROUTER_DIR/config.json 2>/dev/null || echo "Config not found. Run: jualin 9router setup"
+            ;;
+        edit)
+            nano $ROUTER_DIR/config.json 2>/dev/null || vi $ROUTER_DIR/config.json
+            echo -e "${YELLOW}Restarting 9Router...${NC}"
+            sudo systemctl restart jualin-9router
+            echo -e "${GREEN}✅ Config saved & 9Router restarted${NC}"
+            ;;
+        status|*)
+            if systemctl is-active --quiet jualin-9router 2>/dev/null; then
+                echo -e "9Router: ${GREEN}● Running${NC} (port 20128)"
+            else
+                echo -e "9Router: ${RED}● Stopped${NC}"
+                echo "Run: jualin 9router start"
+            fi
+            ;;
+    esac
+}
+
+# ══════════════════════════════════════
+# SSL — Setup HTTPS
+# ══════════════════════════════════════
+cmd_ssl() {
+    banner
+    echo -e "${BOLD}🔒 SSL Certificate Setup${NC}"
+    echo ""
+
+    read -p "Masukkan domain (contoh: jualin.ai): " DOMAIN
+    read -p "Masukkan email untuk Let's Encrypt: " EMAIL
+
+    if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
+        echo -e "${RED}Domain dan email wajib diisi!${NC}"
+        return 1
+    fi
+
+    sudo apt install -y certbot
+    sudo certbot certonly --standalone -d "$DOMAIN" -d "www.$DOMAIN" --email "$EMAIL" --agree-tos --no-eff-email
+
+    # Update .env with domain
+    sed -i "s/DOMAIN=.*/DOMAIN=$DOMAIN/" $APP_DIR/.env
+
+    echo -e "${GREEN}✅ SSL certificate installed for $DOMAIN${NC}"
+    echo "Restart services: jualin restart"
+}
+
+# ══════════════════════════════════════
+# HELP
+# ══════════════════════════════════════
+cmd_help() {
+    banner
+    echo -e "${BOLD}Available Commands:${NC}"
+    echo ""
+    echo -e "  ${CYAN}jualin setup${NC}          Full installation (Docker + project + 9Router)"
+    echo -e "  ${CYAN}jualin start${NC}          Start all services"
+    echo -e "  ${CYAN}jualin stop${NC}           Stop all services"
+    echo -e "  ${CYAN}jualin restart${NC}        Restart all services"
+    echo -e "  ${CYAN}jualin status${NC}         Show service status & health"
+    echo -e "  ${CYAN}jualin logs${NC}           Follow all logs"
+    echo -e "  ${CYAN}jualin logs backend${NC}   Follow backend logs only"
+    echo -e "  ${CYAN}jualin update${NC}         Pull latest code & rebuild"
+    echo -e "  ${CYAN}jualin seed${NC}           Seed demo data"
+    echo -e "  ${CYAN}jualin ssl${NC}            Setup HTTPS certificate"
+    echo ""
+    echo -e "${BOLD}9Router (LLM Gateway):${NC}"
+    echo ""
+    echo -e "  ${CYAN}jualin 9router setup${NC}    Setup 9Router + enter API keys"
+    echo -e "  ${CYAN}jualin 9router start${NC}    Start 9Router"
+    echo -e "  ${CYAN}jualin 9router stop${NC}     Stop 9Router"
+    echo -e "  ${CYAN}jualin 9router restart${NC}  Restart 9Router"
+    echo -e "  ${CYAN}jualin 9router logs${NC}     View 9Router logs"
+    echo -e "  ${CYAN}jualin 9router config${NC}   Show config"
+    echo -e "  ${CYAN}jualin 9router edit${NC}     Edit config & restart"
+    echo ""
+}
+
+# ══════════════════════════════════════
+# MAIN — Route commands
+# ══════════════════════════════════════
+case "${1:-help}" in
+    setup)      cmd_setup ;;
+    start)      cmd_start ;;
+    stop)       cmd_stop ;;
+    restart)    cmd_restart ;;
+    status)     cmd_status ;;
+    logs)       cmd_logs "$@" ;;
+    update)     cmd_update ;;
+    seed)       cmd_seed ;;
+    9router)    cmd_9router "$@" ;;
+    ssl)        cmd_ssl ;;
+    help|--help|-h|*)  cmd_help ;;
+esac
