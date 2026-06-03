@@ -3,10 +3,13 @@ JUALIN.AI — Orders API Routes
 List, detail, update status for seller's orders
 """
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional
+import csv
+import io
 
 from models.database import get_db
 from models.user import User
@@ -122,3 +125,79 @@ async def update_order_status(
     await db.refresh(order)
     
     return {"message": "Order diupdate", "status": order.status.value}
+
+
+@router.get("/export/csv")
+async def export_orders_csv(
+    status: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export all orders as CSV file for download."""
+    query = select(Order).where(Order.seller_id == current_user.id)
+
+    if status:
+        query = query.where(Order.status == status)
+
+    query = query.order_by(Order.created_at.desc())
+
+    result = await db.execute(query)
+    orders = result.scalars().all()
+
+    # Build CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header row
+    writer.writerow([
+        "Order ID", "Tanggal", "Customer", "No HP", "Alamat",
+        "Produk", "Qty", "Harga Satuan", "Total Item",
+        "Total Order", "Status", "Follow-up", "Catatan",
+    ])
+
+    # Data rows — satu baris per item produk
+    for order in orders:
+        items = order.items if isinstance(order.items, list) else []
+        if not items:
+            # Order tanpa item detail
+            writer.writerow([
+                f"#{order.id}",
+                order.created_at.strftime("%Y-%m-%d %H:%M") if order.created_at else "",
+                order.customer_name or "",
+                order.customer_phone or "",
+                order.customer_address or "",
+                "-", "-", "-", "-",
+                f"Rp {order.total:,.0f}" if order.total else "Rp 0",
+                order.status.value if hasattr(order.status, 'value') else str(order.status),
+                order.followup_count or 0,
+                order.notes or "",
+            ])
+        else:
+            for i, item in enumerate(items):
+                qty = item.get("qty", 1)
+                harga = item.get("harga", 0)
+                writer.writerow([
+                    f"#{order.id}" if i == 0 else "",  # Order ID hanya di baris pertama
+                    order.created_at.strftime("%Y-%m-%d %H:%M") if order.created_at and i == 0 else "",
+                    order.customer_name if i == 0 else "",
+                    order.customer_phone if i == 0 else "",
+                    order.customer_address if i == 0 else "",
+                    item.get("nama", ""),
+                    qty,
+                    f"Rp {harga:,.0f}",
+                    f"Rp {harga * qty:,.0f}",
+                    f"Rp {order.total:,.0f}" if i == 0 else "",
+                    order.status.value if hasattr(order.status, 'value') and i == 0 else ("" if i > 0 else str(order.status)),
+                    order.followup_count if i == 0 else "",
+                    order.notes if i == 0 else "",
+                ])
+
+    # Return as downloadable CSV
+    output.seek(0)
+    filename = f"jualin_orders_{current_user.slug}.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

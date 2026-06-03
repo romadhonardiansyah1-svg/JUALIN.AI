@@ -43,6 +43,25 @@ export default function OrdersPage() {
     }
   };
 
+  const handleExportCSV = async () => {
+    try {
+      const token = localStorage.getItem("jualin_token");
+      const url = `/api/orders/export/csv${filter ? `?status=${filter}` : ""}`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Gagal export");
+      const blob = await res.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `jualin_orders.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (e) {
+      alert("Export gagal: " + e.message);
+    }
+  };
+
   return (
     <div className={styles.ordersPage}>
       <div className={styles.header}>
@@ -50,16 +69,21 @@ export default function OrdersPage() {
           <h2>Order</h2>
           <p className="text-muted text-sm">{orders.length} total order</p>
         </div>
-        <div className={styles.filters}>
-          {["", "pending", "paid", "shipped", "done"].map((s) => (
-            <button
-              key={s}
-              className={`${styles.filterBtn} ${filter === s ? styles.filterActive : ""}`}
-              onClick={() => setFilter(s)}
-            >
-              {s ? STATUS_MAP[s]?.label : "Semua"}
-            </button>
-          ))}
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <div className={styles.filters}>
+            {["", "pending", "paid", "shipped", "done"].map((s) => (
+              <button
+                key={s}
+                className={`${styles.filterBtn} ${filter === s ? styles.filterActive : ""}`}
+                onClick={() => setFilter(s)}
+              >
+                {s ? STATUS_MAP[s]?.label : "Semua"}
+              </button>
+            ))}
+          </div>
+          <button className="btn btn-outline" onClick={handleExportCSV} title="Export ke CSV">
+            📥 Export CSV
+          </button>
         </div>
       </div>
 
