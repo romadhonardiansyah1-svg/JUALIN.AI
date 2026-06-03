@@ -106,3 +106,30 @@ class TestOrderEndpoints:
         ]
         total = sum(i["harga"] * i["qty"] for i in items)
         assert total == 178000
+
+    def test_parse_product_line(self):
+        """Test parsing product names and quantities from strings."""
+        from api.routes_chat import parse_product_line
+        assert parse_product_line("Baju Pink Satin x2") == ("Baju Pink Satin", 2)
+        assert parse_product_line("Kaos Oversize 3 pcs") == ("Kaos Oversize", 3)
+        assert parse_product_line("Dress Emerald Elegan 5") == ("Dress Emerald Elegan", 5)
+        assert parse_product_line("Hoodie Abu-abu") == ("Hoodie Abu-abu", 1)
+
+    def test_parse_order_text(self):
+        """Test parsing full confirmed order messages."""
+        from api.routes_chat import parse_order_text
+        sample_text = (
+            "✅ ORDER CONFIRMED!\n"
+            "Produk: Baju Pink Satin x2\n"
+            "Produk: Kaos Oversize x1\n"
+            "Total: Rp 237,000\n"
+            "Nama: Dian Ganteng\n"
+            "Alamat: Jl. Sudirman No. 12, Jakarta\n"
+            "HP: 081234567890\n"
+        )
+        parsed = parse_order_text(sample_text)
+        assert parsed is not None
+        assert parsed["customer_name"] == "Dian Ganteng"
+        assert parsed["customer_address"] == "Jl. Sudirman No. 12, Jakarta"
+        assert parsed["customer_phone"] == "081234567890"
+        assert parsed["products_raw"] == ["Baju Pink Satin x2", "Kaos Oversize x1"]

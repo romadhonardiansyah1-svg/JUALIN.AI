@@ -29,7 +29,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             max_req, window = 120, 60  # 120 for static assets
 
         # Check rate limit
-        identifier = f"{client_ip}:{path.split('/')[2] if len(path.split('/')) > 2 else 'root'}"
+        path_parts = path.strip("/").split("/")
+        route_key = path_parts[1] if len(path_parts) > 1 else (path_parts[0] if path_parts else "root")
+        identifier = f"{client_ip}:{route_key}"
         allowed = await check_rate_limit(identifier, max_req, window)
 
         if not allowed:

@@ -7,6 +7,10 @@ const nextConfig = {
         source: "/api/:path*",
         destination: `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/:path*`,
       },
+      {
+        source: "/uploads/:path*",
+        destination: `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/uploads/:path*`,
+      },
     ];
   },
   // Output standalone for Docker deployment

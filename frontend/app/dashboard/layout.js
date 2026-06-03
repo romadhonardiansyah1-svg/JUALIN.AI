@@ -1,17 +1,31 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import styles from "./dashboard.module.css";
 
-const navItems = [
+// Seller navigation
+const sellerNavItems = [
   { href: "/dashboard", icon: "📊", label: "Overview" },
   { href: "/dashboard/products", icon: "📦", label: "Produk" },
   { href: "/dashboard/orders", icon: "🛒", label: "Order" },
   { href: "/dashboard/chat", icon: "💬", label: "Chat" },
   { href: "/dashboard/analytics", icon: "📈", label: "Analitik" },
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
-  { href: "/dashboard/admin", icon: "🔑", label: "Admin", adminOnly: true },
+];
+
+// Admin navigation — completely different from seller
+const adminNavItems = [
+  { href: "/dashboard/admin", icon: "🏠", label: "Dashboard" },
+  { href: "/dashboard/admin/sellers", icon: "👥", label: "Kelola Seller" },
+  { href: "/dashboard/admin/system", icon: "🖥️", label: "System" },
+  { href: "/dashboard", icon: "🏪", label: "Toko Saya", divider: true },
+  { href: "/dashboard/products", icon: "📦", label: "Produk" },
+  { href: "/dashboard/orders", icon: "🛒", label: "Order" },
+  { href: "/dashboard/chat", icon: "💬", label: "Chat AI" },
+  { href: "/dashboard/analytics", icon: "📈", label: "Analitik" },
+  { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
 ];
 
 export default function DashboardLayout({ children }) {
@@ -27,9 +41,42 @@ export default function DashboardLayout({ children }) {
       return;
     }
     if (userData) {
-      setUser(JSON.parse(userData));
+      try {
+        setUser(JSON.parse(userData));
+      } catch (e) {
+        localStorage.removeItem("jualin_user");
+        router.push("/login");
+        return;
+      }
     }
+    
+    // BUG 16 FIX: Refresh user data from API in background to catch tier/setting changes
+    import("@/lib/api").then(({ api }) => {
+      api.getMe().then(freshUser => {
+        if (freshUser && freshUser.email) {
+          localStorage.setItem("jualin_user", JSON.stringify(freshUser));
+          setUser(freshUser);
+        }
+      }).catch(() => { /* ignore — offline or token expired */ });
+    });
   }, [router]);
+
+  const isAdmin = user?.role === "admin";
+  const navItems = useMemo(
+    () => (isAdmin ? adminNavItems : sellerNavItems),
+    [isAdmin]
+  );
+
+  // Determine active page title
+  const pageTitle = useMemo(() => {
+    const flat = isAdmin ? adminNavItems : sellerNavItems;
+    const match = flat.find((i) =>
+      i.href === "/dashboard"
+        ? pathname === "/dashboard"
+        : pathname.startsWith(i.href)
+    );
+    return match?.label || "Dashboard";
+  }, [pathname, isAdmin]);
 
   const handleLogout = () => {
     localStorage.removeItem("jualin_token");
@@ -42,44 +89,51 @@ export default function DashboardLayout({ children }) {
   return (
     <div className={styles.dashboardLayout}>
       {/* Sidebar */}
-      <aside className={styles.sidebar}>
+      <aside className={`${styles.sidebar} ${isAdmin ? styles.sidebarAdmin : ""}`}>
         <div className={styles.sidebarHeader}>
           <Link href="/" className={styles.logo}>
             <span className={styles.logoIcon}>🤖</span>
             <span className={styles.logoText}>JUALIN.AI</span>
           </Link>
+          {isAdmin && (
+            <span className={styles.adminBadge}>ADMIN</span>
+          )}
         </div>
 
         <nav className={styles.sidebarNav}>
-          {navItems
-            .filter((item) => !item.adminOnly || user?.role === "admin")
-            .map((item) => {
+          {navItems.map((item, idx) => {
             const isActive =
               item.href === "/dashboard"
                 ? pathname === "/dashboard"
                 : pathname.startsWith(item.href);
             return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
-              >
-                <span className={styles.navIcon}>{item.icon}</span>
-                <span>{item.label}</span>
-              </Link>
+              <div key={`${item.href}-${idx}`}>
+                {item.divider && (
+                  <div className={styles.navDivider}>
+                    <span>Toko Saya</span>
+                  </div>
+                )}
+                <Link
+                  href={item.href}
+                  className={`${styles.navItem} ${isActive ? styles.navItemActive : ""}`}
+                >
+                  <span className={styles.navIcon}>{item.icon}</span>
+                  <span>{item.label}</span>
+                </Link>
+              </div>
             );
           })}
         </nav>
 
         <div className={styles.sidebarFooter}>
           <div className={styles.userInfo}>
-            <div className={styles.userAvatar}>
+            <div className={`${styles.userAvatar} ${isAdmin ? styles.userAvatarAdmin : ""}`}>
               {user.nama_toko?.charAt(0) || "T"}
             </div>
             <div className={styles.userDetails}>
               <span className={styles.userName}>{user.nama_toko}</span>
-              <span className={`badge badge-primary ${styles.userTier}`}>
-                {user.tier}
+              <span className={`badge ${isAdmin ? "badge-danger" : "badge-primary"} ${styles.userTier}`}>
+                {isAdmin ? "ADMIN" : user.tier}
               </span>
             </div>
           </div>
@@ -94,23 +148,19 @@ export default function DashboardLayout({ children }) {
         <header className={styles.topBar}>
           <div className={styles.topBarLeft}>
             <h2 className={styles.pageTitle}>
-              {navItems.find((i) =>
-                i.href === "/dashboard"
-                  ? pathname === "/dashboard"
-                  : pathname.startsWith(i.href)
-              )?.label || "Dashboard"}
+              {pageTitle}
             </h2>
           </div>
           <div className={styles.topBarRight}>
             <button className={styles.notifBtn}>
               🔔 <span className={styles.notifBadge}>3</span>
             </button>
-            <div className={styles.topAvatar}>
+            <div className={`${styles.topAvatar} ${isAdmin ? styles.topAvatarAdmin : ""}`}>
               {user.nama_toko?.charAt(0) || "T"}
             </div>
           </div>
         </header>
-        <div className={styles.content}>{children}</div>
+        <div className={styles.content}><ErrorBoundary>{children}</ErrorBoundary></div>
       </main>
     </div>
   );

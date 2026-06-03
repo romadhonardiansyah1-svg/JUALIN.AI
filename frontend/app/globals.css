@@ -457,6 +457,11 @@ img {
   to { opacity: 1; }
 }
 
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
   .grid-2, .grid-3, .grid-4 {

@@ -34,7 +34,14 @@ async def list_orders(
     query = select(Order).where(Order.seller_id == current_user.id)
     
     if status:
-        query = query.where(Order.status == status)
+        try:
+            status_enum = OrderStatus(status)
+            query = query.where(Order.status == status_enum)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Status tidak valid. Pilih: {', '.join(s.value for s in OrderStatus)}"
+            )
     
     query = query.order_by(Order.created_at.desc()).limit(100)
     
@@ -58,75 +65,7 @@ async def list_orders(
     ]
 
 
-@router.get("/{order_id}")
-async def get_order(
-    order_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get order detail."""
-    result = await db.execute(
-        select(Order)
-        .where(Order.id == order_id)
-        .where(Order.seller_id == current_user.id)
-    )
-    order = result.scalar_one_or_none()
-    
-    if not order:
-        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
-    
-    return {
-        "id": order.id,
-        "customer_name": order.customer_name,
-        "customer_phone": order.customer_phone,
-        "customer_address": order.customer_address,
-        "items": order.items,
-        "total": order.total,
-        "status": order.status.value,
-        "notes": order.notes,
-        "followup_count": order.followup_count,
-        "last_followup_at": order.last_followup_at.isoformat() if order.last_followup_at else None,
-        "created_at": order.created_at.isoformat() if order.created_at else "",
-        "updated_at": order.updated_at.isoformat() if order.updated_at else "",
-    }
-
-
-@router.patch("/{order_id}/status")
-async def update_order_status(
-    order_id: int,
-    req: OrderUpdateRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update order status (pending → paid → shipped → done)."""
-    result = await db.execute(
-        select(Order)
-        .where(Order.id == order_id)
-        .where(Order.seller_id == current_user.id)
-    )
-    order = result.scalar_one_or_none()
-    
-    if not order:
-        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
-    
-    if req.status:
-        try:
-            order.status = OrderStatus(req.status)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Status tidak valid. Pilih: {', '.join(s.value for s in OrderStatus)}"
-            )
-    
-    if req.notes is not None:
-        order.notes = req.notes
-    
-    await db.commit()
-    await db.refresh(order)
-    
-    return {"message": "Order diupdate", "status": order.status.value}
-
-
+# BUG 17 FIX: Export route MUST come before /{order_id} to avoid path conflict
 @router.get("/export/csv")
 async def export_orders_csv(
     status: Optional[str] = None,
@@ -137,7 +76,11 @@ async def export_orders_csv(
     query = select(Order).where(Order.seller_id == current_user.id)
 
     if status:
-        query = query.where(Order.status == status)
+        try:
+            status_enum = OrderStatus(status)
+            query = query.where(Order.status == status_enum)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Status tidak valid")
 
     query = query.order_by(Order.created_at.desc())
 
@@ -201,3 +144,89 @@ async def export_orders_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/{order_id}")
+async def get_order(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get order detail."""
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .where(Order.seller_id == current_user.id)
+    )
+    order = result.scalar_one_or_none()
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    
+    return {
+        "id": order.id,
+        "customer_name": order.customer_name,
+        "customer_phone": order.customer_phone,
+        "customer_address": order.customer_address,
+        "items": order.items,
+        "total": order.total,
+        "status": order.status.value,
+        "notes": order.notes,
+        "followup_count": order.followup_count,
+        "last_followup_at": order.last_followup_at.isoformat() if order.last_followup_at else None,
+        "created_at": order.created_at.isoformat() if order.created_at else "",
+        "updated_at": order.updated_at.isoformat() if order.updated_at else "",
+    }
+
+
+async def restore_order_stock(order: Order, db: AsyncSession):
+    """Restore product stock when an order is cancelled."""
+    from models.product import Product
+    items = order.items if isinstance(order.items, list) else []
+    for item in items:
+        if "product_id" in item:
+            result = await db.execute(
+                select(Product).where(Product.id == item["product_id"])
+            )
+            product = result.scalar_one_or_none()
+            if product:
+                product.stok += item.get("qty", 1)
+
+
+@router.patch("/{order_id}/status")
+async def update_order_status(
+    order_id: int,
+    req: OrderUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update order status (pending → paid → shipped → done)."""
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .where(Order.seller_id == current_user.id)
+    )
+    order = result.scalar_one_or_none()
+    
+    if not order:
+        raise HTTPException(status_code=404, detail="Order tidak ditemukan")
+    
+    if req.status:
+        try:
+            new_status = OrderStatus(req.status)
+            if new_status == OrderStatus.CANCELLED and order.status != OrderStatus.CANCELLED:
+                await restore_order_stock(order, db)
+            order.status = new_status
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Status tidak valid. Pilih: {', '.join(s.value for s in OrderStatus)}"
+            )
+    
+    if req.notes is not None:
+        order.notes = req.notes
+    
+    await db.commit()
+    await db.refresh(order)
+    
+    return {"message": "Order diupdate", "status": order.status.value}

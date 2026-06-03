@@ -15,6 +15,13 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("");
 
+  // Format items array → readable text (BUG 8 FIX)
+  function formatItems(items) {
+    if (typeof items === "string") return items;
+    if (!Array.isArray(items)) return "-";
+    return items.map(i => `${i.nama || "Produk"} x${i.qty || 1}`).join(", ");
+  }
+
   useEffect(() => {
     loadOrders();
   }, [filter]);
@@ -46,7 +53,8 @@ export default function OrdersPage() {
   const handleExportCSV = async () => {
     try {
       const token = localStorage.getItem("jualin_token");
-      const url = `/api/orders/export/csv${filter ? `?status=${filter}` : ""}`;
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+      const url = `${apiBase}/api/orders/export/csv${filter ? `?status=${filter}` : ""}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -106,13 +114,16 @@ export default function OrdersPage() {
                 <tr key={o.id}>
                   <td>#{o.id}</td>
                   <td><strong>{o.customer_name}</strong></td>
-                  <td className="text-sm">{typeof o.items === "string" ? o.items : JSON.stringify(o.items)}</td>
+                  <td className="text-sm">{formatItems(o.items)}</td>
                   <td className="font-semibold">Rp {o.total?.toLocaleString("id-ID")}</td>
                   <td><span className={`badge ${STATUS_MAP[o.status]?.badge || "badge-neutral"}`}>{STATUS_MAP[o.status]?.label || o.status}</span></td>
                   <td className="text-sm text-muted">{new Date(o.created_at).toLocaleDateString("id-ID")}</td>
                   <td>
                     {o.status === "pending" && (
-                      <button className="btn btn-sm btn-primary" onClick={() => handleStatusChange(o.id, "paid")}>✓ Bayar</button>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button className="btn btn-sm btn-primary" onClick={() => handleStatusChange(o.id, "paid")}>✓ Bayar</button>
+                        <button className="btn btn-sm btn-outline" style={{ color: "#EF4444" }} onClick={() => { if (confirm("Batalkan order ini?")) handleStatusChange(o.id, "cancelled"); }}>✕</button>
+                      </div>
                     )}
                     {o.status === "paid" && (
                       <button className="btn btn-sm btn-outline" onClick={() => handleStatusChange(o.id, "shipped")}>📦 Kirim</button>

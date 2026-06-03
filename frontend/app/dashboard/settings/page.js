@@ -1,11 +1,15 @@
 "use client";
 import { useState, useEffect } from "react";
+import { api } from "@/lib/api";
 import styles from "./settings.module.css";
 
 export default function SettingsPage() {
   const [user, setUser] = useState(null);
   const [aiStyle, setAiStyle] = useState("santai");
   const [aiActive, setAiActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const userData = localStorage.getItem("jualin_user");
@@ -16,6 +20,32 @@ export default function SettingsPage() {
       setAiActive(u.ai_active !== false);
     }
   }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
+    setSaved(false);
+    try {
+      const updated = await api.updateSettings({
+        ai_active: aiActive,
+        ai_style: aiStyle,
+      });
+      // Update localStorage with fresh data
+      localStorage.setItem("jualin_user", JSON.stringify(updated));
+      setUser(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      setError(e.message || "Gagal menyimpan pengaturan");
+    }
+    setSaving(false);
+  };
+
+  // Track if settings have changed from what's saved
+  const hasChanges = user && (
+    aiStyle !== (user.ai_style || "santai") || 
+    aiActive !== (user.ai_active !== false)
+  );
 
   if (!user) return null;
 
@@ -80,6 +110,19 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Save Button */}
+          <div className={styles.saveRow}>
+            {error && <span className={styles.errorText}>❌ {error}</span>}
+            {saved && <span className={styles.savedText}>✅ Pengaturan tersimpan!</span>}
+            <button 
+              className={`btn ${hasChanges ? "btn-primary" : "btn-outline"}`} 
+              onClick={handleSave} 
+              disabled={saving || !hasChanges}
+            >
+              {saving ? "Menyimpan..." : (hasChanges ? "💾 Simpan Perubahan" : "Tersimpan")}
+            </button>
           </div>
         </div>
       </div>

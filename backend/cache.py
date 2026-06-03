@@ -8,22 +8,33 @@ from config import get_settings
 
 settings = get_settings()
 
-# Redis client (lazy init)
+# Redis client (lazy init with retry)
 _redis_client = None
+_redis_last_fail = 0
+_REDIS_RETRY_INTERVAL = 60  # Retry every 60 seconds
 
 
 async def get_redis():
-    """Get or create Redis client."""
-    global _redis_client
-    if _redis_client is None:
-        try:
-            _redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-            await _redis_client.ping()
-            print("✅ Redis connected")
-        except Exception as e:
-            print(f"⚠️ Redis not available: {e}. Running without cache.")
-            _redis_client = None
-    return _redis_client
+    """Get or create Redis client. Retries on failure after cooldown."""
+    global _redis_client, _redis_last_fail
+    if _redis_client is not None:
+        return _redis_client
+    
+    # Don't retry too frequently
+    import time
+    if _redis_last_fail and (time.time() - _redis_last_fail) < _REDIS_RETRY_INTERVAL:
+        return None
+    
+    try:
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        await client.ping()
+        _redis_client = client
+        print("✅ Redis connected")
+        return _redis_client
+    except Exception as e:
+        print(f"⚠️ Redis not available: {e}. Running without cache.")
+        _redis_last_fail = time.time()
+        return None
 
 
 async def cache_get(key: str):

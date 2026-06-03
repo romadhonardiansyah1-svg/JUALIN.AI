@@ -18,8 +18,91 @@
   bottom: 0;
   z-index: 50;
   box-shadow: 1px 0 3px rgba(0,0,0,0.03);
+  transition: background 0.3s, border-color 0.3s;
 }
 
+/* ── Admin Sidebar (dark theme) ── */
+.sidebarAdmin {
+  background: #0F172A;
+  border-right-color: #1E293B;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.15);
+}
+
+.sidebarAdmin .logoText {
+  color: #F8FAFC;
+}
+
+.sidebarAdmin .navItem {
+  color: #94A3B8;
+}
+
+.sidebarAdmin .navItem:hover {
+  background: rgba(255,255,255,0.06);
+  color: #E2E8F0;
+}
+
+.sidebarAdmin .navItemActive {
+  background: rgba(239, 68, 68, 0.12);
+  color: #FCA5A5;
+  border-left-color: #EF4444;
+}
+
+.sidebarAdmin .userName {
+  color: #F8FAFC;
+}
+
+.sidebarAdmin .logoutBtn:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.sidebarAdmin .sidebarHeader {
+  border-bottom-color: #1E293B;
+}
+
+.sidebarAdmin .sidebarFooter {
+  border-top-color: #1E293B;
+}
+
+.adminBadge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  border-radius: var(--radius-full);
+  background: rgba(239, 68, 68, 0.15);
+  color: #FCA5A5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.navDivider {
+  padding: 16px 16px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #475569;
+  border-top: 1px solid var(--border-light);
+  margin-top: 8px;
+}
+
+.sidebarAdmin .navDivider {
+  color: #64748B;
+  border-top-color: #1E293B;
+}
+
+.userAvatarAdmin {
+  background: rgba(239, 68, 68, 0.15) !important;
+  color: #FCA5A5 !important;
+}
+
+.topAvatarAdmin {
+  background: rgba(239, 68, 68, 0.1) !important;
+  color: #EF4444 !important;
+}
+
+/* ── Base Sidebar Header ── */
 .sidebarHeader {
   padding: 20px 24px;
   border-bottom: 1px solid var(--border-light);
@@ -46,7 +129,8 @@
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  overflow-y: auto;
 }
 
 .navItem {

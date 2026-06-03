@@ -14,6 +14,7 @@ from api.routes_products import router as products_router
 from api.routes_chat import router as chat_router
 from api.routes_orders import router as orders_router
 from api.routes_analytics import router as analytics_router
+from api.routes_admin import router as admin_router
 from middleware import RateLimitMiddleware
 
 settings = get_settings()
@@ -93,6 +94,15 @@ app.include_router(products_router, prefix="/api/products", tags=["Products"])
 app.include_router(chat_router, prefix="/api/chat", tags=["Chat"])
 app.include_router(orders_router, prefix="/api/orders", tags=["Orders"])
 app.include_router(analytics_router, prefix="/api/analytics", tags=["Analytics"])
+app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
+
+# Static file serving for uploaded images
+import os
+from fastapi.staticfiles import StaticFiles
+
+uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 
 @app.get("/")

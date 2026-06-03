@@ -10,6 +10,7 @@ export default function ChatMonitorPage() {
   const [testMessage, setTestMessage] = useState("");
   const [testSession, setTestSession] = useState("");
   const [sending, setSending] = useState(false);
+  const [convFilter, setConvFilter] = useState("");
   const chatEndRef = useRef(null);
 
   useEffect(() => {
@@ -90,10 +91,10 @@ export default function ChatMonitorPage() {
           <span className="badge badge-primary">{conversations.length}</span>
         </div>
 
-        <div className={styles.convTabs}>
-          <button className={`${styles.convTab} ${styles.convTabActive}`}>Semua</button>
-          <button className={styles.convTab}>Aktif</button>
-          <button className={styles.convTab}>Urgent</button>
+      <div className={styles.convTabs}>
+          <button className={`${styles.convTab} ${!convFilter ? styles.convTabActive : ""}`} onClick={() => setConvFilter("")}>Semua</button>
+          <button className={`${styles.convTab} ${convFilter === "active" ? styles.convTabActive : ""}`} onClick={() => setConvFilter("active")}>Aktif</button>
+          <button className={`${styles.convTab} ${convFilter === "urgent" ? styles.convTabActive : ""}`} onClick={() => setConvFilter("urgent")}>Urgent</button>
         </div>
 
         {/* Test Chat Button */}
@@ -108,7 +109,13 @@ export default function ChatMonitorPage() {
         </button>
 
         <div className={styles.convItems}>
-          {conversations.map((conv) => (
+          {conversations
+            .filter(conv => {
+              if (convFilter === "urgent") return conv.is_urgent === 1;
+              if (convFilter === "active") return conv.message_count > 0;
+              return true;
+            })
+            .map((conv) => (
             <div
               key={conv.id}
               className={`${styles.convItem} ${activeConv?.id === conv.id ? styles.convItemActive : ""}`}

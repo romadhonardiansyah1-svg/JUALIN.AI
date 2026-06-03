@@ -51,7 +51,11 @@ async def get_pending_followups(db: AsyncSession) -> list[dict]:
     for order in orders:
         # Check if enough time has passed since last follow-up
         if order.last_followup_at:
-            time_since = datetime.now(timezone.utc) - order.last_followup_at.replace(tzinfo=timezone.utc)
+            # Properly handle timezone: use as-is if aware, assume UTC if naive (BUG 11 FIX)
+            last_fu = order.last_followup_at
+            if last_fu.tzinfo is None:
+                last_fu = last_fu.replace(tzinfo=timezone.utc)
+            time_since = datetime.now(timezone.utc) - last_fu
             intervals = [timedelta(hours=1), timedelta(hours=6), timedelta(hours=24)]
             required_wait = intervals[min(order.followup_count, 2)]
             if time_since < required_wait:
@@ -106,10 +110,23 @@ async def auto_cancel_expired(db: AsyncSession) -> int:
     )
     orders = result.scalars().all()
     
+    from models.product import Product
     count = 0
     for order in orders:
         order.status = OrderStatus.CANCELLED
         order.notes = (order.notes or "") + " [Auto-cancelled: tidak ada pembayaran setelah 48 jam]"
+        
+        # restore stock
+        items = order.items if isinstance(order.items, list) else []
+        for item in items:
+            if "product_id" in item:
+                prod_result = await db.execute(
+                    select(Product).where(Product.id == item["product_id"])
+                )
+                product = prod_result.scalar_one_or_none()
+                if product:
+                    product.stok += item.get("qty", 1)
+        
         count += 1
     
     if count > 0:

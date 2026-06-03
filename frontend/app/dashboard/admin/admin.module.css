@@ -1,30 +1,82 @@
 /* Admin Panel */
 .adminPage { animation: fadeIn 0.3s ease; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
 .header h2 { font-size: 1.3rem; }
+.headerActions { display: flex; gap: 10px; }
 
-.statsGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+/* Stats Grid */
+.statsGrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
 .statCard {
-  padding: 18px 22px; border-radius: var(--radius-md); box-shadow: var(--shadow);
-  border-top: 4px solid transparent; transition: transform 0.2s;
+  padding: 20px 22px; border-radius: var(--radius-md); box-shadow: var(--shadow);
+  border-top: 4px solid transparent; transition: transform 0.2s, box-shadow 0.2s;
+  background: white;
 }
-.statCard:hover { transform: translateY(-2px); }
+.statCard:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
 .statTop { display: flex; justify-content: space-between; align-items: center; }
-.statLabel { font-size: 0.82rem; color: var(--text-secondary); font-weight: 500; }
-.statValue { font-family: var(--font-heading); font-size: 1.6rem; font-weight: 700; color: var(--text); margin-top: 4px; }
+.statLabel { font-size: 0.8rem; color: var(--text-secondary); font-weight: 500; }
+.statIconBg {
+  width: 36px; height: 36px; border-radius: var(--radius); display: flex;
+  align-items: center; justify-content: center; font-size: 1.1rem;
+}
+.statValue { font-family: var(--font-heading); font-size: 1.5rem; font-weight: 700; color: var(--text); margin-top: 8px; }
 
-.tableHeader { padding: 20px 24px; border-bottom: 1px solid var(--border-light); }
+/* Main Grid */
+.mainGrid { display: grid; grid-template-columns: 1fr 380px; gap: 24px; }
+
+/* Table */
+.tableHeader { 
+  padding: 20px 24px; border-bottom: 1px solid var(--border-light); 
+  display: flex; justify-content: space-between; align-items: center;
+}
 .tableHeader h3 { font-size: 1rem; font-weight: 600; }
 
-.systemGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; }
+.sellerCell { display: flex; align-items: center; gap: 12px; }
+.sellerAvatar {
+  width: 36px; height: 36px; border-radius: 50%; background: var(--primary-light);
+  color: var(--primary-dark); display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 0.85rem; flex-shrink: 0;
+}
+
+/* Right Column */
+.rightColumn { display: flex; flex-direction: column; gap: 24px; }
 .cardTitle { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
 
+/* System Info */
 .sysInfo { display: flex; flex-direction: column; gap: 12px; }
-.sysRow { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
+.sysRow { display: flex; justify-content: space-between; align-items: center; font-size: 0.88rem; }
+.sysLabel { color: var(--text-secondary); }
 
+/* Tier Distribution */
 .tierDist { display: flex; flex-direction: column; gap: 14px; }
 .tierRow { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; }
-.tierRow span:first-child { width: 70px; }
+.tierLabel { width: 70px; color: var(--text-secondary); font-weight: 500; }
 .tierBar { flex: 1; height: 10px; background: var(--border-light); border-radius: 4px; overflow: hidden; }
 
-@media (max-width: 768px) { .statsGrid { grid-template-columns: repeat(2, 1fr); } .systemGrid { grid-template-columns: 1fr; } }
+/* Loading Skeleton */
+.loadingSkeleton { padding: 0; animation: fadeIn 0.3s ease; }
+.skelRow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+.skelCard {
+  height: 110px; border-radius: var(--radius-md); 
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+.skelBlock {
+  height: 400px; border-radius: var(--radius-md);
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (max-width: 1024px) { 
+  .statsGrid { grid-template-columns: repeat(2, 1fr); } 
+  .mainGrid { grid-template-columns: 1fr; } 
+}
+@media (max-width: 768px) { 
+  .statsGrid { grid-template-columns: 1fr 1fr; } 
+}

@@ -46,6 +46,7 @@ class UserResponse(BaseModel):
     ai_active: bool
     ai_style: str
     no_hp: str
+    deskripsi_toko: str = ""
 
     class Config:
         from_attributes = True
@@ -171,4 +172,35 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current logged-in user info."""
+    return UserResponse.model_validate(current_user)
+
+
+class SettingsUpdateRequest(BaseModel):
+    ai_active: bool | None = None
+    ai_style: str | None = None
+    deskripsi_toko: str | None = None
+    no_hp: str | None = None
+
+
+@router.patch("/settings", response_model=UserResponse)
+async def update_settings(
+    req: SettingsUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update user settings (AI style, active status, etc)."""
+    if req.ai_active is not None:
+        current_user.ai_active = req.ai_active
+    if req.ai_style is not None:
+        if req.ai_style not in ("formal", "santai", "gaul"):
+            raise HTTPException(status_code=400, detail="ai_style harus: formal, santai, atau gaul")
+        current_user.ai_style = req.ai_style
+    if req.deskripsi_toko is not None:
+        current_user.deskripsi_toko = req.deskripsi_toko
+    if req.no_hp is not None:
+        current_user.no_hp = req.no_hp
+    
+    await db.commit()
+    await db.refresh(current_user)
+    
     return UserResponse.model_validate(current_user)

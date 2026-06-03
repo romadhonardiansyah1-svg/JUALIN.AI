@@ -1,6 +1,7 @@
 """
 JUALIN.AI — Chat API Routes  
 Send message → AI response → save to DB
+Optimized: sequential safe DB calls, reduced context
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,7 @@ from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import Optional
 import uuid
+import re
 
 from config import get_settings
 from models.database import get_db
@@ -45,6 +47,55 @@ class ConversationResponse(BaseModel):
 
 
 # ── Helpers ──
+
+def parse_product_line(line: str) -> tuple[str, int]:
+    # e.g., "Baju Pink Satin x2" or "Baju Pink Satin x 2" or "Baju Pink Satin 2pcs" or "Baju Pink Satin (2 pcs)"
+    qty_match = re.search(r'\s+x\s*(\d+)\b', line, re.IGNORECASE)
+    if not qty_match:
+        qty_match = re.search(r'\b(\d+)\s*pcs\b', line, re.IGNORECASE)
+    if not qty_match:
+        qty_match = re.search(r'\s+(\d+)$', line) # quantity at the end of line
+        
+    if qty_match:
+        qty = int(qty_match.group(1))
+        # remove quantity pattern from line to get the clean product name
+        clean_name = line.replace(qty_match.group(0), "").strip()
+        return clean_name, qty
+    else:
+        return line.strip(), 1
+
+
+def parse_order_text(text: str) -> dict | None:
+    # check if "ORDER CONFIRMED" is in text
+    if "ORDER CONFIRMED" not in text:
+        return None
+    
+    # regex extract fields
+    nama_match = re.search(r'(?:Nama|Name)\s*:\s*(.+)', text, re.IGNORECASE)
+    alamat_match = re.search(r'(?:Alamat|Address)\s*:\s*(.+)', text, re.IGNORECASE)
+    hp_match = re.search(r'(?:HP|No HP|Phone|Telepon)\s*:\s*(.+)', text, re.IGNORECASE)
+    
+    if not (nama_match and alamat_match and hp_match):
+        return None
+        
+    # extract products
+    products_raw = []
+    lines = text.split('\n')
+    for line in lines:
+        p_match = re.search(r'(?:Produk|Product)\s*:\s*(.+)', line, re.IGNORECASE)
+        if p_match:
+            products_raw.append(p_match.group(1).strip())
+            
+    if not products_raw:
+        return None
+        
+    return {
+        "customer_name": nama_match.group(1).strip(),
+        "customer_address": alamat_match.group(1).strip(),
+        "customer_phone": hp_match.group(1).strip(),
+        "products_raw": products_raw
+    }
+
 
 async def check_quota(seller_id: int, db: AsyncSession) -> dict:
     """Check seller's chat quota for current month."""
@@ -134,7 +185,24 @@ async def send_message(
         await db.commit()
         await db.refresh(conversation)
     
-    # Customer Memory — cek apakah returning customer
+    # Save customer message first
+    customer_msg = Message(
+        conversation_id=conversation.id,
+        role=MessageRole.CUSTOMER,
+        content=req.message,
+    )
+    db.add(customer_msg)
+    await db.commit()
+    
+    # Load history + memory sequentially (AsyncSession is NOT safe for concurrent use)
+    result = await db.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation.id)
+        .order_by(Message.created_at.desc())
+        .limit(6)  # Reduced from 10 for faster AI response
+    )
+    history = list(reversed(result.scalars().all()))
+    
     memory_context = ""
     try:
         from services.customer_memory import get_or_create_memory, format_memory_context
@@ -148,24 +216,6 @@ async def send_message(
         memory_context = format_memory_context(memory, is_returning)
     except Exception as e:
         print(f"⚠️ Memory lookup skipped: {e}")
-    
-    # Save customer message
-    customer_msg = Message(
-        conversation_id=conversation.id,
-        role=MessageRole.CUSTOMER,
-        content=req.message,
-    )
-    db.add(customer_msg)
-    await db.commit()
-    
-    # Get chat history for context
-    history_result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conversation.id)
-        .order_by(Message.created_at.desc())
-        .limit(10)  # Last 10 messages for context
-    )
-    history = list(reversed(history_result.scalars().all()))
     
     # Generate AI response (with memory context injected)
     try:
@@ -185,6 +235,78 @@ async def send_message(
             f"Maaf, asisten kami sedang sibuk. Coba kirim pesan lagi ya kak!"
         )
     
+    # Parse and create order if AI confirmed the order
+    parsed = parse_order_text(ai_response_text)
+    if parsed:
+        try:
+            # 1. Update conversation customer info
+            conversation.customer_name = parsed["customer_name"]
+            conversation.customer_phone = parsed["customer_phone"]
+            db.add(conversation)
+            await db.commit()
+
+            # 2. Match products in database to get correct IDs & prices
+            from models.product import Product
+            prod_result = await db.execute(
+                select(Product)
+                .where(Product.seller_id == seller.id)
+                .where(Product.is_active == 1)
+            )
+            all_seller_products = prod_result.scalars().all()
+
+            items = []
+            for raw_p in parsed["products_raw"]:
+                clean_name, qty = parse_product_line(raw_p)
+                matched_prod = None
+                # pass 1: exact match
+                for p in all_seller_products:
+                    if p.nama.lower().strip() == clean_name.lower():
+                        matched_prod = p
+                        break
+                # pass 2: substring match
+                if not matched_prod:
+                    for p in all_seller_products:
+                        if clean_name.lower() in p.nama.lower() or p.nama.lower() in clean_name.lower():
+                            matched_prod = p
+                            break
+                
+                if matched_prod:
+                    items.append({
+                        "product_id": matched_prod.id,
+                        "nama": matched_prod.nama,
+                        "qty": qty,
+                        "harga": matched_prod.harga
+                    })
+            
+            if items:
+                from ai.tools import tool_buat_order
+                # create order in database & reduce stock
+                order_result = await tool_buat_order(
+                    seller_id=seller.id,
+                    customer_name=parsed["customer_name"],
+                    customer_phone=parsed["customer_phone"],
+                    customer_address=parsed["customer_address"],
+                    items=items,
+                    conversation_id=conversation.id,
+                    db=db
+                )
+                if "error" not in order_result:
+                    # 3. Update customer memory after order
+                    try:
+                        from services.customer_memory import get_or_create_memory, update_memory_after_order
+                        memory, _ = await get_or_create_memory(
+                            seller_id=seller.id,
+                            session_id=session_id,
+                            db=db,
+                            phone=parsed["customer_phone"],
+                            name=parsed["customer_name"],
+                        )
+                        await update_memory_after_order(memory, items, order_result["total"], db)
+                    except Exception as e:
+                        print(f"⚠️ Failed to update memory after order: {e}")
+        except Exception as e:
+            print(f"⚠️ Order creation failed: {e}")
+
     # Save AI response
     ai_msg = Message(
         conversation_id=conversation.id,
@@ -241,39 +363,31 @@ async def list_conversations(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all conversations for the current seller."""
+    """List all conversations for the current seller (optimized: 1 query instead of N+1)."""
+    from sqlalchemy import desc
+    from sqlalchemy.orm import selectinload
+    
+    # Single query: fetch conversations with eager-loaded messages (BUG 12 FIX)
     result = await db.execute(
         select(Conversation)
         .where(Conversation.seller_id == current_user.id)
-        .order_by(Conversation.updated_at.desc())
+        .options(selectinload(Conversation.messages))
+        .order_by(desc(Conversation.updated_at))
         .limit(50)
     )
-    conversations = result.scalars().all()
+    conversations = result.scalars().unique().all()
     
     response = []
     for conv in conversations:
-        # Get last message
-        last_msg_result = await db.execute(
-            select(Message)
-            .where(Message.conversation_id == conv.id)
-            .order_by(Message.created_at.desc())
-            .limit(1)
-        )
-        last_msg = last_msg_result.scalar_one_or_none()
-        
-        # Count messages
-        count_result = await db.execute(
-            select(func.count(Message.id))
-            .where(Message.conversation_id == conv.id)
-        )
-        msg_count = count_result.scalar() or 0
+        msgs = conv.messages or []
+        last_msg = msgs[-1] if msgs else None
         
         response.append({
             "id": conv.id,
             "session_id": conv.session_id,
             "customer_name": conv.customer_name,
             "is_urgent": conv.is_urgent,
-            "message_count": msg_count,
+            "message_count": len(msgs),
             "last_message": last_msg.content[:100] if last_msg else "",
             "created_at": conv.created_at.isoformat() if conv.created_at else "",
         })

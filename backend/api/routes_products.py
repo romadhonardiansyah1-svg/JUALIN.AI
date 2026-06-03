@@ -1,12 +1,14 @@
 """
 JUALIN.AI — Products API Routes
-CRUD with auto-embedding for semantic search
+CRUD with auto-embedding + image upload for semantic search
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
 from typing import Optional
+import os
+import uuid as uuid_module
 
 from config import get_settings
 from models.database import get_db
@@ -14,39 +16,10 @@ from models.user import User
 from models.product import Product
 from api.routes_auth import get_current_user
 from cache import cache_get, cache_set, cache_invalidate_products
+from ai.embeddings import generate_embedding, build_embed_text
 
 router = APIRouter()
 settings = get_settings()
-
-# Lazy-loaded embedding model
-_embed_model = None
-
-
-def get_embedding_model():
-    """Lazy-load embedding model (only loaded once on first use)."""
-    global _embed_model
-    if _embed_model is None:
-        from sentence_transformers import SentenceTransformer
-        _embed_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-        print(f"✅ Embedding model loaded: {settings.EMBEDDING_MODEL}")
-    return _embed_model
-
-
-def generate_embedding(text: str) -> list[float]:
-    """Generate embedding vector from text."""
-    model = get_embedding_model()
-    return model.encode(text).tolist()
-
-
-def build_embed_text(product: dict) -> str:
-    """Build text for embedding from product data."""
-    parts = [
-        product.get("nama", ""),
-        product.get("deskripsi", ""),
-        product.get("kategori", ""),
-        f"harga {product.get('harga', 0)}",
-    ]
-    return " ".join(p for p in parts if p)
 
 
 # ── Pydantic Schemas ──
@@ -163,6 +136,13 @@ async def create_product(
     await db.refresh(product)
     await cache_invalidate_products(current_user.id)
     
+    # Invalidate AI catalog cache so AI uses fresh data (BUG 5 FIX)
+    try:
+        from ai.agent import invalidate_catalog_cache
+        invalidate_catalog_cache(current_user.id)
+    except Exception:
+        pass
+    
     return ProductResponse.model_validate(product)
 
 
@@ -204,6 +184,13 @@ async def update_product(
     await db.refresh(product)
     await cache_invalidate_products(current_user.id)
     
+    # Invalidate AI catalog cache (BUG 5 FIX)
+    try:
+        from ai.agent import invalidate_catalog_cache
+        invalidate_catalog_cache(current_user.id)
+    except Exception:
+        pass
+    
     return ProductResponse.model_validate(product)
 
 
@@ -227,6 +214,13 @@ async def delete_product(
     product.is_active = 0
     await db.commit()
     await cache_invalidate_products(current_user.id)
+    
+    # Invalidate AI catalog cache (BUG 5 FIX)
+    try:
+        from ai.agent import invalidate_catalog_cache
+        invalidate_catalog_cache(current_user.id)
+    except Exception:
+        pass
     
     return {"message": "Produk berhasil dihapus", "id": product_id}
 
@@ -265,3 +259,59 @@ async def search_products(
         }
         for p in products
     ]
+
+
+@router.post("/{product_id}/upload-image")
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload foto produk. Supports jpg, png, webp."""
+    # Validate product belongs to user
+    result = await db.execute(
+        select(Product)
+        .where(Product.id == product_id)
+        .where(Product.seller_id == current_user.id)
+    )
+    product = result.scalar_one_or_none()
+    
+    if not product:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipe file tidak didukung. Gunakan: JPG, PNG, atau WebP"
+        )
+    
+    # Validate file size (max 5MB)
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Ukuran file maksimal 5MB")
+    
+    # Save file
+    uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "products")
+    os.makedirs(uploads_dir, exist_ok=True)
+    
+    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    filename = f"{current_user.id}_{product_id}_{uuid_module.uuid4().hex[:8]}.{ext}"
+    filepath = os.path.join(uploads_dir, filename)
+    
+    with open(filepath, "wb") as f:
+        f.write(contents)
+    
+    # Update product foto_url
+    product.foto_url = f"/uploads/products/{filename}"
+    await db.commit()
+    await db.refresh(product)
+    await cache_invalidate_products(current_user.id)
+    
+    return {
+        "message": "Foto berhasil diupload",
+        "foto_url": product.foto_url,
+        "product_id": product.id,
+    }

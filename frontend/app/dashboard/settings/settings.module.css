@@ -32,3 +32,8 @@
 
 /* Plan */
 .planInfo { display: flex; justify-content: space-between; align-items: center; }
+
+/* Save Row */
+.saveRow { display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding-top: 8px; }
+.errorText { color: var(--danger); font-size: 0.85rem; font-weight: 500; }
+.savedText { color: var(--success); font-size: 0.85rem; font-weight: 500; animation: fadeIn 0.3s ease; }

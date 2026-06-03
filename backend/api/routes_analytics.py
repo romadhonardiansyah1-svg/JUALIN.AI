@@ -87,20 +87,26 @@ async def get_orders_daily(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get order count per day for chart."""
+    """Get order count per day for chart (optimized: single query instead of N)."""
     seller_id = current_user.id
+    start_date = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
     
+    # Single query: group by date
+    count_result = await db.execute(
+        select(func.date(Order.created_at).label("order_date"), func.count(Order.id).label("cnt"))
+        .where(Order.seller_id == seller_id)
+        .where(func.date(Order.created_at) >= start_date)
+        .group_by(func.date(Order.created_at))
+    )
+    counts_map = {str(row.order_date): row.cnt for row in count_result.all()}
+    
+    # Fill in all days (including zero-count days)
     result = []
     for i in range(days - 1, -1, -1):
         date = datetime.now(timezone.utc).date() - timedelta(days=i)
-        count_result = await db.execute(
-            select(func.count(Order.id))
-            .where(Order.seller_id == seller_id)
-            .where(func.date(Order.created_at) == date)
-        )
         result.append({
             "date": date.isoformat(),
-            "count": count_result.scalar() or 0,
+            "count": counts_map.get(str(date), 0),
         })
     
     return result
@@ -112,17 +118,26 @@ async def get_top_products(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get most popular products (by chat mentions / orders)."""
+    """Get most popular products by actual sales from orders."""
     seller_id = current_user.id
     
-    # Get products with most orders
+    # Count actual sales from Order.items JSON (BUG 10 FIX)
     result = await db.execute(
-        select(Product.nama, func.count(Product.id).label("count"))
-        .where(Product.seller_id == seller_id)
-        .where(Product.is_active == 1)
-        .group_by(Product.nama)
-        .order_by(func.count(Product.id).desc())
-        .limit(limit)
+        select(Order)
+        .where(Order.seller_id == seller_id)
+        .where(Order.status != OrderStatus.CANCELLED)
+        .order_by(Order.created_at.desc())
+        .limit(100)
     )
+    orders = result.scalars().all()
     
-    return [{"nama": row.nama, "count": row.count} for row in result]
+    product_counts = {}
+    for order in orders:
+        items = order.items if isinstance(order.items, list) else []
+        for item in items:
+            name = item.get("nama", "Unknown")
+            product_counts[name] = product_counts.get(name, 0) + item.get("qty", 1)
+    
+    sorted_products = sorted(product_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+    
+    return [{"nama": name, "count": count} for name, count in sorted_products]

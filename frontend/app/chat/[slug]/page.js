@@ -21,29 +21,29 @@ export default function PublicChatPage() {
   const chatEndRef = useRef(null);
 
   useEffect(() => {
+    const formattedName = slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    setStoreName(formattedName);
+
     // Generate unique session ID for this customer
     const existingSession = sessionStorage.getItem(`jualin_session_${slug}`);
     if (existingSession) {
       setSessionId(existingSession);
-      // Load existing chat history
+      // Load existing chat history (no welcome msg — returning customer)
       loadHistory(existingSession);
     } else {
       const newSession = `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       setSessionId(newSession);
       sessionStorage.setItem(`jualin_session_${slug}`, newSession);
+      
+      // BUG 18 FIX: Only show welcome for NEW sessions
+      setMessages([
+        {
+          role: "ai",
+          content: `Hai kak! 👋 Selamat datang di ${formattedName}. Ada yang bisa kami bantu? Silakan tanya-tanya produk kami ya 😊`,
+          time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
     }
-
-    // Format store name from slug
-    setStoreName(slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "));
-
-    // Send welcome message
-    setMessages([
-      {
-        role: "ai",
-        content: `Hai kak! 👋 Selamat datang di ${slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}. Ada yang bisa kami bantu? Silakan tanya-tanya produk kami ya 😊`,
-        time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
-      },
-    ]);
   }, [slug]);
 
   useEffect(() => {
