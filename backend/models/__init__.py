@@ -30,6 +30,14 @@ from models.template import Template
 from models.onboarding import SellerOnboarding
 from models.storefront import Storefront, StorefrontSection
 from models.campaign_recommendation import CampaignRecommendation
+from models.referral import ReferralCode, ReferralEvent, ResellerProfile, CommissionRule, CommissionEvent
+from models.lead import LeadForm, LeadSubmission
+from models.playbook import SalesPlaybook, SalesPlaybookRule
+from models.customer_score import CustomerScore
+from models.offer import Offer, OfferRecommendation, OfferRedemption
+from models.knowledge import KnowledgeSource, KnowledgeChunk
+from models.qa_review import QAReviewItem
+from models.experiment import Experiment, ExperimentVariant, ExperimentAssignment, ExperimentEvent
 
 __all__ = [
     "Base",
@@ -57,5 +65,13 @@ __all__ = [
     "SellerOnboarding",
     "Storefront", "StorefrontSection",
     "CampaignRecommendation",
+    "ReferralCode", "ReferralEvent", "ResellerProfile", "CommissionRule", "CommissionEvent",
+    "LeadForm", "LeadSubmission",
+    "SalesPlaybook", "SalesPlaybookRule",
+    "CustomerScore",
+    "Offer", "OfferRecommendation", "OfferRedemption",
+    "KnowledgeSource", "KnowledgeChunk",
+    "QAReviewItem",
+    "Experiment", "ExperimentVariant", "ExperimentAssignment", "ExperimentEvent",
 ]
 

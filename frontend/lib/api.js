@@ -565,3 +565,101 @@ export async function getProductInsights() {
 export async function aiEnrichProduct(productId) {
   return apiFetch(`/api/products/${productId}/ai-enrich`, { method: "POST" });
 }
+
+// ══════════════════════════════════════════════════
+// Plan C: Referrals
+// ══════════════════════════════════════════════════
+export async function createReferralCode(data) {
+  return apiFetch("/api/referrals/codes", { method: "POST", body: JSON.stringify(data) });
+}
+export async function listReferralCodes() { return apiFetch("/api/referrals/codes"); }
+export async function getReferralSummary() { return apiFetch("/api/referrals/summary"); }
+export async function listResellers() { return apiFetch("/api/referrals/resellers"); }
+
+// ══════════════════════════════════════════════════
+// Plan C: Lead Capture
+// ══════════════════════════════════════════════════
+export async function createLeadForm(data) {
+  return apiFetch("/api/lead-forms/", { method: "POST", body: JSON.stringify(data) });
+}
+export async function listLeadForms() { return apiFetch("/api/lead-forms/"); }
+export async function listLeadSubmissions(status = "") {
+  return apiFetch(`/api/lead-forms/submissions${status ? `?status=${status}` : ""}`);
+}
+
+// ══════════════════════════════════════════════════
+// Plan C: Sales Playbooks
+// ══════════════════════════════════════════════════
+export async function listPlaybooks() { return apiFetch("/api/ai/playbooks"); }
+export async function updatePlaybook(id, data) {
+  return apiFetch(`/api/ai/playbooks/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+// ══════════════════════════════════════════════════
+// Plan C: Customer Scoring
+// ══════════════════════════════════════════════════
+export async function getCustomerScore(customerId) {
+  return apiFetch(`/api/ai/customers/${customerId}/score`);
+}
+export async function recomputeScores() {
+  return apiFetch("/api/ai/customers/recompute-scores", { method: "POST" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan C: Offers
+// ══════════════════════════════════════════════════
+export async function createOffer(data) {
+  return apiFetch("/api/ai/offers", { method: "POST", body: JSON.stringify(data) });
+}
+export async function listOffers() { return apiFetch("/api/ai/offers"); }
+export async function listOfferRecommendations() { return apiFetch("/api/ai/offers/recommendations"); }
+export async function approveOfferRec(id) {
+  return apiFetch(`/api/ai/offers/recommendations/${id}/approve`, { method: "POST" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan C: Knowledge Base
+// ══════════════════════════════════════════════════
+export async function createKnowledgeSource(data) {
+  return apiFetch("/api/ai/knowledge/sources", { method: "POST", body: JSON.stringify(data) });
+}
+export async function listKnowledgeSources() { return apiFetch("/api/ai/knowledge/sources"); }
+export async function reindexKnowledge(sourceId) {
+  return apiFetch(`/api/ai/knowledge/sources/${sourceId}/reindex`, { method: "POST" });
+}
+export async function deleteKnowledge(sourceId) {
+  return apiFetch(`/api/ai/knowledge/sources/${sourceId}`, { method: "DELETE" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan C: QA Review
+// ══════════════════════════════════════════════════
+export async function listQAReviews(status = "pending") {
+  return apiFetch(`/api/ai/qa-review?status=${status}`);
+}
+export async function approveQA(id, data = {}) {
+  return apiFetch(`/api/ai/qa-review/${id}/approve`, { method: "POST", body: JSON.stringify(data) });
+}
+export async function rejectQA(id, data = {}) {
+  return apiFetch(`/api/ai/qa-review/${id}/reject`, { method: "POST", body: JSON.stringify(data) });
+}
+export async function editAndSendQA(id, data) {
+  return apiFetch(`/api/ai/qa-review/${id}/edit-and-send`, { method: "POST", body: JSON.stringify(data) });
+}
+
+// ══════════════════════════════════════════════════
+// Plan C: Experiments
+// ══════════════════════════════════════════════════
+export async function createExperiment(data) {
+  return apiFetch("/api/ai/experiments", { method: "POST", body: JSON.stringify(data) });
+}
+export async function listExperiments() { return apiFetch("/api/ai/experiments"); }
+export async function startExperiment(id) {
+  return apiFetch(`/api/ai/experiments/${id}/start`, { method: "POST" });
+}
+export async function stopExperiment(id) {
+  return apiFetch(`/api/ai/experiments/${id}/stop`, { method: "POST" });
+}
+export async function getExperimentResults(id) {
+  return apiFetch(`/api/ai/experiments/${id}/results`);
+}

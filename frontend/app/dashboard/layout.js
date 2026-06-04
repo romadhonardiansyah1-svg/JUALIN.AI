@@ -23,6 +23,13 @@ const sellerNavItems = [
   { href: "/dashboard/templates", icon: "📚", label: "Templates" },
   { href: "/dashboard/storefront", icon: "🏪", label: "Storefront" },
   { href: "/dashboard/onboarding", icon: "🎯", label: "Setup" },
+  { href: "/dashboard/referrals", icon: "🔗", label: "Referral" },
+  { href: "/dashboard/leads", icon: "📋", label: "Leads" },
+  { href: "/dashboard/ai-playbooks", icon: "🎭", label: "Playbooks" },
+  { href: "/dashboard/offers", icon: "🎁", label: "Offers" },
+  { href: "/dashboard/knowledge", icon: "🧠", label: "Knowledge" },
+  { href: "/dashboard/qa-review", icon: "🔍", label: "QA Review" },
+  { href: "/dashboard/experiments", icon: "🧪", label: "Experiments" },
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
 ];
 
@@ -47,6 +54,13 @@ const adminNavItems = [
   { href: "/dashboard/templates", icon: "📚", label: "Templates" },
   { href: "/dashboard/storefront", icon: "🏪", label: "Storefront" },
   { href: "/dashboard/onboarding", icon: "🎯", label: "Setup" },
+  { href: "/dashboard/referrals", icon: "🔗", label: "Referral" },
+  { href: "/dashboard/leads", icon: "📋", label: "Leads" },
+  { href: "/dashboard/ai-playbooks", icon: "🎭", label: "Playbooks" },
+  { href: "/dashboard/offers", icon: "🎁", label: "Offers" },
+  { href: "/dashboard/knowledge", icon: "🧠", label: "Knowledge" },
+  { href: "/dashboard/qa-review", icon: "🔍", label: "QA Review" },
+  { href: "/dashboard/experiments", icon: "🧪", label: "Experiments" },
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
 ];
 

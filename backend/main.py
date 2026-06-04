@@ -35,6 +35,9 @@ from api.routes_templates import router as templates_router
 from api.routes_onboarding import router as onboarding_router
 from api.routes_storefront import router as storefront_router
 from api.routes_campaign_recommendations import router as campaign_recs_router
+from api.routes_referrals import router as referrals_router
+from api.routes_leads import router as leads_router
+from api.routes_ai_commerce import router as ai_commerce_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -199,6 +202,9 @@ app.include_router(templates_router, prefix="/api/templates", tags=["Templates"]
 app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Onboarding"])
 app.include_router(storefront_router, prefix="/api/storefront", tags=["Storefront"])
 app.include_router(campaign_recs_router, prefix="/api/campaigns", tags=["Campaign Recommendations"])
+app.include_router(referrals_router, prefix="/api/referrals", tags=["Referrals"])
+app.include_router(leads_router, prefix="/api/lead-forms", tags=["Leads"])
+app.include_router(ai_commerce_router, prefix="/api/ai", tags=["AI Commerce"])
 
 # ── Static Files (uploads) ──
 import os
