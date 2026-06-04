@@ -19,14 +19,8 @@ export default function AdminSellersPage() {
       const data = await api.getAdminSellers();
       setSellers(data);
     } catch (e) {
-      // Demo data
-      setSellers([
-        { id: 1, nama_toko: "Toko Sari Fashion", email: "sari@demo.com", tier: "pro", products: 15, orders: 89, revenue: 8500000, chats: 456, ai_active: true, slug: "toko-sari-fashion", no_hp: "081234567890", created_at: "2026-01-15T10:00:00" },
-        { id: 2, nama_toko: "Batik Nusantara", email: "batik@demo.com", tier: "starter", products: 28, orders: 45, revenue: 4200000, chats: 234, ai_active: true, slug: "batik-nusantara", no_hp: "082345678901", created_at: "2026-02-20T10:00:00" },
-        { id: 3, nama_toko: "Sneakers ID", email: "sneakers@demo.com", tier: "free", products: 8, orders: 12, revenue: 1800000, chats: 89, ai_active: true, slug: "sneakers-id", no_hp: "", created_at: "2026-03-10T10:00:00" },
-        { id: 4, nama_toko: "Hijab Collection", email: "hijab@demo.com", tier: "pro", products: 42, orders: 156, revenue: 12000000, chats: 890, ai_active: true, slug: "hijab-collection", no_hp: "084567890123", created_at: "2026-01-05T10:00:00" },
-        { id: 5, nama_toko: "Gadget Murah", email: "gadget@demo.com", tier: "bisnis", products: 63, orders: 40, revenue: 2000000, chats: 120, ai_active: false, slug: "gadget-murah", no_hp: "085678901234", created_at: "2026-04-01T10:00:00" },
-      ]);
+      console.error("Failed to load sellers", e);
+      setSellers([]);
     }
     setLoading(false);
   }

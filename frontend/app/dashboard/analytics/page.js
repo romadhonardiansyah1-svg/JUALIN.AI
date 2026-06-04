@@ -17,10 +17,10 @@ export default function AnalyticsPage() {
         setQuota(q);
       } catch (e) {
         setSummary({
-          chat_today: 1247, orders_today: 342, revenue_today: 12500000,
-          products_active: 14, avg_response_time: 3,
+          chat_today: 0, orders_today: 0, revenue_today: 0,
+          products_active: 0, avg_response_time: 0,
         });
-        setQuota({ used: 312, limit: 2000, remaining: 1688, percentage: 16 });
+        setQuota({ used: 0, limit: 0, remaining: 0, percentage: 0 });
       }
 
       // Fetch top products from API (BUG 7 FIX)
@@ -32,13 +32,7 @@ export default function AnalyticsPage() {
           throw new Error("empty");
         }
       } catch {
-        setTopProducts([
-          { nama: "Baju Pink Satin", count: 87 },
-          { nama: "Dress Emerald Elegan", count: 64 },
-          { nama: "Kaos Oversize Hitam", count: 52 },
-          { nama: "Hoodie Abu-abu", count: 41 },
-          { nama: "Blouse Brukat Gold", count: 38 },
-        ]);
+        setTopProducts([]);
       }
 
       // Fetch daily orders from API (BUG 7 FIX)
@@ -50,7 +44,7 @@ export default function AnalyticsPage() {
           throw new Error("empty");
         }
       } catch {
-        setDailyOrders([5, 8, 12, 10, 15, 11, 18, 14, 20, 16, 22, 19, 15, 18, 21, 17, 12, 14, 16, 20, 23, 18, 15, 19, 22, 25, 20, 18, 23, 21]);
+        setDailyOrders([]);
       }
     }
     load();
@@ -132,7 +126,7 @@ export default function AnalyticsPage() {
             <div className={styles.aiStatItem}>
               <span className={styles.aiStatIcon}>✅</span>
               <div>
-                <div className={styles.aiStatValue}>98%</div>
+                <div className={styles.aiStatValue}>-</div>
                 <div className={styles.aiStatLabel}>Chat Terjawab AI</div>
               </div>
             </div>
@@ -146,7 +140,7 @@ export default function AnalyticsPage() {
             <div className={styles.aiStatItem}>
               <span className={styles.aiStatIcon}>🕐</span>
               <div>
-                <div className={styles.aiStatValue}>19:00 - 21:00</div>
+                <div className={styles.aiStatValue}>-</div>
                 <div className={styles.aiStatLabel}>Jam Tersibuk</div>
               </div>
             </div>

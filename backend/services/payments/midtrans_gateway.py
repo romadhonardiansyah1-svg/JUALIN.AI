@@ -61,12 +61,15 @@ class MidtransGateway(PaymentGateway):
         customer_phone: str,
         items: list[dict],
         method: str = "snap",
+        payment_token: str = "",
     ) -> PaymentCreateResult:
         """
         Create a Midtrans Snap transaction.
         Returns a snap_token and redirect_url for the payment page.
         """
         invoice_id = f"JUALIN-{order_id}-{int(__import__('time').time())}"
+        frontend_url = settings.FRONTEND_URL.rstrip("/")
+        token_query = f"&token={payment_token}" if payment_token else ""
 
         # Build item details for Midtrans
         midtrans_items = []
@@ -90,9 +93,9 @@ class MidtransGateway(PaymentGateway):
                 "phone": customer_phone or "",
             },
             "callbacks": {
-                "finish": f"{settings.FRONTEND_URL}/pay/{order_id}?status=finish",
-                "error": f"{settings.FRONTEND_URL}/pay/{order_id}?status=error",
-                "pending": f"{settings.FRONTEND_URL}/pay/{order_id}?status=pending",
+                "finish": f"{frontend_url}/pay/{order_id}?status=finish{token_query}",
+                "error": f"{frontend_url}/pay/{order_id}?status=error{token_query}",
+                "pending": f"{frontend_url}/pay/{order_id}?status=pending{token_query}",
             },
             "expiry": {
                 "unit": "minutes",

@@ -56,6 +56,7 @@ class CashiGateway(PaymentGateway):
         customer_phone: str,
         items: list[dict],
         method: str = "qris",
+        payment_token: str = "",
     ) -> PaymentCreateResult:
         """
         Create a payment via Cashi.id.
@@ -302,17 +303,16 @@ class CashiGateway(PaymentGateway):
         Additional validation: check status via API for double-verification.
         """
         # Method 1: Validate API key in headers
-        if headers:
-            received_key = headers.get("x-api-key", "")
-            if received_key and received_key != self.api_key:
-                logger.warning("Cashi webhook: invalid API key")
-                return WebhookResult(
-                    valid=False,
-                    order_id=None,
-                    status=None,
-                    amount=None,
-                    error_message="Invalid API key",
-                )
+        received_key = headers.get("x-api-key", "") if headers else ""
+        if received_key != self.api_key:
+            logger.warning("Cashi webhook: invalid or missing API key")
+            return WebhookResult(
+                valid=False,
+                order_id=None,
+                status=None,
+                amount=None,
+                error_message="Invalid API key",
+            )
 
         order_id = payload.get("order_id", "")
         cashi_status = payload.get("status", "")

@@ -19,6 +19,17 @@ from core.logging_config import get_logger, request_id_var, request_path_var
 logger = get_logger("middleware")
 
 
+def get_client_ip(request: Request) -> str:
+    """Return best-effort client IP behind Nginx/reverse proxies."""
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
+
+
 # ══════════════════════════════════════════════════
 # Request Logging + ID Middleware
 # ══════════════════════════════════════════════════
@@ -42,7 +53,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         request_path_var.set(request.url.path)
 
         # Client identification
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = get_client_ip(request)
         method = request.method
         path = request.url.path
 
@@ -138,7 +149,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     DEFAULT_LIMIT = (120, 60)
 
     async def dispatch(self, request: Request, call_next):
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = get_client_ip(request)
         path = request.url.path
 
         # Find matching rate limit config

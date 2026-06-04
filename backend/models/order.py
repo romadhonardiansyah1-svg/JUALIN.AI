@@ -110,7 +110,12 @@ class Order(Base):
     # Payment info (populated after payment is created)
     payment_method = Column(String(50), nullable=True)   # "qris", "va_bca", "gopay", "snap"
     payment_provider = Column(String(20), nullable=True)  # "midtrans", "cashi"
+    payment_invoice_id = Column(String(100), nullable=True, index=True)  # Provider order/invoice id
+    payment_access_token = Column(String(100), nullable=True, index=True)  # Public payment page token
     payment_url = Column(String(500), nullable=True)      # URL or QR data
+    payment_qr_data = Column(Text, nullable=True)
+    payment_va_number = Column(String(100), nullable=True)
+    payment_expires_at = Column(String(100), nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
 
     # Follow-up tracking

@@ -5,7 +5,7 @@ CRUD with auto-embedding + image upload for semantic search
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 import os
 import uuid as uuid_module
@@ -25,19 +25,19 @@ settings = get_settings()
 # ── Pydantic Schemas ──
 
 class ProductCreate(BaseModel):
-    nama: str
+    nama: str = Field(min_length=1, max_length=255)
     deskripsi: str = ""
-    harga: float
-    stok: int = 0
+    harga: float = Field(ge=0)
+    stok: int = Field(default=0, ge=0)
     kategori: str = "umum"
     foto_url: str = ""
 
 
 class ProductUpdate(BaseModel):
-    nama: Optional[str] = None
+    nama: Optional[str] = Field(default=None, min_length=1, max_length=255)
     deskripsi: Optional[str] = None
-    harga: Optional[float] = None
-    stok: Optional[int] = None
+    harga: Optional[float] = Field(default=None, ge=0)
+    stok: Optional[int] = Field(default=None, ge=0)
     kategori: Optional[str] = None
     foto_url: Optional[str] = None
 
@@ -297,7 +297,13 @@ async def upload_product_image(
     uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "products")
     os.makedirs(uploads_dir, exist_ok=True)
     
-    ext = file.filename.split(".")[-1] if "." in file.filename else "jpg"
+    ext_map = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+    }
+    ext = ext_map[file.content_type]
     filename = f"{current_user.id}_{product_id}_{uuid_module.uuid4().hex[:8]}.{ext}"
     filepath = os.path.join(uploads_dir, filename)
     

@@ -17,11 +17,18 @@ export default function AdminSystemPage() {
       const data = await api.getSystemHealth();
       setHealth(data);
     } catch (e) {
+      console.error("Failed to load system health", e);
       setHealth({
-        backend: "online", database: "connected", redis: "connected",
-        ai_engine: "ready", followup_scheduler: "running", version: "1.0.0",
-        python_version: "3.11.0", platform: "Linux", llm_model: "llama-3.1-8b-instant",
-        embedding_model: "all-MiniLM-L6-v2",
+        backend: "unknown",
+        database: "unknown",
+        redis: "unknown",
+        ai_engine: "unknown",
+        followup_scheduler: "unknown",
+        version: "unknown",
+        python_version: "-",
+        platform: "-",
+        llm_model: "-",
+        embedding_model: "-",
       });
     }
     setLoading(false);
@@ -124,9 +131,6 @@ export default function AdminSystemPage() {
               </button>
               <button className="btn btn-outline" onClick={() => { api.clearCache(); alert("Cache frontend berhasil dibersihkan!"); }}>
                 🧹 Clear Frontend Cache
-              </button>
-              <button className="btn btn-outline" style={{ color: "var(--danger)", borderColor: "var(--danger)" }}>
-                🔒 Force Logout All Users
               </button>
             </div>
           </div>

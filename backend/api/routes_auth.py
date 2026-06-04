@@ -25,14 +25,14 @@ security = HTTPBearer()
 # ── Pydantic Schemas ──
 
 class RegisterRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     nama_toko: str
     no_hp: str = ""
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
@@ -66,7 +66,7 @@ def create_slug(nama_toko: str) -> str:
     slug = re.sub(r'[^a-z0-9\s-]', '', slug)
     slug = re.sub(r'[\s]+', '-', slug)
     slug = re.sub(r'-+', '-', slug)
-    return slug.strip('-')
+    return slug.strip('-') or "toko"
 
 
 def hash_password(password: str) -> str:
@@ -109,8 +109,13 @@ async def get_current_user(
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Register seller baru + auto-create toko."""
+    email = str(req.email).lower().strip()
+    nama_toko = req.nama_toko.strip()
+    if not nama_toko:
+        raise HTTPException(status_code=400, detail="Nama toko wajib diisi")
+
     # Check email exists
-    result = await db.execute(select(User).where(User.email == req.email))
+    result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email sudah terdaftar")
     
@@ -119,20 +124,23 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
     
     # Create slug from store name
-    slug = create_slug(req.nama_toko)
+    base_slug = create_slug(nama_toko)
+    slug = base_slug
     
     # Check slug uniqueness
-    result = await db.execute(select(User).where(User.slug == slug))
-    if result.scalar_one_or_none():
-        # Append number if slug taken
-        import random
-        slug = f"{slug}-{random.randint(100, 999)}"
+    suffix = 2
+    while True:
+        result = await db.execute(select(User).where(User.slug == slug))
+        if not result.scalar_one_or_none():
+            break
+        slug = f"{base_slug}-{suffix}"
+        suffix += 1
     
     # Create user
     user = User(
-        email=req.email,
+        email=email,
         password_hash=hash_password(req.password),
-        nama_toko=req.nama_toko,
+        nama_toko=nama_toko,
         slug=slug,
         no_hp=req.no_hp,
         tier=UserTier.FREE,
@@ -155,7 +163,8 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Login seller dengan email + password."""
-    result = await db.execute(select(User).where(User.email == req.email))
+    email = str(req.email).lower().strip()
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(req.password, user.password_hash):

@@ -144,8 +144,8 @@ cmd_setup() {
     echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║  ✅ JUALIN.AI BERHASIL DI-DEPLOY!                   ║${NC}"
     echo -e "${GREEN}║                                                      ║${NC}"
-    echo -e "${GREEN}║  🌐 Website:  http://$SERVER_IP:3000                 ║${NC}"
-    echo -e "${GREEN}║  🔧 API:     http://$SERVER_IP:8000/docs             ║${NC}"
+    echo -e "${GREEN}║  🌐 Website:  http://$SERVER_IP                      ║${NC}"
+    echo -e "${GREEN}║  🔧 API Docs: http://$SERVER_IP/docs                 ║${NC}"
     echo -e "${GREEN}║                                                      ║${NC}"
     echo -e "${GREEN}║  Login Demo:                                         ║${NC}"
     echo -e "${GREEN}║    Seller: demo@jualin.ai / demo123                  ║${NC}"
@@ -260,7 +260,7 @@ SERVICE
 
     # Update backend to point to 9Router
     if [ -f "$APP_DIR/.env" ]; then
-        sed -i "s|LLM_BASE_URL=.*|LLM_BASE_URL=http://localhost:20128/v1|" $APP_DIR/.env
+        sed -i "s|LLM_BASE_URL=.*|LLM_BASE_URL=http://host.docker.internal:20128/v1|" $APP_DIR/.env
     fi
 
     echo -e "${GREEN}✅ 9Router configured on port 20128${NC}"
@@ -450,13 +450,103 @@ cmd_ssl() {
     fi
 
     sudo apt install -y certbot
+    cd $APP_DIR
+    docker compose stop nginx 2>/dev/null || true
     sudo certbot certonly --standalone -d "$DOMAIN" -d "www.$DOMAIN" --email "$EMAIL" --agree-tos --no-eff-email
 
     # Update .env with domain
     sed -i "s/DOMAIN=.*/DOMAIN=$DOMAIN/" $APP_DIR/.env
+    sed -i "s|BASE_URL=.*|BASE_URL=https://$DOMAIN|" $APP_DIR/.env
+    sed -i "s|FRONTEND_URL=.*|FRONTEND_URL=https://$DOMAIN|" $APP_DIR/.env
+
+    cat > $APP_DIR/nginx/default.conf << NGINXCONF
+limit_req_zone \$binary_remote_addr zone=api:10m rate=30r/s;
+limit_req_zone \$binary_remote_addr zone=chat:10m rate=10r/s;
+
+server {
+    listen 80;
+    server_name $DOMAIN www.$DOMAIN;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name $DOMAIN www.$DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    location /api/chat/stream {
+        limit_req zone=chat burst=5 nodelay;
+        proxy_pass http://backend:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        chunked_transfer_encoding on;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    location /api/chat/ {
+        limit_req zone=chat burst=5 nodelay;
+        proxy_pass http://backend:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/ {
+        limit_req zone=api burst=20 nodelay;
+        proxy_pass http://backend:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location /docs {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host \$host;
+    }
+
+    location /openapi.json {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host \$host;
+    }
+
+    location /uploads/ {
+        proxy_pass http://backend:8000;
+        proxy_set_header Host \$host;
+    }
+
+    location / {
+        proxy_pass http://frontend:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+NGINXCONF
+
+    docker compose up -d nginx
+    docker compose restart backend
 
     echo -e "${GREEN}✅ SSL certificate installed for $DOMAIN${NC}"
-    echo "Restart services: jualin restart"
+    echo "Nginx dan backend sudah direstart."
 }
 
 # ══════════════════════════════════════

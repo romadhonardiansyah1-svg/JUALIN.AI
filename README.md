@@ -45,7 +45,7 @@ cp .env.example .env
 # Edit .env sesuai kebutuhan
 docker compose up -d
 
-# Selesai! Buka http://IP_VPS:3000
+# Selesai! Buka http://IP_VPS
 ```
 
 Login demo:

@@ -12,6 +12,16 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     SECRET_KEY: str = "jualin-ai-secret-key-change-in-production"
+    SCHEDULER_ENABLED: bool = True
+
+    # Scale-up feature flags
+    ENABLE_WHATSAPP: bool = False
+    ENABLE_AI_ACTIONS: bool = False
+    ENABLE_CAMPAIGNS: bool = False
+    ENABLE_WORKFLOWS: bool = False
+    ENABLE_BILLING: bool = False
+    ENABLE_MARKETPLACE_IMPORT: bool = False
+    ENABLE_AI_QUALITY: bool = True
     
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/jualin_ai"
@@ -68,6 +78,13 @@ class Settings(BaseSettings):
     # Default payment provider per seller tier
     # Free/Starter = cashi (simpler), Pro/Bisnis = midtrans (full features)
     DEFAULT_PAYMENT_PROVIDER: str = "cashi"
+
+    # WhatsApp Cloud API
+    WHATSAPP_VERIFY_TOKEN: str = ""
+    WHATSAPP_ACCESS_TOKEN: str = ""
+    WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_GRAPH_VERSION: str = "v20.0"
+    WHATSAPP_APP_SECRET: str = ""
     
     class Config:
         env_file = ".env"

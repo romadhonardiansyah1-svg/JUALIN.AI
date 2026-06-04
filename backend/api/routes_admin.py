@@ -4,7 +4,7 @@ Platform-level management for admin users
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
@@ -178,7 +178,11 @@ async def update_seller(
     db: AsyncSession = Depends(get_db),
 ):
     """Admin update seller: change tier, toggle AI, etc."""
-    result = await db.execute(select(User).where(User.id == seller_id))
+    result = await db.execute(
+        select(User)
+        .where(User.id == seller_id)
+        .where(User.role == UserRole.SELLER)
+    )
     seller = result.scalar_one_or_none()
     
     if not seller:
@@ -207,11 +211,19 @@ async def update_seller(
 @router.get("/system")
 async def get_system_health(
     admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get system health information."""
     import platform
     import sys
     
+    database_status = "disconnected"
+    try:
+        await db.execute(text("SELECT 1"))
+        database_status = "connected"
+    except Exception:
+        pass
+
     # Check Redis
     redis_status = "disconnected"
     try:
@@ -225,10 +237,10 @@ async def get_system_health(
     
     return {
         "backend": "online",
-        "database": "connected",
+        "database": database_status,
         "redis": redis_status,
         "ai_engine": "ready",
-        "followup_scheduler": "running",
+        "followup_scheduler": "running" if settings.SCHEDULER_ENABLED else "disabled",
         "version": settings.APP_VERSION,
         "python_version": sys.version.split()[0],
         "platform": platform.system(),

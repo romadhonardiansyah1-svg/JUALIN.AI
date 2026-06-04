@@ -13,6 +13,13 @@ from models.order import Order, OrderStatus
 from models.order_status_history import OrderStatusHistory
 from models.customer_memory import CustomerMemory
 from models.chat_analytics import ChatAnalytics
+from models.scale_core import IntegrationAccount, WebhookEvent, BackgroundJob, AuditLog
+from models.inbox import Channel, ChannelContact, InboxThread, InboxMessage
+from models.crm import Customer, CustomerProfile, CustomerEvent, CustomerTag
+from models.ai_quality import AITrace, AIToolCall, AIRetrievalLog, AIFeedback, AIEvalCase, AIEvalRun
+from models.campaign import Campaign, CampaignRecipient, CampaignMessage
+from models.workflow import AutomationRule, AutomationRun, AutomationRunStep
+from models.billing import Plan, Subscription, UsageCounter, BillingEvent
 
 __all__ = [
     "Base",
@@ -23,4 +30,11 @@ __all__ = [
     "OrderStatusHistory",
     "CustomerMemory",
     "ChatAnalytics",
+    "IntegrationAccount", "WebhookEvent", "BackgroundJob", "AuditLog",
+    "Channel", "ChannelContact", "InboxThread", "InboxMessage",
+    "Customer", "CustomerProfile", "CustomerEvent", "CustomerTag",
+    "AITrace", "AIToolCall", "AIRetrievalLog", "AIFeedback", "AIEvalCase", "AIEvalRun",
+    "Campaign", "CampaignRecipient", "CampaignMessage",
+    "AutomationRule", "AutomationRun", "AutomationRunStep",
+    "Plan", "Subscription", "UsageCounter", "BillingEvent",
 ]

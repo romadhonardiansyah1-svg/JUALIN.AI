@@ -4,8 +4,6 @@
 # Development: docker compose up -d
 # Production:  docker compose --profile production up -d
 # ═══════════════════════════════════════════
-version: "3.9"
-
 services:
   # ── PostgreSQL + pgvector ──
   db:
@@ -19,7 +17,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jualin -d jualin_ai"]
       interval: 5s
@@ -33,7 +31,7 @@ services:
     restart: always
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -64,11 +62,30 @@ services:
       LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       CORS_ORIGINS: '["http://localhost:3000","http://localhost","https://${DOMAIN:-localhost}"]'
+      BASE_URL: ${BASE_URL:-http://${DOMAIN:-localhost}}
+      FRONTEND_URL: ${FRONTEND_URL:-http://${DOMAIN:-localhost}}
       DEBUG: ${DEBUG:-false}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-true}
+      ENABLE_WHATSAPP: ${ENABLE_WHATSAPP:-false}
+      ENABLE_AI_ACTIONS: ${ENABLE_AI_ACTIONS:-false}
+      ENABLE_CAMPAIGNS: ${ENABLE_CAMPAIGNS:-false}
+      ENABLE_WORKFLOWS: ${ENABLE_WORKFLOWS:-false}
+      ENABLE_BILLING: ${ENABLE_BILLING:-false}
+      ENABLE_MARKETPLACE_IMPORT: ${ENABLE_MARKETPLACE_IMPORT:-false}
+      ENABLE_AI_QUALITY: ${ENABLE_AI_QUALITY:-true}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_GRAPH_VERSION: ${WHATSAPP_GRAPH_VERSION:-v20.0}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - model_cache:/root/.cache
+      - uploads:/app/uploads
 
   # ── Frontend (Next.js) ──
   frontend:
@@ -81,8 +98,9 @@ services:
       - backend
     environment:
       HOSTNAME: "0.0.0.0"
+      INTERNAL_API_URL: http://backend:8000
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
 
   # ── Nginx (Production only) ──
   nginx:
@@ -94,10 +112,13 @@ services:
       - frontend
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
 
 volumes:
   pgdata:
   redisdata:
   model_cache:
+  uploads:

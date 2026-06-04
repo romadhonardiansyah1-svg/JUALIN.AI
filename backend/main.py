@@ -23,6 +23,14 @@ from api.routes_analytics import router as analytics_router
 from api.routes_admin import router as admin_router
 from api.routes_payments import router as payments_router
 from api.routes_webhooks import router as webhooks_router
+from api.routes_integrations import router as integrations_router
+from api.routes_inbox import router as inbox_router
+from api.routes_customers import router as customers_router
+from api.routes_ai_quality import router as ai_quality_router
+from api.routes_campaigns import router as campaigns_router
+from api.routes_workflows import router as workflows_router
+from api.routes_billing import router as billing_router
+from api.routes_marketplace import router as marketplace_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -89,8 +97,12 @@ async def lifespan(app: FastAPI):
     logger.info("✅ Database initialized with pgvector extension")
 
     # 3. Start follow-up scheduler
-    task = asyncio.create_task(followup_scheduler())
-    logger.info("⏰ Follow-up scheduler started (every 15 min)")
+    task = None
+    if settings.SCHEDULER_ENABLED:
+        task = asyncio.create_task(followup_scheduler())
+        logger.info("⏰ Follow-up scheduler started (every 15 min)")
+    else:
+        logger.info("Follow-up scheduler disabled by SCHEDULER_ENABLED=false")
 
     # 4. Log startup metrics
     startup_ms = round((time.monotonic() - start_time) * 1000)
@@ -110,11 +122,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
 
     # Cancel background tasks
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     # Close LLM HTTP client
     try:
@@ -170,6 +183,14 @@ app.include_router(analytics_router, prefix="/api/analytics", tags=["Analytics"]
 app.include_router(admin_router, prefix="/api/admin", tags=["Admin"])
 app.include_router(payments_router, prefix="/api/payments", tags=["Payments"])
 app.include_router(webhooks_router, prefix="/api/webhooks", tags=["Webhooks"])
+app.include_router(integrations_router, prefix="/api/integrations", tags=["Integrations"])
+app.include_router(inbox_router, prefix="/api/inbox", tags=["Inbox"])
+app.include_router(customers_router, prefix="/api/customers", tags=["Customers"])
+app.include_router(ai_quality_router, prefix="/api/ai-quality", tags=["AI Quality"])
+app.include_router(campaigns_router, prefix="/api/campaigns", tags=["Campaigns"])
+app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"])
+app.include_router(billing_router, prefix="/api/billing", tags=["Billing"])
+app.include_router(marketplace_router, prefix="/api/marketplace", tags=["Marketplace"])
 
 # ── Static Files (uploads) ──
 import os

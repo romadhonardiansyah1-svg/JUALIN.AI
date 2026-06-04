@@ -23,22 +23,16 @@ export default function AdminDashboard() {
       ]);
       
       setStats(statsData || {
-        total_sellers: 12, total_products: 156, total_orders: 342,
-        total_revenue: 28500000, total_chats: 4230, active_today: 8,
-        total_messages: 15600, pending_orders: 14,
+        total_sellers: 0, total_products: 0, total_orders: 0,
+        total_revenue: 0, total_chats: 0, active_today: 0,
+        total_messages: 0, pending_orders: 0,
       });
       
-      setSellers(sellersData.length > 0 ? sellersData : [
-        { id: 1, nama_toko: "Toko Sari Fashion", email: "sari@demo.com", tier: "pro", products: 15, orders: 89, revenue: 8500000, status: "active", chats: 456 },
-        { id: 2, nama_toko: "Batik Nusantara", email: "batik@demo.com", tier: "starter", products: 28, orders: 45, revenue: 4200000, status: "active", chats: 234 },
-        { id: 3, nama_toko: "Sneakers ID", email: "sneakers@demo.com", tier: "free", products: 8, orders: 12, revenue: 1800000, status: "active", chats: 89 },
-        { id: 4, nama_toko: "Hijab Collection", email: "hijab@demo.com", tier: "pro", products: 42, orders: 156, revenue: 12000000, status: "active", chats: 890 },
-        { id: 5, nama_toko: "Gadget Murah", email: "gadget@demo.com", tier: "bisnis", products: 63, orders: 40, revenue: 2000000, status: "inactive", chats: 120 },
-      ]);
+      setSellers(sellersData);
 
       setSystemHealth(healthData || {
-        backend: "online", database: "connected", redis: "connected",
-        ai_engine: "ready", followup_scheduler: "running", version: "1.0.0",
+        backend: "unknown", database: "unknown", redis: "unknown",
+        ai_engine: "unknown", followup_scheduler: "unknown", version: "1.0.0",
       });
     } catch (e) {
       console.error("Admin data load error:", e);

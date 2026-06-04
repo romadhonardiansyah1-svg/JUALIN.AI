@@ -28,11 +28,8 @@ export default function ChatMonitorPage() {
       const data = await api.getConversations();
       setConversations(data);
     } catch (e) {
-      // Demo conversations
-      setConversations([
-        { id: 1, session_id: "s1", customer_name: "Customer", message_count: 6, last_message: "Oke kak, saya order yang pink ya", created_at: new Date().toISOString(), is_urgent: 0 },
-        { id: 2, session_id: "s2", customer_name: "Customer", message_count: 3, last_message: "Ada celana cargo?", created_at: new Date().toISOString(), is_urgent: 0 },
-      ]);
+      console.error("Failed to load conversations:", e);
+      setConversations([]);
     }
   }
 
@@ -207,7 +204,7 @@ export default function ChatMonitorPage() {
           <div className={styles.chatPlaceholder}>
             <span>💬</span>
             <h3>Pilih Percakapan</h3>
-            <p className="text-muted">Pilih percakapan di kiri atau klik "Test Chat AI" untuk menguji</p>
+            <p className="text-muted">Pilih percakapan di kiri atau klik &quot;Test Chat AI&quot; untuk menguji</p>
           </div>
         )}
       </div>

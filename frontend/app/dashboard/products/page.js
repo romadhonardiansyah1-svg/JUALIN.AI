@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 import { useEffect, useState, useRef } from "react";
 import { api } from "@/lib/api";
 import styles from "./products.module.css";
@@ -25,17 +26,8 @@ export default function ProductsPage() {
       const data = await api.getProducts();
       setProducts(data);
     } catch (e) {
-      // Demo data for offline
-      setProducts([
-        { id: 1, nama: "Baju Pink Satin", harga: 89000, stok: 15, kategori: "dress", deskripsi: "Baju satin warna pink soft", is_active: 1, foto_url: "" },
-        { id: 2, nama: "Dress Emerald Elegan", harga: 189000, stok: 8, kategori: "dress", deskripsi: "Dress panjang emerald", is_active: 1, foto_url: "" },
-        { id: 3, nama: "Kaos Oversize Hitam", harga: 59000, stok: 30, kategori: "kaos", deskripsi: "Kaos oversize cotton combed", is_active: 1, foto_url: "" },
-        { id: 4, nama: "Blouse Brukat Gold", harga: 145000, stok: 10, kategori: "blouse", deskripsi: "Blouse brukat bordir bunga", is_active: 1, foto_url: "" },
-        { id: 5, nama: "Hoodie Abu-abu", harga: 125000, stok: 18, kategori: "hoodie", deskripsi: "Hoodie fleece hangat", is_active: 1, foto_url: "" },
-        { id: 6, nama: "T-shirt Band Vintage", harga: 75000, stok: 0, kategori: "kaos", deskripsi: "T-shirt sablon vintage edisi terbatas", is_active: 1, foto_url: "" },
-        { id: 7, nama: "Gamis Pesta Navy", harga: 225000, stok: 6, kategori: "gamis", deskripsi: "Gamis wolfis premium", is_active: 1, foto_url: "" },
-        { id: 8, nama: "Rok Plisket Cream", harga: 79000, stok: 20, kategori: "rok", deskripsi: "Rok plisket premium", is_active: 1, foto_url: "" },
-      ]);
+      console.error("Failed to load products:", e);
+      setProducts([]);
     }
     setLoading(false);
   }

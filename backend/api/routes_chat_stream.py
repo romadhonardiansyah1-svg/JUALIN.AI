@@ -180,6 +180,7 @@ async def stream_chat(
         intent = "general"
         sales_stage = "greeting"
         duration_ms = 0
+        order_created = False
 
         try:
             async for chunk in get_ai_response_stream(
@@ -204,6 +205,28 @@ async def stream_chat(
                     intent = chunk.get("intent", intent)
                     sales_stage = chunk.get("stage", sales_stage)
                     duration_ms = chunk.get("duration_ms", 0)
+
+                    try:
+                        from api.routes_chat import maybe_create_order_from_ai_response
+                        updated_response, order_created = await maybe_create_order_from_ai_response(
+                            ai_response_text=full_response,
+                            seller=seller,
+                            conversation=conversation,
+                            session_id=session_id,
+                            db=db,
+                        )
+                        if updated_response != full_response:
+                            appended = (
+                                updated_response[len(full_response):]
+                                if updated_response.startswith(full_response)
+                                else updated_response
+                            )
+                            full_response = updated_response
+                            if appended:
+                                yield await _sse_event({"type": "token", "token": appended})
+                    except Exception as e:
+                        logger.error(f"Stream order creation failed: {e}", exc_info=True)
+
                     yield await _sse_event({
                         "type": "done",
                         "done": True,
@@ -238,7 +261,7 @@ async def stream_chat(
                 response_time_ms=duration_ms,
                 user_message_length=len(req.message),
                 ai_response_length=len(full_response),
-                converted_to_order="ORDER CONFIRMED" in full_response.upper(),
+                converted_to_order=order_created,
             )
             db.add(analytics)
 

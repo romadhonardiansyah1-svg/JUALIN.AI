@@ -22,5 +22,6 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Expose port
 EXPOSE 8000
 
-# Run with uvicorn (4 workers for production)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Run with a single worker by default.
+# Multiple workers duplicate the in-process scheduler and embedding model memory.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-1}"]

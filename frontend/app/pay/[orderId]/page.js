@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
@@ -14,6 +15,7 @@ export default function PaymentPage() {
   const searchParams = useSearchParams();
   const orderId = params.orderId;
   const statusParam = searchParams.get("status"); // from Midtrans redirect
+  const token = searchParams.get("token") || "";
 
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState(null);
@@ -23,6 +25,7 @@ export default function PaymentPage() {
   const [polling, setPolling] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState(null);
   const [methods, setMethods] = useState([]);
+  const [methodsLoaded, setMethodsLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
 
   // Load order details
@@ -30,7 +33,8 @@ export default function PaymentPage() {
     async function loadOrder() {
       try {
         // Try to get order (might not be authed for public view)
-        const data = await api.getPaymentStatus(orderId);
+        if (!token) throw new Error("Link pembayaran tidak valid");
+        const data = await api.getPublicPaymentStatus(orderId, token);
         setOrder(data);
         setPaymentStatus(data.status);
         if (data.payment_created) {
@@ -38,29 +42,36 @@ export default function PaymentPage() {
         }
       } catch (e) {
         // Not authed — that's OK for public payment page
-        setError(null);
+        setError(e.message || "Link pembayaran tidak valid");
       }
       setLoading(false);
     }
 
     loadOrder();
-  }, [orderId]);
+  }, [orderId, token]);
 
   // Load available payment methods
   useEffect(() => {
     async function loadMethods() {
       try {
-        const data = await api.getPaymentMethods();
+        if (!token) {
+          setMethodsLoaded(true);
+          return;
+        }
+        const data = await api.getPublicPaymentMethods(orderId, token);
         setMethods(data.methods || []);
         if (data.methods?.length > 0) {
           setSelectedMethod(data.methods[0]);
         }
+        setMethodsLoaded(true);
       } catch (e) {
+        console.error("Failed to load payment methods", e);
+        setMethodsLoaded(true);
         // Not authed — show basic info
       }
     }
     loadMethods();
-  }, []);
+  }, [orderId, token]);
 
   // Poll payment status
   useEffect(() => {
@@ -69,7 +80,7 @@ export default function PaymentPage() {
     setPolling(true);
     const interval = setInterval(async () => {
       try {
-        const data = await api.getPaymentStatus(orderId);
+        const data = await api.getPublicPaymentStatus(orderId, token);
         setPaymentStatus(data.status);
         if (data.status === "paid") {
           clearInterval(interval);
@@ -84,12 +95,12 @@ export default function PaymentPage() {
       clearInterval(interval);
       setPolling(false);
     };
-  }, [paymentInfo, paymentStatus, orderId]);
+  }, [paymentInfo, paymentStatus, orderId, token]);
 
   // Handle Midtrans redirect status
   useEffect(() => {
     if (statusParam === "finish") {
-      setPaymentStatus("paid");
+      setPolling(true);
     }
   }, [statusParam]);
 
@@ -100,12 +111,14 @@ export default function PaymentPage() {
     setError(null);
 
     try {
-      const data = await api.createPayment({
+      const data = await api.createPublicPayment({
         order_id: parseInt(orderId),
+        token,
         method: selectedMethod.method,
         provider: selectedMethod.provider,
       });
       setPaymentInfo(data);
+      setOrder(data);
 
       // If Midtrans Snap with redirect URL, redirect
       if (data.payment_url && selectedMethod.method === "snap") {
@@ -116,7 +129,7 @@ export default function PaymentPage() {
       setError(e.message || "Gagal membuat pembayaran");
     }
     setCreating(false);
-  }, [selectedMethod, orderId, creating]);
+  }, [selectedMethod, orderId, token, creating]);
 
   // Format currency
   const formatRp = (amount) => `Rp ${Number(amount || 0).toLocaleString("id-ID")}`;
@@ -129,6 +142,19 @@ export default function PaymentPage() {
             <div className={styles.spinner}></div>
             <p>Memuat informasi pembayaran...</p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && !paymentInfo) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.card}>
+          <div className={styles.expiredIcon}>⚠️</div>
+          <h1 className={styles.title}>Link Pembayaran Tidak Valid</h1>
+          <p className={styles.subtitle}>{error}</p>
+          <p className={styles.muted}>Silakan minta link pembayaran baru dari seller.</p>
         </div>
       </div>
     );
@@ -187,7 +213,7 @@ export default function PaymentPage() {
         )}
 
         {/* Payment Info (if already created) */}
-        {paymentInfo && paymentInfo.payment_url && (
+        {paymentInfo && (paymentInfo.payment_url || paymentInfo.qr_data || paymentInfo.va_number) && (
           <div className={styles.paymentDetails}>
             {/* QR Code */}
             {paymentInfo.qr_data && (
@@ -279,6 +305,13 @@ export default function PaymentPage() {
             >
               {creating ? "Memproses..." : "Buat Pembayaran"}
             </button>
+          </div>
+        )}
+
+        {!paymentInfo && methodsLoaded && methods.length === 0 && (
+          <div className={styles.notice}>
+            <strong>Metode pembayaran belum tersedia.</strong>
+            <p>Silakan hubungi seller untuk menyelesaikan pembayaran order ini.</p>
           </div>
         )}
 

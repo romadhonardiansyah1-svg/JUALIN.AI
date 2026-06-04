@@ -97,6 +97,7 @@ class PaymentGateway(ABC):
         customer_phone: str,
         items: list[dict],
         method: str = "snap",
+        payment_token: str = "",
     ) -> PaymentCreateResult:
         """
         Create a new payment.

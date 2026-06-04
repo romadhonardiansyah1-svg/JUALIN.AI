@@ -13,6 +13,7 @@ Usage:
     result = await create_payment_for_order(order, method="qris", provider="cashi", db=db)
 """
 from datetime import datetime, timezone
+import secrets
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
@@ -100,6 +101,8 @@ async def create_payment_for_order(
             provider = settings.DEFAULT_PAYMENT_PROVIDER
 
     gateway = get_payment_gateway(provider)
+    if not order.payment_access_token:
+        order.payment_access_token = secrets.token_urlsafe(32)
 
     # Create payment via gateway
     result = await gateway.create_payment(
@@ -110,6 +113,7 @@ async def create_payment_for_order(
         customer_phone=order.customer_phone or "",
         items=order.items if isinstance(order.items, list) else [],
         method=method,
+        payment_token=order.payment_access_token,
     )
 
     if not result.success:
@@ -130,7 +134,11 @@ async def create_payment_for_order(
     if db:
         order.payment_method = result.method
         order.payment_provider = result.provider
+        order.payment_invoice_id = result.order_id
         order.payment_url = result.payment_url or result.qr_data
+        order.payment_qr_data = result.qr_data
+        order.payment_va_number = result.token if result.method.startswith("va_") else None
+        order.payment_expires_at = result.expires_at
 
         # Record status change
         from models.order_status_history import OrderStatusHistory
@@ -147,6 +155,7 @@ async def create_payment_for_order(
     return {
         "success": True,
         "order_id": order.id,
+        "status": order.status.value if hasattr(order.status, "value") else str(order.status),
         "invoice_id": result.order_id,
         "provider": result.provider,
         "method": result.method,
@@ -156,6 +165,8 @@ async def create_payment_for_order(
         "snap_token": result.token,       # For Midtrans Snap.js
         "va_number": result.token if method.startswith("va_") else None,
         "expires_at": result.expires_at,
+        "payment_created": True,
+        "public_token": order.payment_access_token,
     }
 
 
@@ -209,6 +220,8 @@ async def process_webhook(
     # Map payment status to order status
     old_status = order.status.value if hasattr(order.status, 'value') else str(order.status)
 
+    restore_stock = False
+
     if result.status == PaymentStatus.PAID:
         order.status = OrderStatus.PAID
         order.paid_at = datetime.now(timezone.utc)
@@ -216,16 +229,31 @@ async def process_webhook(
     elif result.status == PaymentStatus.EXPIRED:
         order.status = OrderStatus.CANCELLED
         new_status = "cancelled"
+        restore_stock = True
     elif result.status == PaymentStatus.FAILED:
         new_status = old_status  # Don't change status on failed
     elif result.status == PaymentStatus.CANCELLED:
         order.status = OrderStatus.CANCELLED
         new_status = "cancelled"
+        restore_stock = True
     elif result.status == PaymentStatus.REFUNDED:
         order.status = OrderStatus.REFUNDED
         new_status = "refunded"
+        restore_stock = True
     else:
         new_status = old_status  # Pending — no change
+
+    if restore_stock and old_status not in ("cancelled", "refunded"):
+        from models.product import Product
+        items = order.items if isinstance(order.items, list) else []
+        for item in items:
+            product_id = item.get("product_id")
+            if not product_id:
+                continue
+            product_result = await db.execute(select(Product).where(Product.id == product_id))
+            product = product_result.scalar_one_or_none()
+            if product:
+                product.stok += item.get("qty", 1)
 
     # Only record history if status actually changed
     if new_status != old_status:

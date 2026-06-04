@@ -18,10 +18,19 @@ export function debounce(fn, delay = 300) {
 const _cache = {};
 const CACHE_TTL = 60000; // 1 minute
 
+function getErrorMessage(data, fallback) {
+  if (!data) return fallback;
+  if (typeof data.detail === "string") return data.detail;
+  if (data.message) return data.message;
+  if (data.error) return data.error;
+  if (data.detail) return JSON.stringify(data.detail);
+  return fallback;
+}
+
 function getCached(key) {
   const entry = _cache[key];
   if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL) {
+  if (Date.now() - entry.timestamp > entry.ttl) {
     delete _cache[key];
     return null;
   }
@@ -66,7 +75,7 @@ async function fetchAPI(endpoint, options = {}) {
   const data = await res.json();
 
   if (!res.ok) {
-    throw new Error(data.detail || "Something went wrong");
+    throw new Error(getErrorMessage(data, "Something went wrong"));
   }
 
   return data;
@@ -115,7 +124,7 @@ async function uploadFile(endpoint, file, extraData = {}) {
   const data = await res.json();
 
   if (!res.ok) {
-    throw new Error(data.detail || "Upload gagal");
+    throw new Error(getErrorMessage(data, "Upload gagal"));
   }
 
   return data;
@@ -190,6 +199,57 @@ export const api = {
     fetchAPI(`/api/admin/sellers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   getSystemHealth: () => fetchAPI("/api/admin/system"),
 
+  // Scale-up: integrations
+  getIntegrations: () => fetchAPI("/api/integrations/"),
+  getIntegrationHealth: () => fetchAPI("/api/integrations/health"),
+  connectWhatsApp: (body) =>
+    fetchAPI("/api/integrations/whatsapp/connect", { method: "POST", body: JSON.stringify(body) }),
+
+  // Scale-up: inbox
+  getInboxThreads: () => fetchAPI("/api/inbox/threads"),
+  getInboxThread: (id) => fetchAPI(`/api/inbox/threads/${id}`),
+  replyInboxThread: (id, body) =>
+    fetchAPI(`/api/inbox/threads/${id}/reply`, { method: "POST", body: JSON.stringify(body) }),
+  updateInboxThreadMode: (id, body) =>
+    fetchAPI(`/api/inbox/threads/${id}/mode`, { method: "PATCH", body: JSON.stringify(body) }),
+
+  // Scale-up: customers
+  getCustomers: (q = "") => fetchAPI(`/api/customers/${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  getCustomer: (id) => fetchAPI(`/api/customers/${id}`),
+  updateCustomer: (id, body) =>
+    fetchAPI(`/api/customers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  getCustomerTimeline: (id) => fetchAPI(`/api/customers/${id}/timeline`),
+
+  // Scale-up: AI quality
+  getAITraces: (status = "") =>
+    fetchAPI(`/api/ai-quality/traces${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  createAIFeedback: (body) =>
+    fetchAPI("/api/ai-quality/feedback", { method: "POST", body: JSON.stringify(body) }),
+  getAIEvalCases: () => fetchAPI("/api/ai-quality/eval-cases"),
+  runAIEval: () => fetchAPI("/api/ai-quality/evals/run", { method: "POST" }),
+
+  // Scale-up: campaigns
+  getCampaigns: () => fetchAPI("/api/campaigns/"),
+  generateCampaign: (body) =>
+    fetchAPI("/api/campaigns/generate", { method: "POST", body: JSON.stringify(body) }),
+  updateCampaign: (id, body) =>
+    fetchAPI(`/api/campaigns/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  previewCampaign: (id) => fetchAPI(`/api/campaigns/${id}/preview`, { method: "POST" }),
+  sendCampaign: (id) => fetchAPI(`/api/campaigns/${id}/send`, { method: "POST" }),
+
+  // Scale-up: workflows
+  getWorkflowTemplates: () => fetchAPI("/api/workflows/templates"),
+  getWorkflowRules: () => fetchAPI("/api/workflows/rules"),
+  createWorkflowRule: (body) =>
+    fetchAPI("/api/workflows/rules", { method: "POST", body: JSON.stringify(body) }),
+  updateWorkflowRule: (id, body) =>
+    fetchAPI(`/api/workflows/rules/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+
+  // Scale-up: billing/import
+  getBillingPlans: () => fetchAPI("/api/billing/plans"),
+  getBillingUsage: () => fetchAPI("/api/billing/usage"),
+  previewProductImport: (file) => uploadFile("/api/marketplace/products/preview", file),
+
   // Orders
   getOrderStats: () => fetchCached("/api/orders/stats", {}, 30000),
   getOrderHistory: (id) => fetchAPI(`/api/orders/${id}/history`),
@@ -205,6 +265,12 @@ export const api = {
     fetchCached("/api/payments/methods", {}, 300000),  // Cache 5 min
   getPaymentConfig: () =>
     fetchCached("/api/payments/config", {}, 300000),
+  getPublicPaymentStatus: (orderId, token) =>
+    fetchAPI(`/api/payments/public/status/${orderId}?token=${encodeURIComponent(token)}`),
+  getPublicPaymentMethods: (orderId, token) =>
+    fetchAPI(`/api/payments/public/methods/${orderId}?token=${encodeURIComponent(token)}`),
+  createPublicPayment: (body) =>
+    fetchAPI("/api/payments/public/create", { method: "POST", body: JSON.stringify(body) }),
 
   // Utility
   clearCache: () => clearCache(),

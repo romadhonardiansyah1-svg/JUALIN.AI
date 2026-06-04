@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import styles from "./orders.module.css";
 
@@ -22,24 +22,19 @@ export default function OrdersPage() {
     return items.map(i => `${i.nama || "Produk"} x${i.qty || 1}`).join(", ");
   }
 
-  useEffect(() => {
-    loadOrders();
-  }, [filter]);
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     try {
       const data = await api.getOrders(filter);
       setOrders(data);
     } catch (e) {
-      setOrders([
-        { id: 1, customer_name: "Rina Sari", items: "Baju Pink Satin x2", total: 178000, status: "pending", created_at: new Date().toISOString() },
-        { id: 2, customer_name: "Budi Santoso", items: "Kaos Oversize Hitam x1, Hoodie Abu-abu x1", total: 184000, status: "paid", created_at: new Date().toISOString() },
-        { id: 3, customer_name: "Dewi Lestari", items: "Dress Emerald Elegan x1", total: 189000, status: "shipped", created_at: new Date().toISOString() },
-        { id: 4, customer_name: "Ahmad Fadli", items: "Celana Cargo Hijau x1", total: 135000, status: "done", created_at: new Date().toISOString() },
-        { id: 5, customer_name: "Siti Nurhaliza", items: "Gamis Pesta Navy x1", total: 225000, status: "pending", created_at: new Date().toISOString() },
-      ]);
+      console.error("Failed to load orders:", e);
+      setOrders([]);
     }
-  }
+  }, [filter]);
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
 
   const handleStatusChange = async (id, newStatus) => {
     try {

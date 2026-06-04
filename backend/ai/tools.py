@@ -4,10 +4,14 @@ Tools yang digunakan AI agent untuk akses database
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+import secrets
 
+from config import get_settings
 from models.product import Product
 from models.order import Order, OrderStatus
 from ai.embeddings import generate_embedding
+
+settings = get_settings()
 
 
 async def tool_cek_produk(product_id: int, db: AsyncSession) -> dict:
@@ -104,6 +108,7 @@ async def tool_buat_order(
         items=items,
         total=total,
         status=OrderStatus.PENDING,
+        payment_access_token=secrets.token_urlsafe(32),
     )
     
     db.add(order)
@@ -115,6 +120,7 @@ async def tool_buat_order(
         "total": total,
         "formatted": f"Rp {total:,.0f}",
         "status": "pending",
+        "payment_url": f"{settings.FRONTEND_URL.rstrip('/')}/pay/{order.id}?token={order.payment_access_token}",
         "message": f"Order #{order.id} berhasil dibuat! Total: Rp {total:,.0f}",
     }
 

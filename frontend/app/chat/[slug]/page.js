@@ -80,6 +80,47 @@ export default function PublicChatPage() {
     }
   }
 
+  const handleSendFallback = useCallback(async (userMessage) => {
+    try {
+      const data = await api.sendChat({
+        message: userMessage,
+        session_id: sessionId,
+        seller_slug: slug,
+      });
+
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastAi = updated[updated.length - 1];
+        if (lastAi && lastAi.role === "ai") {
+          updated[updated.length - 1] = {
+            ...lastAi,
+            content: data.response,
+            isStreaming: false,
+          };
+        }
+        return updated;
+      });
+
+      if (data.quota_exceeded) setQuotaExceeded(true);
+    } catch (e) {
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastAi = updated[updated.length - 1];
+        if (lastAi && lastAi.role === "ai") {
+          updated[updated.length - 1] = {
+            ...lastAi,
+            content: "Maaf kak, terjadi gangguan. Coba kirim lagi ya.",
+            isStreaming: false,
+          };
+        }
+        return updated;
+      });
+    }
+    setSending(false);
+    setStreaming(false);
+    abortRef.current = null;
+  }, [sessionId, slug]);
+
   const handleSend = useCallback(
     async (e) => {
       e?.preventDefault();
@@ -98,7 +139,6 @@ export default function PublicChatPage() {
       setStreaming(true);
 
       // Add a placeholder AI message that we'll stream into
-      const aiMsgIndex = messages.length + 1; // +1 for the user message we just added
       setMessages((prev) => [
         ...prev,
         {
@@ -164,50 +204,8 @@ export default function PublicChatPage() {
 
       abortRef.current = abort;
     },
-    [input, sending, streaming, quotaExceeded, sessionId, slug, messages]
+    [input, sending, streaming, quotaExceeded, sessionId, slug, handleSendFallback]
   );
-
-  // Fallback: non-streaming for when SSE fails
-  async function handleSendFallback(userMessage) {
-    try {
-      const data = await api.sendChat({
-        message: userMessage,
-        session_id: sessionId,
-        seller_slug: slug,
-      });
-
-      setMessages((prev) => {
-        const updated = [...prev];
-        const lastAi = updated[updated.length - 1];
-        if (lastAi && lastAi.role === "ai") {
-          updated[updated.length - 1] = {
-            ...lastAi,
-            content: data.response,
-            isStreaming: false,
-          };
-        }
-        return updated;
-      });
-
-      if (data.quota_exceeded) setQuotaExceeded(true);
-    } catch (e) {
-      setMessages((prev) => {
-        const updated = [...prev];
-        const lastAi = updated[updated.length - 1];
-        if (lastAi && lastAi.role === "ai") {
-          updated[updated.length - 1] = {
-            ...lastAi,
-            content: "Maaf kak, terjadi gangguan. Coba kirim lagi ya 🙏",
-            isStreaming: false,
-          };
-        }
-        return updated;
-      });
-    }
-    setSending(false);
-    setStreaming(false);
-    abortRef.current = null;
-  }
 
   // Quick reply suggestions
   const quickReplies = [

@@ -264,6 +264,26 @@
   border-radius: 8px;
 }
 
+.notice {
+  padding: 14px;
+  border-radius: 10px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  color: #92400E;
+  font-size: 0.86rem;
+  text-align: center;
+}
+
+.notice strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.notice p {
+  margin: 0;
+  color: #A16207;
+}
+
 /* Success / Expired States */
 .successIcon, .expiredIcon {
   font-size: 3.5rem;

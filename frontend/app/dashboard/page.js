@@ -23,10 +23,10 @@ export default function DashboardOverview() {
         setQuota(q);
       } catch (e) {
         setSummary({
-          chat_today: 156, orders_today: 23, revenue_today: 2100000,
-          products_active: 14, orders_pending: 5, messages_today: 312, avg_response_time: 3,
+          chat_today: 0, orders_today: 0, revenue_today: 0,
+          products_active: 0, orders_pending: 0, messages_today: 0, avg_response_time: 0,
         });
-        setQuota({ used: 312, limit: 2000, remaining: 1688, percentage: 16 });
+        setQuota({ used: 0, limit: 0, remaining: 0, percentage: 0 });
       }
 
       try {
@@ -34,12 +34,7 @@ export default function DashboardOverview() {
         if (od?.length > 0) setDailyOrders(od);
         else throw new Error("empty");
       } catch {
-        setDailyOrders([
-          { date: "", day: "Sen", count: 8 }, { date: "", day: "Sel", count: 12 },
-          { date: "", day: "Rab", count: 15 }, { date: "", day: "Kam", count: 10 },
-          { date: "", day: "Jum", count: 18 }, { date: "", day: "Sab", count: 22 },
-          { date: "", day: "Min", count: 23 },
-        ]);
+        setDailyOrders([]);
       }
 
       // Load chat stats (from Phase 2)

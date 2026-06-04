@@ -237,7 +237,7 @@ async def get_conversion_funnel(
     paid_result = await db.execute(
         select(func.count(Order.id))
         .where(Order.seller_id == seller_id)
-        .where(Order.status.notin_(["pending", "cancelled"]))
+        .where(~Order.status.in_([OrderStatus.PENDING, OrderStatus.CANCELLED]))
         .where(func.date(Order.created_at) >= start_date)
     )
     paid = paid_result.scalar() or 0
