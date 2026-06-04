@@ -9,6 +9,7 @@ export default function DashboardOverview() {
   const [quota, setQuota] = useState(null);
   const [dailyOrders, setDailyOrders] = useState([]);
   const [chatStats, setChatStats] = useState(null);
+  const [moneyData, setMoneyData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState(null);
 
@@ -43,6 +44,12 @@ export default function DashboardOverview() {
         setChatStats(cs);
       } catch { /* ignore */ }
 
+      // Load money dashboard (Market Acceptance Sprint 5)
+      try {
+        const md = await api.getMoneyDashboard();
+        setMoneyData(md);
+      } catch { /* ignore */ }
+
       setLoading(false);
     }
     load();
@@ -63,12 +70,19 @@ export default function DashboardOverview() {
     );
   }
 
-  const stats = [
-    { label: "Chat Hari Ini", value: summary?.chat_today || 0, change: "+12%", up: true, type: "green", icon: "💬" },
-    { label: "Order Hari Ini", value: summary?.orders_today || 0, change: "+8%", up: true, type: "blue", icon: "🛒" },
-    { label: "Revenue", value: `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)}Jt`, change: "+15%", up: true, type: "purple", icon: "💰" },
-    { label: "Avg Respons", value: `${summary?.avg_response_time || 3} dtk`, change: "", up: true, type: "orange", icon: "⚡" },
-  ];
+  const stats = moneyData && !moneyData.is_empty
+    ? [
+        { label: "AI Bantu Closing", value: `Rp ${((moneyData.ai_assisted_revenue || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "green", icon: "🤖" },
+        { label: "Order Dibantu AI", value: moneyData.ai_assisted_orders || 0, change: "", up: true, type: "blue", icon: "🛒" },
+        { label: "Payment Pending", value: `Rp ${((moneyData.pending_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: false, type: "orange", icon: "⏳" },
+        { label: "Revenue Recovered", value: `Rp ${((moneyData.recovered_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "purple", icon: "💰" },
+      ]
+    : [
+        { label: "Chat Hari Ini", value: summary?.chat_today || 0, change: "+12%", up: true, type: "green", icon: "💬" },
+        { label: "Order Hari Ini", value: summary?.orders_today || 0, change: "+8%", up: true, type: "blue", icon: "🛒" },
+        { label: "Revenue", value: `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)}Jt`, change: "+15%", up: true, type: "purple", icon: "💰" },
+        { label: "Avg Respons", value: `${summary?.avg_response_time || 3} dtk`, change: "", up: true, type: "orange", icon: "⚡" },
+      ];
 
   const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
   const maxOrder = Math.max(...dailyOrders.map(d => d.count || 0), 1);

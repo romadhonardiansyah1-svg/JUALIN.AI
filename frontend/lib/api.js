@@ -325,6 +325,60 @@ export const api = {
   getCampaignROI: (campaignId = 0) => fetchAPI(`/api/analytics/campaign-roi?campaign_id=${campaignId}`),
   getProductInsights: () => fetchAPI("/api/analytics/product-insights"),
   aiEnrichProduct: (id) => fetchAPI(`/api/products/${id}/ai-enrich`, { method: "POST" }),
+
+  // ── Market Acceptance: Sprint 1 — Quick-Start Onboarding ──
+  quickStartOnboarding: (body) =>
+    fetchAPI("/api/onboarding/quick-start", { method: "POST", body: JSON.stringify(body) }),
+  createSampleProducts: (body) =>
+    fetchAPI("/api/onboarding/sample-products", { method: "POST", body: JSON.stringify(body) }),
+  simulateChat: (body) =>
+    fetchAPI("/api/onboarding/simulate-chat", { method: "POST", body: JSON.stringify(body) }),
+
+  // ── Market Acceptance: Sprint 2 — Template Niche ──
+  getTemplateNiches: () => fetchAPI("/api/templates/niches"),
+  getRecommendedTemplates: (niche) => fetchAPI(`/api/templates/recommended?niche=${niche}`),
+  installTemplatePack: (body) =>
+    fetchAPI("/api/templates/install-pack", { method: "POST", body: JSON.stringify(body) }),
+
+  // ── Market Acceptance: Sprint 5 — Money Dashboard ──
+  getMoneyDashboard: () => fetchCached("/api/analytics/money", {}, 30000),
+  getAIImpact: () => fetchCached("/api/analytics/ai-impact", {}, 60000),
+  getRecoveryStats: () => fetchCached("/api/analytics/recovery", {}, 60000),
+
+  // ── Market Acceptance: Sprint 6 — Trust Layer ──
+  getTrustProfile: () => fetchAPI("/api/trust-profile"),
+  updateTrustProfile: (body) =>
+    fetchAPI("/api/trust-profile", { method: "PATCH", body: JSON.stringify(body) }),
+  getPublicTrustProfile: (slug) => fetchAPI(`/api/public/trust-profile/${slug}`),
+
+  // ── Market Acceptance: Sprint 3 — Growth Links ──
+  createGrowthLink: (body) =>
+    fetchAPI("/api/growth-links", { method: "POST", body: JSON.stringify(body) }),
+  getGrowthLinks: () => fetchAPI("/api/growth-links"),
+  getGrowthLinkStats: () => fetchAPI("/api/growth-links/stats"),
+
+  // ── Market Acceptance: Sprint 4 — WA Templates ──
+  generateWATemplate: (body) =>
+    fetchAPI("/api/whatsapp/templates/generate", { method: "POST", body: JSON.stringify(body) }),
+  getWATemplates: () => fetchAPI("/api/whatsapp/templates"),
+  submitWATemplate: (id) =>
+    fetchAPI(`/api/whatsapp/templates/${id}/submit`, { method: "POST" }),
+  syncWATemplateStatus: (id) =>
+    fetchAPI(`/api/whatsapp/templates/${id}/sync-status`, { method: "POST" }),
+
+  // ── Market Acceptance: Sprint 7 — Referral Rewards ──
+  getMyReferralLink: () => fetchAPI("/api/referrals/my-link"),
+  claimReferralReward: (body) =>
+    fetchAPI("/api/referrals/claim", { method: "POST", body: JSON.stringify(body) }),
+  getReferralRewards: () => fetchAPI("/api/referrals/rewards"),
+
+  // ── Market Acceptance: Sprint 8 — Concierge ──
+  startConcierge: (sellerId) =>
+    fetchAPI(`/api/admin/sellers/${sellerId}/concierge-start`, { method: "POST" }),
+  updateSetupChecklist: (sellerId, body) =>
+    fetchAPI(`/api/admin/sellers/${sellerId}/setup-checklist`, { method: "PATCH", body: JSON.stringify(body) }),
+  getImpersonationToken: (sellerId) =>
+    fetchAPI(`/api/admin/sellers/${sellerId}/impersonation-token`, { method: "POST" }),
 };
 
 

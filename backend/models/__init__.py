@@ -39,6 +39,13 @@ from models.knowledge import KnowledgeSource, KnowledgeChunk
 from models.qa_review import QAReviewItem
 from models.experiment import Experiment, ExperimentVariant, ExperimentAssignment, ExperimentEvent
 
+# Market Acceptance models
+from models.template_install import TemplatePackInstall
+from models.trust_profile import StoreTrustProfile
+from models.growth_link import GrowthLink
+from models.wa_template import WhatsAppMessageTemplate
+from models.concierge_checklist import ConciergeChecklist
+
 __all__ = [
     "Base",
     "User", "UserTier", "UserRole",

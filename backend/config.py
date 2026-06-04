@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     ENABLE_BILLING: bool = False
     ENABLE_MARKETPLACE_IMPORT: bool = False
     ENABLE_AI_QUALITY: bool = True
+
+    # Market Acceptance feature flags
+    ENABLE_GROWTH_LINKS: bool = True
+    ENABLE_WA_TEMPLATES: bool = True
+    ENABLE_TRUST_PROFILE: bool = True
+    ENABLE_CONCIERGE: bool = True
+    IMPERSONATION_TOKEN_MINUTES: int = 15
     
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/jualin_ai"

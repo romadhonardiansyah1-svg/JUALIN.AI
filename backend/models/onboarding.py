@@ -26,5 +26,11 @@ class SellerOnboarding(Base):
     completed = Column(Boolean, default=False, nullable=False)
     metadata_json = Column(JSON, default=dict)
 
+    # Quick-start onboarding fields
+    store_category = Column(String(50), nullable=True)   # kuliner, fashion, skincare, etc.
+    seller_goal = Column(String(255), nullable=True)      # tujuan seller
+    tone = Column(String(20), nullable=True)              # santai, formal, gaul
+    quick_start_completed = Column(Boolean, default=False, nullable=False)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

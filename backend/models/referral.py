@@ -80,3 +80,18 @@ class CommissionEvent(Base):
     amount = Column(Float, default=0)
     status = Column(String(20), default="pending", index=True)  # pending, approved, paid
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReferralReward(Base):
+    """Reward for referring new sellers (Market Acceptance Sprint 7)."""
+    __tablename__ = "referral_rewards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)       # who receives reward
+    referral_code_id = Column(Integer, ForeignKey("referral_codes.id"), nullable=False)
+    referred_seller_id = Column(Integer, ForeignKey("users.id"), nullable=False)           # who was referred
+    reward_type = Column(String(50), default="chat_quota")   # chat_quota, campaign_credit, subscription_discount
+    reward_value = Column(Float, default=0)
+    status = Column(String(20), default="pending", index=True)  # pending, approved, claimed
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

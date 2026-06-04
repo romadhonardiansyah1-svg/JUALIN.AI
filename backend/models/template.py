@@ -15,6 +15,8 @@ class Template(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, default="")
     category = Column(String(100), default="general", index=True)
+    niche = Column(String(50), nullable=True, index=True)    # kuliner, fashion, skincare, etc.
+    pack_id = Column(String(50), nullable=True, index=True)  # groups templates in a pack
     content_json = Column(JSON, default=dict)
     tags = Column(JSON, default=list)
     is_public = Column(Boolean, default=True, nullable=False)

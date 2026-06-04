@@ -429,3 +429,132 @@ async def get_product_insights(
         "no_sales_30d": [{"id": p.id, "name": p.nama} for p in no_sales[:10]],
         "period_days": 30,
     }
+
+
+# ── Money Dashboard (Market Acceptance Sprint 5) ──
+
+@router.get("/money")
+async def get_money_dashboard(
+    period: str = "30d",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Hero metrics: AI assisted paid orders, revenue, pending payment, recovered.
+    Uses pre-aggregated DailySellerMetric for performance on VPS 4GB.
+    """
+    from models.daily_metrics import DailySellerMetric
+
+    days = int(period.replace("d", ""))
+    start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+
+    result = await db.execute(
+        select(DailySellerMetric)
+        .where(DailySellerMetric.seller_id == current_user.id)
+        .where(DailySellerMetric.date >= start_date)
+    )
+    metrics = result.scalars().all()
+
+    if not metrics:
+        # Empty state for new sellers
+        return {
+            "ai_assisted_revenue": 0,
+            "ai_assisted_orders": 0,
+            "total_revenue": 0,
+            "total_orders_paid": 0,
+            "pending_payment_value": 0,
+            "recovered_payment_value": 0,
+            "period_days": days,
+            "is_empty": True,
+            "next_steps": [
+                {"action": "add_products", "label": "Tambah produk ke katalog"},
+                {"action": "connect_whatsapp", "label": "Hubungkan WhatsApp"},
+                {"action": "test_ai", "label": "Test AI chat"},
+            ],
+        }
+
+    return {
+        "ai_assisted_revenue": sum(m.ai_assisted_revenue for m in metrics),
+        "ai_assisted_orders": sum(m.ai_assisted_orders for m in metrics),
+        "total_revenue": sum(m.revenue_paid for m in metrics),
+        "total_orders_paid": sum(m.orders_paid for m in metrics),
+        "pending_payment_value": sum(m.pending_payment_value for m in metrics),
+        "recovered_payment_value": sum(m.recovered_payment_value for m in metrics),
+        "period_days": days,
+        "is_empty": False,
+    }
+
+
+@router.get("/ai-impact")
+async def get_ai_impact(
+    period: str = "30d",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """AI impact metrics: handoff rate, AI vs manual, top AI-assisted products."""
+    from models.daily_metrics import DailySellerMetric
+
+    days = int(period.replace("d", ""))
+    start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+
+    result = await db.execute(
+        select(DailySellerMetric)
+        .where(DailySellerMetric.seller_id == current_user.id)
+        .where(DailySellerMetric.date >= start_date)
+    )
+    metrics = result.scalars().all()
+
+    total_orders = sum(m.orders_created for m in metrics)
+    ai_orders = sum(m.ai_assisted_orders for m in metrics)
+    ai_handoffs = sum(m.ai_handoff_count for m in metrics)
+    total_chats = sum(m.chats_in for m in metrics)
+
+    return {
+        "ai_assisted_orders": ai_orders,
+        "manual_orders": total_orders - ai_orders,
+        "ai_handoff_count": ai_handoffs,
+        "ai_handoff_rate": round(ai_handoffs / total_chats * 100, 1) if total_chats > 0 else 0,
+        "ai_closing_rate": round(ai_orders / total_orders * 100, 1) if total_orders > 0 else 0,
+        "period_days": days,
+    }
+
+
+@router.get("/recovery")
+async def get_recovery_stats(
+    period: str = "30d",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Follow-up recovery stats: how much payment was recovered from follow-ups."""
+    from models.daily_metrics import DailySellerMetric
+
+    days = int(period.replace("d", ""))
+    start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+
+    result = await db.execute(
+        select(DailySellerMetric)
+        .where(DailySellerMetric.seller_id == current_user.id)
+        .where(DailySellerMetric.date >= start_date)
+        .order_by(DailySellerMetric.date.asc())
+    )
+    metrics = result.scalars().all()
+
+    total_recovered = sum(m.recovered_payment_value for m in metrics)
+    total_pending = sum(m.pending_payment_value for m in metrics)
+
+    daily = [
+        {
+            "date": m.date,
+            "recovered": m.recovered_payment_value,
+            "pending": m.pending_payment_value,
+        }
+        for m in metrics
+    ]
+
+    return {
+        "total_recovered": total_recovered,
+        "total_pending": total_pending,
+        "recovery_rate": round(total_recovered / total_pending * 100, 1) if total_pending > 0 else 0,
+        "daily": daily,
+        "period_days": days,
+    }

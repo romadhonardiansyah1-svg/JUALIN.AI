@@ -138,3 +138,120 @@ async def list_resellers(
         }
         for r in result.scalars().all()
     ]
+
+
+# ── Referral Growth Loop (Market Acceptance Sprint 7) ──
+
+@router.get("/my-link")
+async def get_my_referral_link(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get or auto-create the seller's referral link."""
+    from config import get_settings
+    settings = get_settings()
+
+    result = await db.execute(
+        select(ReferralCode).where(
+            ReferralCode.seller_id == current_user.id,
+            ReferralCode.is_active == True,
+        ).order_by(ReferralCode.created_at.asc()).limit(1)
+    )
+    rc = result.scalar_one_or_none()
+
+    if not rc:
+        code = f"REF-{current_user.slug}-{uuid_module.uuid4().hex[:4]}".upper()
+        rc = ReferralCode(
+            seller_id=current_user.id,
+            code=code,
+            description="Referral link otomatis",
+            commission_percent=5.0,
+        )
+        db.add(rc)
+        await db.commit()
+        await db.refresh(rc)
+
+    register_url = f"{settings.FRONTEND_URL}/register?ref={rc.code}"
+
+    return {
+        "code": rc.code,
+        "link": register_url,
+        "total_clicks": rc.total_clicks,
+        "total_conversions": rc.total_conversions,
+        "copy_caption": (
+            f"Hai! Aku pakai JUALIN.AI buat bantuin jualan online dan hasilnya mantap. "
+            f"Daftar gratis pakai link ini: {register_url} 🚀"
+        ),
+    }
+
+
+@router.get("/rewards")
+async def list_rewards(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List referral rewards for the current seller."""
+    from models.referral import ReferralReward
+
+    result = await db.execute(
+        select(ReferralReward).where(ReferralReward.seller_id == current_user.id)
+        .order_by(ReferralReward.created_at.desc())
+    )
+    rewards = result.scalars().all()
+
+    return [
+        {
+            "id": rw.id,
+            "reward_type": rw.reward_type,
+            "reward_value": rw.reward_value,
+            "status": rw.status,
+            "referred_seller_id": rw.referred_seller_id,
+            "claimed_at": rw.claimed_at.isoformat() if rw.claimed_at else None,
+            "created_at": rw.created_at.isoformat() if rw.created_at else "",
+        }
+        for rw in rewards
+    ]
+
+
+class ClaimRewardRequest(BaseModel):
+    reward_id: int
+
+
+@router.post("/claim")
+async def claim_reward(
+    req: ClaimRewardRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Claim a referral reward.
+    Validasi: tidak bisa self-claim, referred seller harus sudah aktif.
+    """
+    from models.referral import ReferralReward
+    from datetime import datetime, timezone
+
+    result = await db.execute(
+        select(ReferralReward).where(
+            ReferralReward.id == req.reward_id,
+            ReferralReward.seller_id == current_user.id,
+        )
+    )
+    reward = result.scalar_one_or_none()
+    if not reward:
+        raise HTTPException(status_code=404, detail="Reward tidak ditemukan")
+
+    if reward.status == "claimed":
+        return {"message": "Reward sudah diklaim sebelumnya", "already_claimed": True}
+
+    if reward.status != "approved":
+        raise HTTPException(status_code=400, detail="Reward belum diapprove")
+
+    # Self-claim prevention
+    if reward.referred_seller_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Tidak bisa klaim referral diri sendiri")
+
+    reward.status = "claimed"
+    reward.claimed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return {"message": "Reward berhasil diklaim!", "reward_type": reward.reward_type, "reward_value": reward.reward_value}

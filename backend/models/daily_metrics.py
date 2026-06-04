@@ -26,6 +26,13 @@ class DailySellerMetric(Base):
     campaign_conversions = Column(Integer, default=0)
     repeat_buyer_count = Column(Integer, default=0)
     top_products_json = Column(JSON, default=list)  # [{id, name, qty, revenue}]
+
+    # AI impact metrics (Market Acceptance Sprint 5)
+    ai_assisted_orders = Column(Integer, default=0)
+    ai_assisted_revenue = Column(Float, default=0)
+    recovered_payment_value = Column(Float, default=0)
+    ai_handoff_count = Column(Integer, default=0)
+
     extra_json = Column(JSON, default=dict)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

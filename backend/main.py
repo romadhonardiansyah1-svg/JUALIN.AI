@@ -38,6 +38,9 @@ from api.routes_campaign_recommendations import router as campaign_recs_router
 from api.routes_referrals import router as referrals_router
 from api.routes_leads import router as leads_router
 from api.routes_ai_commerce import router as ai_commerce_router
+from api.routes_trust import router as trust_router
+from api.routes_growth_links import router as growth_links_router
+from api.routes_wa_templates import router as wa_templates_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -205,6 +208,11 @@ app.include_router(campaign_recs_router, prefix="/api/campaigns", tags=["Campaig
 app.include_router(referrals_router, prefix="/api/referrals", tags=["Referrals"])
 app.include_router(leads_router, prefix="/api/lead-forms", tags=["Leads"])
 app.include_router(ai_commerce_router, prefix="/api/ai", tags=["AI Commerce"])
+
+# Market Acceptance routers
+app.include_router(trust_router, prefix="/api", tags=["Trust"])
+app.include_router(growth_links_router, prefix="/api/growth-links", tags=["Growth Links"])
+app.include_router(wa_templates_router, prefix="/api/whatsapp", tags=["WhatsApp Templates"])
 
 # ── Static Files (uploads) ──
 import os

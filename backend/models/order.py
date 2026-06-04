@@ -118,6 +118,12 @@ class Order(Base):
     payment_expires_at = Column(String(100), nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Attribution (Market Acceptance Sprint 5)
+    source = Column(String(50), nullable=True, index=True)  # wa_link, storefront_cta, campaign, manual
+    assisted_by_ai = Column(Integer, default=0)  # 1 = AI assisted, 0 = manual
+    campaign_id_ref = Column(Integer, nullable=True)  # FK-less ref to campaigns.id
+    growth_link_id = Column(Integer, nullable=True)   # FK-less ref to growth_links.id
+
     # Follow-up tracking
     followup_count = Column(Integer, default=0)
     last_followup_at = Column(DateTime(timezone=True), nullable=True)

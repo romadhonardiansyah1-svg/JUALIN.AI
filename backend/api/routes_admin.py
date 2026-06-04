@@ -488,3 +488,172 @@ async def list_audit_logs(
         }
         for log in logs
     ]
+
+
+# ── Concierge Setup Mode (Market Acceptance Sprint 8) ──
+
+class SetupChecklistUpdate(BaseModel):
+    products_imported: Optional[bool] = None
+    whatsapp_connected: Optional[bool] = None
+    payment_connected: Optional[bool] = None
+    storefront_published: Optional[bool] = None
+    first_campaign_draft: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+@router.post("/sellers/{seller_id}/concierge-start")
+async def start_concierge(
+    seller_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start concierge mode for a seller. Creates setup checklist. Audit logged."""
+    from models.concierge_checklist import ConciergeChecklist
+    from core.audit import record_audit
+
+    # Check seller exists
+    seller_result = await db.execute(select(User).where(User.id == seller_id))
+    seller = seller_result.scalar_one_or_none()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller tidak ditemukan")
+
+    # Check if already started
+    existing = await db.execute(
+        select(ConciergeChecklist).where(ConciergeChecklist.seller_id == seller_id)
+    )
+    checklist = existing.scalar_one_or_none()
+    if checklist:
+        return {
+            "message": "Concierge sudah dimulai sebelumnya",
+            "checklist_id": checklist.id,
+            "already_started": True,
+        }
+
+    checklist = ConciergeChecklist(
+        seller_id=seller_id,
+        admin_id=admin.id,
+    )
+    db.add(checklist)
+
+    await record_audit(
+        db, action="concierge_start", entity_type="seller",
+        entity_id=seller_id, seller_id=seller_id,
+        actor_user_id=admin.id, actor_type="admin",
+        metadata={"admin_email": admin.email},
+    )
+
+    await db.commit()
+    return {"message": "Concierge mode dimulai", "checklist_id": checklist.id}
+
+
+@router.patch("/sellers/{seller_id}/setup-checklist")
+async def update_setup_checklist(
+    seller_id: int,
+    req: SetupChecklistUpdate,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update concierge setup checklist items."""
+    from models.concierge_checklist import ConciergeChecklist
+
+    result = await db.execute(
+        select(ConciergeChecklist).where(ConciergeChecklist.seller_id == seller_id)
+    )
+    checklist = result.scalar_one_or_none()
+    if not checklist:
+        raise HTTPException(status_code=404, detail="Checklist tidak ditemukan. Mulai concierge dulu.")
+
+    if req.products_imported is not None:
+        checklist.products_imported = req.products_imported
+    if req.whatsapp_connected is not None:
+        checklist.whatsapp_connected = req.whatsapp_connected
+    if req.payment_connected is not None:
+        checklist.payment_connected = req.payment_connected
+    if req.storefront_published is not None:
+        checklist.storefront_published = req.storefront_published
+    if req.first_campaign_draft is not None:
+        checklist.first_campaign_draft = req.first_campaign_draft
+    if req.notes is not None:
+        checklist.notes = req.notes
+
+    # Auto-complete if all items checked
+    all_done = all([
+        checklist.products_imported, checklist.whatsapp_connected,
+        checklist.payment_connected, checklist.storefront_published,
+        checklist.first_campaign_draft,
+    ])
+    if all_done and not checklist.completed_at:
+        checklist.completed_at = datetime.now(timezone.utc)
+
+    await db.commit()
+
+    return {
+        "message": "Checklist updated",
+        "completed": all_done,
+        "checklist": {
+            "products_imported": checklist.products_imported,
+            "whatsapp_connected": checklist.whatsapp_connected,
+            "payment_connected": checklist.payment_connected,
+            "storefront_published": checklist.storefront_published,
+            "first_campaign_draft": checklist.first_campaign_draft,
+            "notes": checklist.notes,
+            "completed_at": checklist.completed_at.isoformat() if checklist.completed_at else None,
+        },
+    }
+
+
+@router.post("/sellers/{seller_id}/impersonation-token")
+async def create_impersonation_token(
+    seller_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate a short-lived JWT for impersonation. 15min default.
+    All actions are audit-logged with impersonation=true.
+    """
+    import jwt as pyjwt
+    from core.audit import record_audit
+
+    seller_result = await db.execute(select(User).where(User.id == seller_id))
+    seller = seller_result.scalar_one_or_none()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller tidak ditemukan")
+
+    # Generate impersonation token
+    from datetime import timedelta
+    exp = datetime.now(timezone.utc) + timedelta(minutes=settings.IMPERSONATION_TOKEN_MINUTES)
+
+    payload = {
+        "sub": str(seller.id),
+        "email": seller.email,
+        "role": seller.role.value if hasattr(seller.role, 'value') else seller.role,
+        "impersonation": True,
+        "impersonated_by": admin.id,
+        "target_seller_id": seller.id,
+        "exp": exp,
+    }
+    token = pyjwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+    # Audit log
+    await record_audit(
+        db, action="impersonation_token_created", entity_type="seller",
+        entity_id=seller_id, seller_id=seller_id,
+        actor_user_id=admin.id, actor_type="admin",
+        metadata={
+            "admin_email": admin.email,
+            "target_seller_email": seller.email,
+            "expires_at": exp.isoformat(),
+            "duration_minutes": settings.IMPERSONATION_TOKEN_MINUTES,
+        },
+    )
+    await db.commit()
+
+    return {
+        "token": token,
+        "seller_name": seller.nama_toko,
+        "seller_email": seller.email,
+        "expires_at": exp.isoformat(),
+        "duration_minutes": settings.IMPERSONATION_TOKEN_MINUTES,
+        "message": f"Token impersonasi untuk {seller.nama_toko} berlaku {settings.IMPERSONATION_TOKEN_MINUTES} menit",
+    }
