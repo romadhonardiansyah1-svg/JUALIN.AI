@@ -5,6 +5,9 @@ Smart caching with auto-invalidation for stale data
 import json
 import redis.asyncio as redis
 from config import get_settings
+from core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 settings = get_settings()
 
@@ -29,10 +32,10 @@ async def get_redis():
         client = redis.from_url(settings.REDIS_URL, decode_responses=True)
         await client.ping()
         _redis_client = client
-        print("✅ Redis connected")
+        logger.info("Redis connected")
         return _redis_client
     except Exception as e:
-        print(f"⚠️ Redis not available: {e}. Running without cache.")
+        logger.warning(f"Redis not available: {e}. Running without cache.")
         _redis_last_fail = time.time()
         return None
 

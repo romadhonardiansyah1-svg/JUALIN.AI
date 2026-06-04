@@ -3,8 +3,10 @@ JUALIN.AI — Embedding Module
 Sentence-transformer lokal untuk semantic search
 """
 from config import get_settings
+from core.logging_config import get_logger
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 _embed_model = None
 
@@ -15,7 +17,7 @@ def get_embedding_model():
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
         _embed_model = SentenceTransformer(settings.EMBEDDING_MODEL)
-        print(f"✅ Embedding model loaded: {settings.EMBEDDING_MODEL}")
+        logger.info(f"Embedding model loaded: {settings.EMBEDDING_MODEL}")
     return _embed_model
 
 

@@ -4,6 +4,9 @@ Koneksi ke LLM via 9Router atau langsung ke provider
 """
 import httpx
 from config import get_settings
+from core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 settings = get_settings()
 
@@ -54,7 +57,7 @@ async def chat_completion(
     except httpx.TimeoutException:
         return "Maaf kak, AI sedang sibuk. Coba lagi ya 🙏"
     except Exception as e:
-        print(f"LLM Error: {e}")
+        logger.error(f"LLM chat completion failed: {e}", exc_info=True)
         return "Maaf kak, terjadi gangguan. Coba kirim ulang ya 😊"
 
 
