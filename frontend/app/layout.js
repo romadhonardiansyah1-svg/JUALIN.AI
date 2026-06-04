@@ -6,8 +6,14 @@ export const metadata = {
     "Otomasi chat penjualan, proses pesanan, dan follow-up pembayaran dengan AI yang memahami katalog produkmu. Gratis untuk UMKM mikro.",
   keywords: "AI, sales assistant, UMKM, chatbot, jual online, toko online",
   manifest: "/manifest.json",
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: "no",
   themeColor: "#6366f1",
-  viewport: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
 };
 
 export default function RootLayout({ children }) {

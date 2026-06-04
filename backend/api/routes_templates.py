@@ -85,6 +85,7 @@ async def install_template(
         rule = AutomationRule(
             seller_id=current_user.id,
             template_key=template.content_json.get("template_key", ""),
+            name=template.name,
             trigger_json=template.content_json.get("trigger", {}),
             action_json=template.content_json.get("action", {}),
             status="inactive",
@@ -95,7 +96,7 @@ async def install_template(
         from models.campaign import Campaign
         camp = Campaign(
             seller_id=current_user.id,
-            name=f"[Template] {template.name}",
+            title=f"[Template] {template.name}",
             content=template.content_json.get("content", ""),
             status="draft",
         )

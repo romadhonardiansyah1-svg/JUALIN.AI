@@ -81,6 +81,8 @@ async function fetchAPI(endpoint, options = {}) {
   return data;
 }
 
+const apiFetch = fetchAPI;
+
 // ── Cached fetch (for data that rarely changes) ──
 async function fetchCached(endpoint, options = {}, ttl = CACHE_TTL) {
   const cacheKey = `api:${endpoint}`;

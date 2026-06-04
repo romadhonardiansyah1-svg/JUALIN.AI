@@ -68,7 +68,7 @@ async def create_draft_from_recommendation(
     from models.campaign import Campaign
     campaign = Campaign(
         seller_id=current_user.id,
-        name=f"[Autopilot] {rec.title}",
+        title=f"[Autopilot] {rec.title}",
         content=rec.suggested_content,
         status="draft",
     )
@@ -82,7 +82,7 @@ async def create_draft_from_recommendation(
     return {
         "message": "Draft campaign berhasil dibuat dari rekomendasi.",
         "campaign_id": campaign.id,
-        "campaign_name": campaign.name,
+        "campaign_title": campaign.title,
     }
 
 

@@ -153,6 +153,7 @@ async def submit_lead_form(
     )
     db.add(submission)
     form.submission_count = (form.submission_count or 0) + 1
+    await db.flush()
 
     # Create CRM customer event if phone/email provided
     try:
@@ -171,7 +172,10 @@ async def submit_lead_form(
             submission.customer_id = customer.id
             event = CustomerEvent(
                 customer_id=customer.id, seller_id=form.seller_id,
-                type="lead_form", data_json={"form_slug": slug, "submission_id": submission.id},
+                event_type="lead_form",
+                title=f"Lead form submitted: {form.title}",
+                data={"form_slug": slug, "submission_id": submission.id},
+                source="lead_form",
             )
             db.add(event)
     except Exception:

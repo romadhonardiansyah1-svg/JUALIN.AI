@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listQAReviews, approveQA, rejectQA, editAndSendQA } from "@/lib/api";
 import styles from "../scale.module.css";
 
@@ -20,12 +20,13 @@ export default function QAReviewPage() {
   const [editItem, setEditItem] = useState(null);
   const [editText, setEditText] = useState("");
 
-  useEffect(() => { loadData(); }, [filter]);
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try { setItems(await listQAReviews(filter)); } catch (e) { console.error(e); }
     setLoading(false);
-  }
+  }, [filter]);
+
+  useEffect(() => { loadData(); }, [loadData]);
 
   async function handleApprove(id) {
     try { await approveQA(id, { notes: "" }); loadData(); } catch (e) { alert(e.message); }

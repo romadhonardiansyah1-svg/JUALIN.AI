@@ -6,7 +6,7 @@ Run with:
 """
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from arq.cron import cron
 from arq.connections import RedisSettings
 
@@ -71,13 +71,17 @@ async def process_recorded_job(ctx, job_id: int):
             if result.get("success"):
                 job.status = "skipped" if result.get("skipped") else "done"
                 job.error_message = ""
+                job.next_run_at = None
             else:
                 is_permanent = result.get("permanent", False)
-                if is_permanent:
+                if is_permanent or job.attempts >= job.max_attempts:
                     job.status = "dead_letter"
                     job.retryable = False
+                    job.next_run_at = None
                 else:
                     job.status = "failed"
+                    backoff_seconds = min(900, 60 * (2 ** max(0, job.attempts - 1)))
+                    job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
                 job.error_message = result.get("error", "")
                 job.last_error_code = result.get("error_code", "")
 
@@ -95,8 +99,14 @@ async def process_recorded_job(ctx, job_id: int):
             if job.attempts >= job.max_attempts:
                 job.status = "dead_letter"
                 job.retryable = False
+                job.next_run_at = None
             else:
                 job.status = "failed" if getattr(job, 'retryable', True) else "dead_letter"
+                if job.status == "failed":
+                    backoff_seconds = min(900, 60 * (2 ** max(0, job.attempts - 1)))
+                    job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
+                else:
+                    job.next_run_at = None
             job.error_message = str(exc)
             job.last_error_code = type(exc).__name__
             job.finished_at = datetime.now(timezone.utc)
@@ -105,6 +115,33 @@ async def process_recorded_job(ctx, job_id: int):
             await db.commit()
             logger.error(f"Job {job.id} failed: {exc}", exc_info=True)
             raise
+
+
+async def cron_process_queued_jobs(ctx):
+    """
+    Execute DB-recorded jobs that were created by API routes or cron matchers.
+
+    This keeps the background_jobs table as the source of truth and prevents
+    jobs from sitting in queued/failed state forever when no explicit Redis
+    enqueue call was made by the producer.
+    """
+    now = datetime.now(timezone.utc)
+    async with async_session() as db:
+        result = await db.execute(
+            select(BackgroundJob.id)
+            .where(BackgroundJob.status.in_(("queued", "failed")))
+            .where(BackgroundJob.retryable == True)
+            .where(or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now))
+            .order_by(BackgroundJob.created_at.asc())
+            .limit(max(1, settings.ARQ_MAX_JOBS))
+        )
+        job_ids = [row[0] for row in result.all()]
+
+    for job_id in job_ids:
+        try:
+            await process_recorded_job(ctx, job_id)
+        except Exception as exc:
+            logger.warning(f"Queued job poll failed for job {job_id}: {exc}")
 
 
 # ══════════════════════════════════════════════════
@@ -201,6 +238,8 @@ _redis_url = urlparse(settings.REDIS_URL)
 class WorkerSettings:
     functions = [process_recorded_job]
     cron_jobs = [
+        # Execute DB-recorded jobs every minute
+        cron(cron_process_queued_jobs, minute=None, unique=True),
         # Follow-up every 15 minutes
         cron(cron_followup_scheduler, minute={0, 15, 30, 45}, unique=True),
         # Workflow tick every 5 minutes
@@ -215,4 +254,3 @@ class WorkerSettings:
         database=int((_redis_url.path or "/0").lstrip("/") or "0"),
         password=_redis_url.password,
     )
-

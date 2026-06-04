@@ -151,6 +151,13 @@ async def _compute_customer_score(db: AsyncSession, customer_id: int, seller_id:
     from models.order import Order, OrderStatus
     from models.conversation import Conversation
 
+    customer_result = await db.execute(
+        select(Customer).where(Customer.id == customer_id, Customer.seller_id == seller_id)
+    )
+    customer = customer_result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer tidak ditemukan")
+
     # Get or create score
     result = await db.execute(
         select(CustomerScore)
@@ -165,40 +172,73 @@ async def _compute_customer_score(db: AsyncSession, customer_id: int, seller_id:
     signals = {}
 
     # Order history
-    orders_result = await db.execute(
-        select(func.count(Order.id)).where(Order.seller_id == seller_id)
-        .where(Order.customer_name != "")  # approximate
-    )
+    order_query = select(func.count(Order.id)).where(Order.seller_id == seller_id)
+    paid_query = select(func.count(Order.id)).where(Order.seller_id == seller_id, Order.status == OrderStatus.PAID)
+    spent_query = select(func.coalesce(func.sum(Order.total), 0)).where(Order.seller_id == seller_id, Order.status == OrderStatus.PAID)
+    if customer.phone:
+        order_query = order_query.where(Order.customer_phone == customer.phone)
+        paid_query = paid_query.where(Order.customer_phone == customer.phone)
+        spent_query = spent_query.where(Order.customer_phone == customer.phone)
+    else:
+        order_query = order_query.where(Order.customer_name == customer.name)
+        paid_query = paid_query.where(Order.customer_name == customer.name)
+        spent_query = spent_query.where(Order.customer_name == customer.name)
+
+    orders_result = await db.execute(order_query)
     order_count = orders_result.scalar() or 0
     signals["order_count"] = order_count
 
-    paid_result = await db.execute(
-        select(func.count(Order.id)).where(Order.seller_id == seller_id, Order.status == OrderStatus.PAID)
-    )
+    paid_result = await db.execute(paid_query)
     paid_count = paid_result.scalar() or 0
     signals["paid_count"] = paid_count
+    spent_result = await db.execute(spent_query)
+    total_spent = float(spent_result.scalar() or customer.total_spent or 0)
+    signals["total_spent"] = total_spent
 
     # Chat recency
-    chat_result = await db.execute(
-        select(func.count(Conversation.id)).where(Conversation.seller_id == seller_id)
-    )
+    chat_query = select(func.count(Conversation.id)).where(Conversation.seller_id == seller_id)
+    if customer.session_id:
+        chat_query = chat_query.where(Conversation.session_id == customer.session_id)
+    elif customer.phone:
+        chat_query = chat_query.where(Conversation.customer_phone == customer.phone)
+    else:
+        chat_query = chat_query.where(Conversation.customer_name == customer.name)
+    chat_result = await db.execute(chat_query)
     chat_count = chat_result.scalar() or 0
     signals["chat_count"] = chat_count
 
+    event_result = await db.execute(
+        select(func.count(CustomerEvent.id))
+        .where(CustomerEvent.seller_id == seller_id, CustomerEvent.customer_id == customer_id)
+    )
+    event_count = event_result.scalar() or 0
+    signals["event_count"] = event_count
+
+    recency_bonus = 0
+    if customer.last_seen_at:
+        last_seen = customer.last_seen_at
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        days_since_seen = max(0, (datetime.now(timezone.utc) - last_seen).days)
+        signals["days_since_seen"] = days_since_seen
+        recency_bonus = max(0, 30 - days_since_seen)
+
     # Compute scores
-    score.purchase_likelihood = min(100, (chat_count * 10) + (order_count * 20))
+    score.purchase_likelihood = min(100, (chat_count * 10) + (event_count * 5) + recency_bonus + (order_count * 20))
     if chat_count > 0:
         reasons.append({"code": "active_chatter", "label": "Aktif berkomunikasi", "impact": 15})
+    if recency_bonus:
+        reasons.append({"code": "recent_activity", "label": "Baru berinteraksi", "impact": recency_bonus})
 
     score.repeat_likelihood = min(100, paid_count * 30)
     if paid_count >= 2:
         reasons.append({"code": "repeat_buyer", "label": "Pernah beli 2+ kali", "impact": 30})
 
-    score.churn_risk = max(0, 50 - (chat_count * 5) - (paid_count * 15))
+    score.churn_risk = max(0, 70 - recency_bonus - (chat_count * 5) - (paid_count * 15))
     if score.churn_risk > 60:
         reasons.append({"code": "high_churn", "label": "Risiko churn tinggi", "impact": -20})
 
-    score.value_score = min(100, paid_count * 25)
+    score.value_score = min(100, (paid_count * 20) + min(40, total_spent / 100000 * 5))
     score.support_risk = 20 if chat_count > 10 else 5
 
     # Overall

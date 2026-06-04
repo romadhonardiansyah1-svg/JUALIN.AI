@@ -106,8 +106,8 @@ async def get_public_storefront(
                 "name": p.nama,
                 "price": p.harga,
                 "description": p.deskripsi,
-                "image_url": p.image_url,
-                "category": getattr(p, "category", ""),
+                "image_url": p.foto_url,
+                "category": p.kategori,
             }
             for p in products
         ],

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getTemplates, installTemplate, duplicateTemplate } from "@/lib/api";
 import styles from "../scale.module.css";
 
@@ -27,16 +27,16 @@ export default function TemplatesPage() {
   const [filterType, setFilterType] = useState("");
   const [installing, setInstalling] = useState(null);
 
-  useEffect(() => { loadTemplates(); }, [filterType]);
-
-  async function loadTemplates() {
+  const loadTemplates = useCallback(async () => {
     setLoading(true);
     try {
       const params = filterType ? { type: filterType } : {};
       setTemplates(await getTemplates(params));
     } catch (e) { setError(e.message); }
     setLoading(false);
-  }
+  }, [filterType]);
+
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
   async function handleInstall(id) {
     setInstalling(id);
