@@ -15,7 +15,7 @@ const sellerNavItems = [
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
 ];
 
-// Admin navigation — completely different from seller
+// Admin navigation
 const adminNavItems = [
   { href: "/dashboard/admin", icon: "🏠", label: "Dashboard" },
   { href: "/dashboard/admin/sellers", icon: "👥", label: "Kelola Seller" },
@@ -32,6 +32,7 @@ export default function DashboardLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("jualin_token");
@@ -50,16 +51,21 @@ export default function DashboardLayout({ children }) {
       }
     }
     
-    // BUG 16 FIX: Refresh user data from API in background to catch tier/setting changes
+    // Refresh user data from API in background
     import("@/lib/api").then(({ api }) => {
       api.getMe().then(freshUser => {
         if (freshUser && freshUser.email) {
           localStorage.setItem("jualin_user", JSON.stringify(freshUser));
           setUser(freshUser);
         }
-      }).catch(() => { /* ignore — offline or token expired */ });
+      }).catch(() => { /* ignore */ });
     });
   }, [router]);
+
+  // Close sidebar on navigation (mobile)
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
 
   const isAdmin = user?.role === "admin";
   const navItems = useMemo(
@@ -67,7 +73,6 @@ export default function DashboardLayout({ children }) {
     [isAdmin]
   );
 
-  // Determine active page title
   const pageTitle = useMemo(() => {
     const flat = isAdmin ? adminNavItems : sellerNavItems;
     const match = flat.find((i) =>
@@ -88,8 +93,13 @@ export default function DashboardLayout({ children }) {
 
   return (
     <div className={styles.dashboardLayout}>
+      {/* Mobile Overlay */}
+      {sidebarOpen && (
+        <div className={styles.overlay} onClick={() => setSidebarOpen(false)} />
+      )}
+
       {/* Sidebar */}
-      <aside className={`${styles.sidebar} ${isAdmin ? styles.sidebarAdmin : ""}`}>
+      <aside className={`${styles.sidebar} ${isAdmin ? styles.sidebarAdmin : ""} ${sidebarOpen ? styles.sidebarOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <Link href="/" className={styles.logo}>
             <span className={styles.logoIcon}>🤖</span>
@@ -119,6 +129,7 @@ export default function DashboardLayout({ children }) {
                 >
                   <span className={styles.navIcon}>{item.icon}</span>
                   <span>{item.label}</span>
+                  {isActive && <span className={styles.activeIndicator}></span>}
                 </Link>
               </div>
             );
@@ -133,7 +144,7 @@ export default function DashboardLayout({ children }) {
             <div className={styles.userDetails}>
               <span className={styles.userName}>{user.nama_toko}</span>
               <span className={`badge ${isAdmin ? "badge-danger" : "badge-primary"} ${styles.userTier}`}>
-                {isAdmin ? "ADMIN" : user.tier}
+                {isAdmin ? "ADMIN" : user.tier?.toUpperCase()}
               </span>
             </div>
           </div>
@@ -147,9 +158,10 @@ export default function DashboardLayout({ children }) {
       <main className={styles.mainContent}>
         <header className={styles.topBar}>
           <div className={styles.topBarLeft}>
-            <h2 className={styles.pageTitle}>
-              {pageTitle}
-            </h2>
+            <button className={styles.hamburger} onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <span></span><span></span><span></span>
+            </button>
+            <h2 className={styles.pageTitle}>{pageTitle}</h2>
           </div>
           <div className={styles.topBarRight}>
             <button className={styles.notifBtn}>

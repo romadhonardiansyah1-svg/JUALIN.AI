@@ -10,6 +10,7 @@ export default function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -21,7 +22,7 @@ export default function LoginPage() {
       localStorage.setItem("jualin_user", JSON.stringify(data.user));
       router.push("/dashboard");
     } catch (err) {
-      setError(err.message || "Login gagal");
+      setError(err.message || "Login gagal. Periksa email dan password Anda.");
     } finally {
       setLoading(false);
     }
@@ -36,11 +37,11 @@ export default function LoginPage() {
             <span className={styles.logoText}>JUALIN.AI</span>
           </Link>
           <h1>Masuk ke Dashboard</h1>
-          <p className="text-muted">Kelola toko dan lihat performa AI kamu</p>
+          <p className="text-muted">Kelola toko dan pantau performa AI kamu</p>
         </div>
 
         <form onSubmit={handleSubmit} className={styles.authForm}>
-          {error && <div className={styles.errorMsg}>{error}</div>}
+          {error && <div className={styles.errorMsg}>⚠️ {error}</div>}
 
           <div className={styles.field}>
             <label className="label">Email</label>
@@ -51,23 +52,35 @@ export default function LoginPage() {
               value={form.email}
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               required
+              autoFocus
             />
           </div>
 
           <div className={styles.field}>
             <label className="label">Password</label>
-            <input
-              type="password"
-              className="input"
-              placeholder="Minimal 6 karakter"
-              value={form.password}
-              onChange={(e) => setForm({ ...form, password: e.target.value })}
-              required
-            />
+            <div className={styles.fieldWithToggle}>
+              <input
+                type={showPassword ? "text" : "password"}
+                className="input"
+                placeholder="Minimal 6 karakter"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                required
+                style={{ paddingRight: 44 }}
+              />
+              <button
+                type="button"
+                className={styles.passwordToggle}
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex={-1}
+              >
+                {showPassword ? "🙈" : "👁️"}
+              </button>
+            </div>
           </div>
 
           <button type="submit" className="btn btn-primary btn-lg" style={{ width: "100%" }} disabled={loading}>
-            {loading ? "Masuk..." : "Masuk →"}
+            {loading ? "Memproses..." : "Masuk →"}
           </button>
         </form>
 

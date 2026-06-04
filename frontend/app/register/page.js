@@ -46,7 +46,7 @@ function RegisterForm() {
         </div>
 
         <form onSubmit={handleSubmit} className={styles.authForm}>
-          {error && <div className={styles.errorMsg}>{error}</div>}
+          {error && <div className={styles.errorMsg}>⚠️ {error}</div>}
 
           <div className={styles.field}>
             <label className="label">Nama Toko</label>
