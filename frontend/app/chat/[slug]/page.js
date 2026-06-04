@@ -1,13 +1,14 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, sendChatStream } from "@/lib/api";
 import styles from "./public-chat.module.css";
 
 /**
  * PUBLIC CHAT PAGE — /chat/[slug]
  * Customer-facing: no login needed.
- * This is the page customers use to chat with a store's AI.
+ * Features: SSE streaming with word-by-word rendering,
+ * typing indicator, quick replies, sales stage badge.
  */
 export default function PublicChatPage() {
   const params = useParams();
@@ -15,27 +16,30 @@ export default function PublicChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const [storeName, setStoreName] = useState("");
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [salesStage, setSalesStage] = useState("greeting");
   const chatEndRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
-    const formattedName = slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    const formattedName = slug
+      .split("-")
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ");
     setStoreName(formattedName);
 
-    // Generate unique session ID for this customer
     const existingSession = sessionStorage.getItem(`jualin_session_${slug}`);
     if (existingSession) {
       setSessionId(existingSession);
-      // Load existing chat history (no welcome msg — returning customer)
       loadHistory(existingSession);
     } else {
       const newSession = `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       setSessionId(newSession);
       sessionStorage.setItem(`jualin_session_${slug}`, newSession);
-      
-      // BUG 18 FIX: Only show welcome for NEW sessions
+
       setMessages([
         {
           role: "ai",
@@ -50,67 +54,160 @@ export default function PublicChatPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Cleanup: abort stream on unmount
+  useEffect(() => {
+    return () => {
+      if (abortRef.current) abortRef.current();
+    };
+  }, []);
+
   async function loadHistory(sid) {
     try {
       const data = await api.getChatHistory(sid);
       if (data.messages?.length > 0) {
-        setMessages(data.messages.map(m => ({
-          role: m.role === "customer" ? "customer" : "ai",
-          content: m.content,
-          time: m.created_at ? new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "",
-        })));
+        setMessages(
+          data.messages.map((m) => ({
+            role: m.role === "customer" ? "customer" : "ai",
+            content: m.content,
+            time: m.created_at
+              ? new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+              : "",
+          }))
+        );
       }
     } catch (e) {
-      // No history found, that's fine
+      // No history, that's fine
     }
   }
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || sending || quotaExceeded) return;
+  const handleSend = useCallback(
+    async (e) => {
+      e?.preventDefault();
+      if (!input.trim() || sending || streaming || quotaExceeded) return;
 
-    const userMsg = {
-      role: "customer",
-      content: input.trim(),
-      time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
-    };
+      const userMessage = input.trim();
+      const userMsg = {
+        role: "customer",
+        content: userMessage,
+        time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
+      };
 
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
-    setSending(true);
+      setMessages((prev) => [...prev, userMsg]);
+      setInput("");
+      setSending(true);
+      setStreaming(true);
 
+      // Add a placeholder AI message that we'll stream into
+      const aiMsgIndex = messages.length + 1; // +1 for the user message we just added
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "ai",
+          content: "",
+          time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
+          isStreaming: true,
+        },
+      ]);
+
+      // Stream with SSE
+      const abort = sendChatStream({
+        body: {
+          message: userMessage,
+          session_id: sessionId,
+          seller_slug: slug,
+        },
+        onMetadata: (data) => {
+          if (data.stage) setSalesStage(data.stage);
+        },
+        onToken: (token) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastAi = updated[updated.length - 1];
+            if (lastAi && lastAi.role === "ai") {
+              updated[updated.length - 1] = {
+                ...lastAi,
+                content: lastAi.content + token,
+              };
+            }
+            return updated;
+          });
+        },
+        onDone: (data) => {
+          // Mark streaming as done
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastAi = updated[updated.length - 1];
+            if (lastAi && lastAi.role === "ai") {
+              updated[updated.length - 1] = {
+                ...lastAi,
+                content: data.full_response || lastAi.content,
+                isStreaming: false,
+              };
+            }
+            return updated;
+          });
+
+          if (data.quota_exceeded) setQuotaExceeded(true);
+          if (data.session_id) setSessionId(data.session_id);
+          if (data.stage) setSalesStage(data.stage);
+
+          setSending(false);
+          setStreaming(false);
+          abortRef.current = null;
+        },
+        onError: (err) => {
+          console.error("Stream error:", err);
+          // Fallback to non-streaming
+          handleSendFallback(userMessage);
+        },
+      });
+
+      abortRef.current = abort;
+    },
+    [input, sending, streaming, quotaExceeded, sessionId, slug, messages]
+  );
+
+  // Fallback: non-streaming for when SSE fails
+  async function handleSendFallback(userMessage) {
     try {
       const data = await api.sendChat({
-        message: userMsg.content,
+        message: userMessage,
         session_id: sessionId,
         seller_slug: slug,
       });
 
-      if (data.quota_exceeded) {
-        setQuotaExceeded(true);
-      }
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastAi = updated[updated.length - 1];
+        if (lastAi && lastAi.role === "ai") {
+          updated[updated.length - 1] = {
+            ...lastAi,
+            content: data.response,
+            isStreaming: false,
+          };
+        }
+        return updated;
+      });
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          content: data.response,
-          time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
+      if (data.quota_exceeded) setQuotaExceeded(true);
     } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          content: "Maaf kak, terjadi gangguan. Coba kirim lagi ya 🙏",
-          time: new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }),
-        },
-      ]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        const lastAi = updated[updated.length - 1];
+        if (lastAi && lastAi.role === "ai") {
+          updated[updated.length - 1] = {
+            ...lastAi,
+            content: "Maaf kak, terjadi gangguan. Coba kirim lagi ya 🙏",
+            isStreaming: false,
+          };
+        }
+        return updated;
+      });
     }
-
     setSending(false);
-  };
+    setStreaming(false);
+    abortRef.current = null;
+  }
 
   // Quick reply suggestions
   const quickReplies = [
@@ -120,14 +217,23 @@ export default function PublicChatPage() {
     "Cara order gimana?",
   ];
 
+  // Sales stage display
+  const stageLabels = {
+    greeting: null,
+    discovery: "🔍 Eksplorasi",
+    presentation: "🎯 Presentasi",
+    negotiation: "💬 Negosiasi",
+    closing: "🛒 Closing",
+    post_sale: "✅ Selesai",
+  };
+  const stageLabel = stageLabels[salesStage];
+
   return (
     <div className={styles.chatPage}>
       {/* Header */}
       <header className={styles.header}>
         <div className={styles.headerInfo}>
-          <div className={styles.storeAvatar}>
-            {storeName.charAt(0)}
-          </div>
+          <div className={styles.storeAvatar}>{storeName.charAt(0)}</div>
           <div>
             <h1 className={styles.storeName}>{storeName}</h1>
             <span className={styles.status}>
@@ -136,30 +242,41 @@ export default function PublicChatPage() {
             </span>
           </div>
         </div>
-        <div className={styles.poweredBy}>
-          Powered by <strong>JUALIN.AI</strong>
+        <div className={styles.headerRight}>
+          {stageLabel && <span className={styles.stageBadge}>{stageLabel}</span>}
+          <div className={styles.poweredBy}>
+            Powered by <strong>JUALIN.AI</strong>
+          </div>
         </div>
       </header>
 
       {/* Messages */}
       <div className={styles.messagesArea}>
         {messages.map((msg, i) => (
-          <div key={i} className={`${styles.msgRow} ${msg.role === "ai" ? styles.msgAi : styles.msgCustomer}`}>
-            {msg.role === "ai" && (
-              <div className={styles.aiAvatar}>🤖</div>
-            )}
-            <div className={`${styles.bubble} ${msg.role === "ai" ? styles.bubbleAi : styles.bubbleCustomer}`}>
-              <div className={styles.bubbleContent}>{msg.content}</div>
+          <div
+            key={i}
+            className={`${styles.msgRow} ${msg.role === "ai" ? styles.msgAi : styles.msgCustomer}`}
+          >
+            {msg.role === "ai" && <div className={styles.aiAvatar}>🤖</div>}
+            <div
+              className={`${styles.bubble} ${msg.role === "ai" ? styles.bubbleAi : styles.bubbleCustomer}`}
+            >
+              <div className={styles.bubbleContent}>
+                {msg.content}
+                {msg.isStreaming && <span className={styles.streamCursor}>▍</span>}
+              </div>
               <span className={styles.bubbleTime}>{msg.time}</span>
             </div>
           </div>
         ))}
 
-        {sending && (
+        {sending && !streaming && (
           <div className={`${styles.msgRow} ${styles.msgAi}`}>
             <div className={styles.aiAvatar}>🤖</div>
             <div className="typing-indicator">
-              <span></span><span></span><span></span>
+              <span></span>
+              <span></span>
+              <span></span>
             </div>
           </div>
         )}
@@ -174,7 +291,7 @@ export default function PublicChatPage() {
             <button
               key={i}
               className={styles.quickReplyBtn}
-              onClick={() => { setInput(qr); }}
+              onClick={() => setInput(qr)}
             >
               {qr}
             </button>
@@ -199,7 +316,11 @@ export default function PublicChatPage() {
               disabled={sending}
               autoFocus
             />
-            <button type="submit" className={styles.sendBtn} disabled={sending || !input.trim()}>
+            <button
+              type="submit"
+              className={styles.sendBtn}
+              disabled={sending || !input.trim()}
+            >
               {sending ? "⏳" : "➤"}
             </button>
           </>

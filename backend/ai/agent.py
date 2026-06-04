@@ -1,11 +1,19 @@
 """
 JUALIN.AI — AI Agent
-LangGraph-based sales agent with catalog-aware RAG and guardrails
-Optimized: intent detection, catalog caching, parallel calls
+LangGraph-based sales agent with catalog-aware RAG, guardrails,
+sales stage detection (SalesGPT-inspired), and SSE streaming support.
+
+Features:
+- Intent detection (product, policy, smalltalk, order, general)
+- Sales stage tracking (greeting → discovery → presentation → negotiation → closing → post_sale)
+- Semantic search via pgvector
+- In-memory catalog caching (5 min TTL)
+- Streaming response generator for SSE
+- Post-processing guardrails
 """
 import re
-import asyncio
 import time
+from typing import AsyncGenerator
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -13,18 +21,19 @@ from sqlalchemy import select
 from config import get_settings
 from models.product import Product
 from models.conversation import Message, MessageRole
-from models.order import Order
 from ai.prompts import get_system_prompt
 from ai.guardrails import apply_guardrails
+from core.logging_config import get_logger
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 # LLM Client (connects to 9Router or direct API)
 llm_client = AsyncOpenAI(
     base_url=settings.LLM_BASE_URL,
     api_key=settings.LLM_API_KEY,
-    timeout=20.0,  # 20 second timeout (default was 600s = 10 min!)
-    max_retries=1,  # 1 retry on failure
+    timeout=20.0,
+    max_retries=1,
 )
 
 # ── In-memory catalog cache ──
@@ -39,9 +48,10 @@ def _is_cache_valid(seller_id: int) -> bool:
     return (time.time() - _catalog_cache[seller_id]["timestamp"]) < CATALOG_CACHE_TTL
 
 
-# ── Intent Detection ──
+# ══════════════════════════════════════════════════
+# Intent Detection
+# ══════════════════════════════════════════════════
 
-# Keywords for non-product queries (kebijakan, pengiriman, dll)
 _NON_PRODUCT_KEYWORDS = [
     r'\bcod\b', r'\bcash\s*on\s*delivery\b',
     r'\bongkir\b', r'\bongkos\s*kirim\b', r'\bbiaya\s*kirim\b',
@@ -68,6 +78,13 @@ _PRODUCT_KEYWORDS = [
     r'\bwarna\b', r'\bukuran\b', r'\bsize\b', r'\bmodel\b',
 ]
 
+_ORDER_KEYWORDS = [
+    r'\bmau\s*beli\b', r'\bmau\s*order\b', r'\bmau\s*pesan\b',
+    r'\bbeli\s+\d+\b', r'\border\s+\d+\b',
+    r'\bcheckout\b', r'\bsaya\s*ambil\b', r'\bsaya\s*mau\b',
+    r'\bnama\s*:\s*', r'\balamat\s*:\s*',
+]
+
 
 def detect_intent(message: str) -> str:
     """
@@ -75,44 +92,114 @@ def detect_intent(message: str) -> str:
     Returns: 'product', 'policy', 'smalltalk', 'order', or 'general'
     """
     msg_lower = message.lower().strip()
-    
-    # Check smalltalk first (greetings, thanks)
+
+    # Check smalltalk first
     for pattern in _SMALLTALK_KEYWORDS:
         if re.search(pattern, msg_lower, re.IGNORECASE):
-            # But if it also contains product keywords, treat as product
             for pk in _PRODUCT_KEYWORDS:
                 if re.search(pk, msg_lower, re.IGNORECASE):
                     return "product"
             return "smalltalk"
-    
-    # Check non-product (policy) queries
-    policy_score = 0
-    for pattern in _NON_PRODUCT_KEYWORDS:
-        if re.search(pattern, msg_lower, re.IGNORECASE):
-            policy_score += 1
-    
-    # Check product queries
-    product_score = 0
-    for pattern in _PRODUCT_KEYWORDS:
-        if re.search(pattern, msg_lower, re.IGNORECASE):
-            product_score += 1
-    
-    # Decide based on scores
+
+    # Check order intent
+    order_score = sum(1 for p in _ORDER_KEYWORDS if re.search(p, msg_lower, re.IGNORECASE))
+    if order_score >= 2:
+        return "order"
+
+    # Check policy
+    policy_score = sum(1 for p in _NON_PRODUCT_KEYWORDS if re.search(p, msg_lower, re.IGNORECASE))
+    product_score = sum(1 for p in _PRODUCT_KEYWORDS if re.search(p, msg_lower, re.IGNORECASE))
+
     if policy_score > 0 and policy_score >= product_score:
         return "policy"
     if product_score > 0:
         return "product"
-    
-    # Default: general (let LLM decide)
+
     return "general"
 
+
+# ══════════════════════════════════════════════════
+# Sales Stage Detection (SalesGPT-inspired)
+# ══════════════════════════════════════════════════
+
+SALES_STAGES = {
+    "greeting": "Customer baru menyapa atau pertama kali chat.",
+    "discovery": "Customer sedang eksplorasi kebutuhan, tanya-tanya produk.",
+    "presentation": "Customer tertarik, AI sedang menjelaskan fitur/benefit produk.",
+    "negotiation": "Customer sedang pertimbangkan, tanya harga/diskon/perbandingan.",
+    "closing": "Customer siap beli, proses konfirmasi order.",
+    "post_sale": "Order sudah dibuat, follow-up atau ucapan terima kasih.",
+}
+
+
+def detect_sales_stage(conversation_history: list, current_intent: str) -> str:
+    """
+    Detect the current sales stage from conversation history and intent.
+    Uses a rule-based heuristic (fast, no LLM call needed).
+
+    Returns one of: greeting, discovery, presentation, negotiation, closing, post_sale
+    """
+    if not conversation_history:
+        return "greeting"
+
+    # Count messages
+    msg_count = len(conversation_history)
+
+    # Check if an order was recently confirmed
+    recent_texts = []
+    for msg in conversation_history[-4:]:
+        if isinstance(msg, Message):
+            recent_texts.append(msg.content.lower())
+        elif isinstance(msg, dict):
+            recent_texts.append(msg.get("content", "").lower())
+
+    combined_recent = " ".join(recent_texts)
+
+    # Post-sale: order confirmed in recent messages
+    if "order confirmed" in combined_recent or "pesanan berhasil" in combined_recent:
+        return "post_sale"
+
+    # Closing: customer providing personal data or confirming
+    closing_signals = [
+        r'\bnama\s*:\s*\w+', r'\balamat\s*:\s*\w+', r'\bhp\s*:\s*\d+',
+        r'\bkonfirmasi\b', r'\blanjut\s*order\b', r'\bsetuju\b',
+    ]
+    if any(re.search(p, combined_recent) for p in closing_signals):
+        return "closing"
+
+    # Negotiation: asking about price, comparing, bargaining
+    negotiation_signals = [
+        r'\blebih\s*murah\b', r'\bdiskon\b', r'\bpromo\b', r'\bbanding\b',
+        r'\bmahal\b', r'\btotal\s*berapa\b', r'\bkalau\s*\d+\b',
+    ]
+    if any(re.search(p, combined_recent) for p in negotiation_signals):
+        return "negotiation"
+
+    # Current intent driven
+    if current_intent == "order":
+        return "closing"
+
+    # Presentation: AI has shown product details
+    if msg_count >= 4 and current_intent == "product":
+        return "presentation"
+
+    # Discovery: customer exploring
+    if msg_count >= 2:
+        return "discovery"
+
+    return "greeting"
+
+
+# ══════════════════════════════════════════════════
+# Product Search & Catalog
+# ══════════════════════════════════════════════════
 
 async def search_products_semantic(query: str, seller_id: int, db: AsyncSession, limit: int = 5) -> list[dict]:
     """Semantic search for products using pgvector."""
     try:
         from ai.embeddings import generate_embedding
         query_embedding = generate_embedding(query)
-        
+
         result = await db.execute(
             select(Product)
             .where(Product.seller_id == seller_id)
@@ -121,21 +208,16 @@ async def search_products_semantic(query: str, seller_id: int, db: AsyncSession,
             .limit(limit)
         )
         products = result.scalars().all()
-        
+
         return [
             {
-                "id": p.id,
-                "nama": p.nama,
-                "deskripsi": p.deskripsi,
-                "harga": p.harga,
-                "stok": p.stok,
-                "kategori": p.kategori,
+                "id": p.id, "nama": p.nama, "deskripsi": p.deskripsi,
+                "harga": p.harga, "stok": p.stok, "kategori": p.kategori,
             }
             for p in products
         ]
     except Exception as e:
-        print(f"⚠️ Semantic search failed, falling back to keyword: {e}")
-        # Fallback to keyword search
+        logger.warning(f"Semantic search failed, falling back to keyword: {e}")
         result = await db.execute(
             select(Product)
             .where(Product.seller_id == seller_id)
@@ -145,12 +227,8 @@ async def search_products_semantic(query: str, seller_id: int, db: AsyncSession,
         )
         return [
             {
-                "id": p.id,
-                "nama": p.nama,
-                "deskripsi": p.deskripsi,
-                "harga": p.harga,
-                "stok": p.stok,
-                "kategori": p.kategori,
+                "id": p.id, "nama": p.nama, "deskripsi": p.deskripsi,
+                "harga": p.harga, "stok": p.stok, "kategori": p.kategori,
             }
             for p in result.scalars().all()
         ]
@@ -158,10 +236,9 @@ async def search_products_semantic(query: str, seller_id: int, db: AsyncSession,
 
 async def get_all_products(seller_id: int, db: AsyncSession) -> list[dict]:
     """Get all active products for a seller (with in-memory caching)."""
-    # Check cache first
     if _is_cache_valid(seller_id):
         return _catalog_cache[seller_id]["data"]
-    
+
     result = await db.execute(
         select(Product)
         .where(Product.seller_id == seller_id)
@@ -169,7 +246,7 @@ async def get_all_products(seller_id: int, db: AsyncSession) -> list[dict]:
         .order_by(Product.nama)
     )
     products = result.scalars().all()
-    
+
     data = [
         {
             "nama": p.nama,
@@ -180,10 +257,8 @@ async def get_all_products(seller_id: int, db: AsyncSession) -> list[dict]:
         }
         for p in products
     ]
-    
-    # Update cache
+
     _catalog_cache[seller_id] = {"data": data, "timestamp": time.time()}
-    
     return data
 
 
@@ -196,7 +271,7 @@ def format_catalog_context(products: list[dict]) -> str:
     """Format product catalog for AI system prompt."""
     if not products:
         return "Katalog kosong — belum ada produk yang ditambahkan."
-    
+
     lines = ["KATALOG PRODUK TOKO:"]
     for i, p in enumerate(products, 1):
         status = "✅ Ready" if p["stok"] > 0 else "❌ Habis"
@@ -205,7 +280,7 @@ def format_catalog_context(products: list[dict]) -> str:
         )
         if p.get("deskripsi"):
             lines.append(f"   Deskripsi: {p['deskripsi']}")
-    
+
     return "\n".join(lines)
 
 
@@ -221,32 +296,36 @@ def format_chat_history(messages: list) -> list[dict]:
     return formatted
 
 
-async def get_ai_response(
+# ══════════════════════════════════════════════════
+# Build Context (shared between streaming and non-streaming)
+# ══════════════════════════════════════════════════
+
+async def _build_llm_context(
     message: str,
     seller_id: int,
     conversation_history: list,
     seller_style: str,
     db: AsyncSession,
     memory_context: str = "",
-) -> str:
+) -> tuple[list[dict], str, str]:
     """
-    Main AI agent function (optimized):
-    1. Detect intent (product vs policy vs smalltalk)
-    2. Get catalog from cache (or DB)
-    3. Only do semantic search for product queries
-    4. Build context with guardrails + customer memory
-    5. Call LLM with optimized token count
-    6. Apply post-processing guardrails
+    Build the full LLM messages array with context.
+    Returns: (messages, intent, sales_stage)
+
+    This is shared between get_ai_response() and get_ai_response_stream()
+    to avoid code duplication.
     """
-    
     # 1. Detect intent
     intent = detect_intent(message)
-    
-    # 2. Get full catalog (cached)
+
+    # 2. Detect sales stage
+    sales_stage = detect_sales_stage(conversation_history, intent)
+
+    # 3. Get full catalog (cached)
     all_products = await get_all_products(seller_id, db)
     catalog_text = format_catalog_context(all_products)
-    
-    # 3. Semantic search ONLY for product-related queries
+
+    # 4. Semantic search ONLY for product-related queries
     relevant_text = ""
     if intent == "product":
         try:
@@ -259,60 +338,197 @@ async def get_ai_response(
                     if p.get("deskripsi"):
                         relevant_text += f"  Detail: {p['deskripsi'][:150]}\n"
         except Exception as e:
-            print(f"⚠️ Semantic search skipped: {e}")
-    
-    # 4. Build system prompt with catalog + guardrails + memory
+            logger.warning(f"Semantic search skipped: {e}")
+
+    # 5. Build system prompt
     system_prompt = get_system_prompt(
         seller_style=seller_style,
         catalog=catalog_text,
         relevant_products=relevant_text,
     )
-    
-    # Inject customer memory (if returning customer)
+
+    # Inject customer memory
     if memory_context:
         system_prompt += "\n" + memory_context
-    
-    # Inject intent hint for the AI
+
+    # Inject intent hint
     intent_hints = {
         "policy": "\n⚠️ INTENT TERDETEKSI: Customer bertanya tentang KEBIJAKAN TOKO. Jawab dari panduan kebijakan. JANGAN rekomendasi produk.",
         "smalltalk": "\n⚠️ INTENT TERDETEKSI: Customer menyapa/small talk. Balas ramah dan tanya ada yang bisa dibantu.",
         "product": "\n⚠️ INTENT TERDETEKSI: Customer bertanya tentang PRODUK. Jawab berdasarkan katalog.",
+        "order": "\n⚠️ INTENT TERDETEKSI: Customer MAU ORDER. Mulai proses konfirmasi pesanan.",
     }
     if intent in intent_hints:
         system_prompt += intent_hints[intent]
-    
-    # 5. Build messages for LLM (reduced history for speed)
+
+    # Inject sales stage hint
+    stage_desc = SALES_STAGES.get(sales_stage, "")
+    if stage_desc:
+        system_prompt += f"\n\n📊 SALES STAGE: {sales_stage.upper()} — {stage_desc}"
+
+    # 6. Build messages array
     messages = [{"role": "system", "content": system_prompt}]
     history = format_chat_history(conversation_history[:-1])  # Exclude current
-    # Only keep last 6 messages for faster response
-    messages.extend(history[-6:])
+    messages.extend(history[-6:])  # Last 6 for speed
     messages.append({"role": "user", "content": message})
-    
-    # 6. Call LLM with optimized settings
+
+    return messages, intent, sales_stage
+
+
+def _get_fallback_response(intent: str, all_products_count: int) -> str:
+    """Get smart fallback response based on intent when LLM fails."""
+    if intent == "policy":
+        return "Hai kak! 😊 Untuk info kebijakan toko, silakan hubungi kami langsung ya. Ada yang lain yang bisa dibantu?"
+    elif intent == "smalltalk":
+        return "Hai kak! 😊 Selamat datang! Ada yang bisa kami bantu? Silakan tanya-tanya produk kami ya!"
+    elif intent == "product" and all_products_count > 0:
+        return f"Hai kak! 😊 Kami punya {all_products_count} produk yang bisa dicek. Mau tanya produk yang mana kak?"
+    else:
+        return "Hai kak! Ada yang bisa kami bantu? Silakan tanya-tanya produk kami ya 😊"
+
+
+# ══════════════════════════════════════════════════
+# Non-Streaming Response (original, kept for backward compat)
+# ══════════════════════════════════════════════════
+
+async def get_ai_response(
+    message: str,
+    seller_id: int,
+    conversation_history: list,
+    seller_style: str,
+    db: AsyncSession,
+    memory_context: str = "",
+) -> tuple[str, str, str]:
+    """
+    Main AI agent function (non-streaming).
+    Returns: (response_text, intent, sales_stage)
+
+    Changed return type to tuple to include intent/stage for analytics.
+    """
+    start_time = time.monotonic()
+
+    messages, intent, sales_stage = await _build_llm_context(
+        message, seller_id, conversation_history, seller_style, db, memory_context,
+    )
+
+    all_products = await get_all_products(seller_id, db)
+
     try:
         response = await llm_client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=messages,
             temperature=0.7,
-            max_tokens=350,  # Reduced from 500 for faster response
+            max_tokens=350,
         )
         ai_text = response.choices[0].message.content
     except Exception as e:
-        print(f"❌ LLM Error: {e}")
-        # Smart fallback based on intent
-        if intent == "policy":
-            ai_text = "Hai kak! 😊 Untuk info kebijakan toko, silakan hubungi kami langsung ya. Ada yang lain yang bisa dibantu?"
-        elif intent == "smalltalk":
-            ai_text = "Hai kak! 😊 Selamat datang! Ada yang bisa kami bantu? Silakan tanya-tanya produk kami ya!"
-        elif intent == "product" and all_products:
-            ai_text = (
-                f"Hai kak! 😊 Kami punya {len(all_products)} produk yang bisa dicek. "
-                f"Mau tanya produk yang mana kak?"
-            )
-        else:
-            ai_text = "Hai kak! Ada yang bisa kami bantu? Silakan tanya-tanya produk kami ya 😊"
-    
-    # 7. Apply guardrails (post-processing)
+        logger.error(f"LLM Error: {e}", exc_info=True)
+        ai_text = _get_fallback_response(intent, len(all_products))
+
     ai_text = apply_guardrails(ai_text, all_products)
-    
-    return ai_text
+
+    duration_ms = round((time.monotonic() - start_time) * 1000)
+    logger.info(
+        f"AI response generated ({duration_ms}ms)",
+        extra={
+            "intent": intent,
+            "sales_stage": sales_stage,
+            "duration_ms": duration_ms,
+            "response_length": len(ai_text),
+        },
+    )
+
+    return ai_text, intent, sales_stage
+
+
+# ══════════════════════════════════════════════════
+# Streaming Response (SSE / token-by-token)
+# ══════════════════════════════════════════════════
+
+async def get_ai_response_stream(
+    message: str,
+    seller_id: int,
+    conversation_history: list,
+    seller_style: str,
+    db: AsyncSession,
+    memory_context: str = "",
+) -> AsyncGenerator[dict, None]:
+    """
+    Streaming AI agent function.
+    Yields dicts: {"token": "word", "done": False, "intent": "...", "stage": "..."}
+
+    The first yield includes intent and sales_stage metadata.
+    The last yield has done=True and includes the full response text.
+    """
+    start_time = time.monotonic()
+
+    messages, intent, sales_stage = await _build_llm_context(
+        message, seller_id, conversation_history, seller_style, db, memory_context,
+    )
+
+    all_products = await get_all_products(seller_id, db)
+
+    # Yield metadata first
+    yield {
+        "token": "",
+        "done": False,
+        "intent": intent,
+        "stage": sales_stage,
+        "type": "metadata",
+    }
+
+    full_response = ""
+
+    try:
+        stream = await llm_client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            temperature=0.7,
+            max_tokens=350,
+            stream=True,
+        )
+
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                token = chunk.choices[0].delta.content
+                full_response += token
+                yield {
+                    "token": token,
+                    "done": False,
+                    "type": "token",
+                }
+
+    except Exception as e:
+        logger.error(f"LLM Stream Error: {e}", exc_info=True)
+        full_response = _get_fallback_response(intent, len(all_products))
+        # Yield fallback as single chunk
+        yield {
+            "token": full_response,
+            "done": False,
+            "type": "token",
+        }
+
+    # Apply guardrails to final response
+    full_response = apply_guardrails(full_response, all_products)
+
+    duration_ms = round((time.monotonic() - start_time) * 1000)
+    logger.info(
+        f"AI stream completed ({duration_ms}ms)",
+        extra={
+            "intent": intent,
+            "sales_stage": sales_stage,
+            "duration_ms": duration_ms,
+            "response_length": len(full_response),
+        },
+    )
+
+    # Final yield with complete response
+    yield {
+        "token": "",
+        "done": True,
+        "full_response": full_response,
+        "intent": intent,
+        "stage": sales_stage,
+        "duration_ms": duration_ms,
+        "type": "done",
+    }

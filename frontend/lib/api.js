@@ -176,6 +176,12 @@ export const api = {
     fetchCached(`/api/analytics/orders-daily?days=${days}`, {}, 60000),
   getTopProducts: () =>
     fetchCached("/api/analytics/top-products", {}, 60000),
+  getChatStats: (days = 30) =>
+    fetchCached(`/api/analytics/chat-stats?days=${days}`, {}, 60000),
+  getConversionFunnel: (days = 30) =>
+    fetchCached(`/api/analytics/conversion-funnel?days=${days}`, {}, 60000),
+  getSalesStages: (days = 30) =>
+    fetchCached(`/api/analytics/sales-stages?days=${days}`, {}, 60000),
 
   // Admin
   getAdminStats: () => fetchAPI("/api/admin/stats"),
@@ -184,6 +190,99 @@ export const api = {
     fetchAPI(`/api/admin/sellers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   getSystemHealth: () => fetchAPI("/api/admin/system"),
 
+  // Orders
+  getOrderStats: () => fetchCached("/api/orders/stats", {}, 30000),
+  getOrderHistory: (id) => fetchAPI(`/api/orders/${id}/history`),
+  exportOrdersCsv: (status) =>
+    `${API_BASE}/api/orders/export/csv${status ? `?status=${status}` : ""}`,
+
+  // Payments
+  createPayment: (body) =>
+    fetchAPI("/api/payments/create", { method: "POST", body: JSON.stringify(body) }),
+  getPaymentStatus: (orderId) =>
+    fetchAPI(`/api/payments/status/${orderId}`),
+  getPaymentMethods: () =>
+    fetchCached("/api/payments/methods", {}, 300000),  // Cache 5 min
+  getPaymentConfig: () =>
+    fetchCached("/api/payments/config", {}, 300000),
+
   // Utility
   clearCache: () => clearCache(),
 };
+
+
+// ── SSE Streaming Chat Helper ──
+
+/**
+ * Send a chat message and receive streaming AI response via SSE.
+ * 
+ * @param {Object} body - {message, session_id, seller_slug}
+ * @param {Function} onToken - Called for each token: (token: string) => void
+ * @param {Function} onMetadata - Called once with metadata: ({intent, stage}) => void
+ * @param {Function} onDone - Called when stream completes: ({full_response, intent, stage, session_id}) => void
+ * @param {Function} onError - Called on error: (error: Error) => void
+ * @returns {Function} abort - Call this to cancel the stream
+ */
+export function sendChatStream({ body, onToken, onMetadata, onDone, onError }) {
+  const controller = new AbortController();
+
+  (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const jsonStr = line.slice(6).trim();
+          if (!jsonStr) continue;
+
+          try {
+            const event = JSON.parse(jsonStr);
+
+            if (event.type === "metadata" && onMetadata) {
+              onMetadata(event);
+            } else if (event.type === "token" && onToken) {
+              onToken(event.token);
+            } else if (event.type === "done" && onDone) {
+              onDone(event);
+            }
+          } catch (parseErr) {
+            // Skip malformed events
+            console.warn("SSE parse error:", parseErr);
+          }
+        }
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        if (onError) onError(err);
+        else console.error("Stream error:", err);
+      }
+    }
+  })();
+
+  // Return abort function
+  return () => controller.abort();
+}

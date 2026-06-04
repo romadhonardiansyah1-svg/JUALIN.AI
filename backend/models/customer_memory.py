@@ -24,6 +24,8 @@ class CustomerMemory(Base):
     total_spent = Column(Float, default=0)
     last_products = Column(JSON, default=list)     # ["Baju Pink", "Kaos Oversize"] max 5
     preferences = Column(JSON, default=list)       # ["pink", "satin", "M"] max 5
+    tags = Column(JSON, default=list)              # ["repeat_buyer", "high_value", "price_sensitive"] auto-generated
+    sentiment = Column(String(20), default="neutral")  # positive, neutral, negative
     notes = Column(String(500), default="")        # Ringkasan singkat
 
     # Visit tracking

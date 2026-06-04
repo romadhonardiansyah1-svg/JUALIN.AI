@@ -10,15 +10,19 @@ from pydantic import BaseModel
 from typing import Optional
 import uuid
 import re
+import time
 
 from config import get_settings
 from models.database import get_db
 from models.user import User, UserTier
 from models.conversation import Conversation, Message, MessageRole
+from models.chat_analytics import ChatAnalytics
 from api.routes_auth import get_current_user
+from core.logging_config import get_logger
 
 router = APIRouter()
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 # ── Pydantic Schemas ──
@@ -215,12 +219,15 @@ async def send_message(
         )
         memory_context = format_memory_context(memory, is_returning)
     except Exception as e:
-        print(f"⚠️ Memory lookup skipped: {e}")
+        logger.warning(f"Memory lookup skipped: {e}")
     
     # Generate AI response (with memory context injected)
+    intent = "general"
+    sales_stage = "greeting"
+    response_start = time.monotonic()
     try:
         from ai.agent import get_ai_response
-        ai_response_text = await get_ai_response(
+        ai_response_text, intent, sales_stage = await get_ai_response(
             message=req.message,
             seller_id=seller.id,
             conversation_history=history,
@@ -229,11 +236,12 @@ async def send_message(
             memory_context=memory_context,
         )
     except Exception as e:
-        print(f"❌ AI Error: {e}")
+        logger.error(f"AI Error: {e}", exc_info=True)
         ai_response_text = (
             f"Hai kak! Terima kasih sudah menghubungi {seller.nama_toko} 😊\n"
             f"Maaf, asisten kami sedang sibuk. Coba kirim pesan lagi ya kak!"
         )
+    response_time_ms = round((time.monotonic() - response_start) * 1000)
     
     # Parse and create order if AI confirmed the order
     parsed = parse_order_text(ai_response_text)
@@ -303,9 +311,9 @@ async def send_message(
                         )
                         await update_memory_after_order(memory, items, order_result["total"], db)
                     except Exception as e:
-                        print(f"⚠️ Failed to update memory after order: {e}")
+                        logger.warning(f"Failed to update memory after order: {e}")
         except Exception as e:
-            print(f"⚠️ Order creation failed: {e}")
+            logger.error(f"Order creation failed: {e}", exc_info=True)
 
     # Save AI response
     ai_msg = Message(
@@ -314,6 +322,19 @@ async def send_message(
         content=ai_response_text,
     )
     db.add(ai_msg)
+
+    # Track analytics
+    analytics = ChatAnalytics(
+        conversation_id=conversation.id,
+        seller_id=seller.id,
+        intent=intent,
+        sales_stage=sales_stage,
+        response_time_ms=response_time_ms,
+        user_message_length=len(req.message),
+        ai_response_length=len(ai_response_text),
+        converted_to_order="ORDER CONFIRMED" in ai_response_text.upper(),
+    )
+    db.add(analytics)
     await db.commit()
     
     return ChatResponse(

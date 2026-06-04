@@ -12,6 +12,7 @@ from models.user import User
 from models.product import Product
 from models.conversation import Conversation, Message
 from models.order import Order, OrderStatus
+from models.chat_analytics import ChatAnalytics
 from api.routes_auth import get_current_user
 
 router = APIRouter()
@@ -141,3 +142,153 @@ async def get_top_products(
     sorted_products = sorted(product_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
     
     return [{"nama": name, "count": count} for name, count in sorted_products]
+
+
+@router.get("/chat-stats")
+async def get_chat_stats(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get chat analytics: intent distribution, avg response time, sales stages."""
+    seller_id = current_user.id
+    start_date = datetime.now(timezone.utc).date() - timedelta(days=days)
+
+    # Intent distribution
+    intent_result = await db.execute(
+        select(ChatAnalytics.intent, func.count(ChatAnalytics.id))
+        .where(ChatAnalytics.seller_id == seller_id)
+        .where(func.date(ChatAnalytics.created_at) >= start_date)
+        .group_by(ChatAnalytics.intent)
+    )
+    intent_dist = {row[0]: row[1] for row in intent_result.all()}
+
+    # Average response time
+    avg_result = await db.execute(
+        select(func.avg(ChatAnalytics.response_time_ms))
+        .where(ChatAnalytics.seller_id == seller_id)
+        .where(func.date(ChatAnalytics.created_at) >= start_date)
+    )
+    avg_response_ms = round(avg_result.scalar() or 0)
+
+    # Total interactions
+    total_result = await db.execute(
+        select(func.count(ChatAnalytics.id))
+        .where(ChatAnalytics.seller_id == seller_id)
+        .where(func.date(ChatAnalytics.created_at) >= start_date)
+    )
+    total_interactions = total_result.scalar() or 0
+
+    # Conversion count
+    conv_result = await db.execute(
+        select(func.count(ChatAnalytics.id))
+        .where(ChatAnalytics.seller_id == seller_id)
+        .where(ChatAnalytics.converted_to_order == True)
+        .where(func.date(ChatAnalytics.created_at) >= start_date)
+    )
+    conversions = conv_result.scalar() or 0
+
+    return {
+        "intent_distribution": intent_dist,
+        "avg_response_time_ms": avg_response_ms,
+        "total_interactions": total_interactions,
+        "conversions": conversions,
+        "conversion_rate": round((conversions / total_interactions * 100), 1) if total_interactions > 0 else 0,
+        "period_days": days,
+    }
+
+
+@router.get("/conversion-funnel")
+async def get_conversion_funnel(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get conversion funnel: unique visitors → chats → orders."""
+    seller_id = current_user.id
+    start_date = datetime.now(timezone.utc).date() - timedelta(days=days)
+
+    # Unique conversations (visitors)
+    visitors_result = await db.execute(
+        select(func.count(func.distinct(Conversation.session_id)))
+        .where(Conversation.seller_id == seller_id)
+        .where(func.date(Conversation.created_at) >= start_date)
+    )
+    visitors = visitors_result.scalar() or 0
+
+    # Conversations with 2+ messages (engaged chats)
+    engaged_result = await db.execute(
+        select(func.count(func.distinct(Message.conversation_id)))
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .where(Conversation.seller_id == seller_id)
+        .where(func.date(Message.created_at) >= start_date)
+    )
+    engaged = engaged_result.scalar() or 0
+
+    # Orders created
+    orders_result = await db.execute(
+        select(func.count(Order.id))
+        .where(Order.seller_id == seller_id)
+        .where(func.date(Order.created_at) >= start_date)
+    )
+    orders = orders_result.scalar() or 0
+
+    # Orders paid
+    paid_result = await db.execute(
+        select(func.count(Order.id))
+        .where(Order.seller_id == seller_id)
+        .where(Order.status.notin_(["pending", "cancelled"]))
+        .where(func.date(Order.created_at) >= start_date)
+    )
+    paid = paid_result.scalar() or 0
+
+    return {
+        "funnel": [
+            {"stage": "Visitors", "count": visitors},
+            {"stage": "Engaged Chats", "count": engaged},
+            {"stage": "Orders Created", "count": orders},
+            {"stage": "Orders Paid", "count": paid},
+        ],
+        "period_days": days,
+    }
+
+
+@router.get("/sales-stages")
+async def get_sales_stages(
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get distribution of sales stages from chat analytics."""
+    seller_id = current_user.id
+    start_date = datetime.now(timezone.utc).date() - timedelta(days=days)
+
+    result = await db.execute(
+        select(ChatAnalytics.sales_stage, func.count(ChatAnalytics.id))
+        .where(ChatAnalytics.seller_id == seller_id)
+        .where(func.date(ChatAnalytics.created_at) >= start_date)
+        .group_by(ChatAnalytics.sales_stage)
+    )
+    stages = {row[0]: row[1] for row in result.all()}
+
+    # Ordered stages for visualization
+    stage_order = ["greeting", "discovery", "presentation", "negotiation", "closing", "post_sale"]
+    ordered = []
+    for stage in stage_order:
+        ordered.append({
+            "stage": stage,
+            "count": stages.get(stage, 0),
+            "label": {
+                "greeting": "Sapaan",
+                "discovery": "Eksplorasi",
+                "presentation": "Presentasi",
+                "negotiation": "Negosiasi",
+                "closing": "Closing",
+                "post_sale": "Pasca-Jual",
+            }.get(stage, stage),
+        })
+
+    return {
+        "stages": ordered,
+        "period_days": days,
+    }
