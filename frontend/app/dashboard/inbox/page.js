@@ -134,7 +134,38 @@ export default function InboxPage() {
                 {detail.messages.map((msg) => (
                   <div key={msg.id} className={`${styles.bubble} ${msg.direction === "outbound" ? styles.bubbleOutbound : styles.bubbleInbound}`}>
                     {msg.content || `[${msg.content_type}]`}
-                    <div className={styles.messageTime}>{fmtDate(msg.created_at)} / {msg.role}</div>
+                    <div className={styles.messageTime}>
+                      {fmtDate(msg.created_at)} / {msg.role}
+                      {msg.status && msg.status !== "received" && (
+                        <span className={`badge ${msg.status === "sent" ? "badge-success" : msg.status === "failed" ? "badge-danger" : "badge-warning"}`} style={{marginLeft: 6, fontSize: "0.7em"}}>
+                          {msg.status}
+                        </span>
+                      )}
+                    </div>
+                    {msg.role === "ai" && msg.direction === "outbound" && (
+                      <div style={{display: "flex", gap: 4, marginTop: 4}}>
+                        <button
+                          className="btn btn-sm btn-outline"
+                          style={{fontSize: "0.75em", padding: "2px 8px"}}
+                          onClick={async () => {
+                            try {
+                              await api.submitInboxFeedback(msg.id, { rating: "up" });
+                              alert("Feedback disimpan 👍");
+                            } catch (err) { setError(err.message); }
+                          }}
+                        >👍</button>
+                        <button
+                          className="btn btn-sm btn-outline"
+                          style={{fontSize: "0.75em", padding: "2px 8px"}}
+                          onClick={async () => {
+                            try {
+                              await api.submitInboxFeedback(msg.id, { rating: "down" });
+                              alert("Feedback disimpan 👎");
+                            } catch (err) { setError(err.message); }
+                          }}
+                        >👎</button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

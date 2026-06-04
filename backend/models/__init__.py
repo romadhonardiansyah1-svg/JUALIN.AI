@@ -20,6 +20,8 @@ from models.ai_quality import AITrace, AIToolCall, AIRetrievalLog, AIFeedback, A
 from models.campaign import Campaign, CampaignRecipient, CampaignMessage
 from models.workflow import AutomationRule, AutomationRun, AutomationRunStep
 from models.billing import Plan, Subscription, UsageCounter, BillingEvent
+from models.system_heartbeat import SystemHeartbeat
+from models.product_import import ProductImportBatch
 
 __all__ = [
     "Base",
@@ -37,4 +39,7 @@ __all__ = [
     "Campaign", "CampaignRecipient", "CampaignMessage",
     "AutomationRule", "AutomationRun", "AutomationRunStep",
     "Plan", "Subscription", "UsageCounter", "BillingEvent",
+    "SystemHeartbeat",
+    "ProductImportBatch",
 ]
+

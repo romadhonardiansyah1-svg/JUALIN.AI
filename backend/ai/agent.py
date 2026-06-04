@@ -532,3 +532,99 @@ async def get_ai_response_stream(
         "duration_ms": duration_ms,
         "type": "done",
     }
+
+
+# ══════════════════════════════════════════════════
+# Structured AI Response (JSON output for actions)
+# ══════════════════════════════════════════════════
+
+async def get_ai_structured_response(
+    message: str,
+    seller_id: int,
+    conversation_history: list,
+    seller_style: str,
+    db: AsyncSession,
+    memory_context: str = "",
+) -> tuple:
+    """
+    Generate a structured AI response with actions.
+    Returns: (AIStructuredResponse, intent, sales_stage)
+    Raises ValueError if JSON parsing fails (caller should fallback to legacy).
+    """
+    import json as json_module
+    from ai.actions import AIStructuredResponse
+
+    start_time = time.monotonic()
+
+    messages, intent, sales_stage = await _build_llm_context(
+        message, seller_id, conversation_history, seller_style, db, memory_context,
+    )
+
+    # Override system prompt to request JSON output
+    structured_instruction = """
+
+## OUTPUT FORMAT — CRITICAL
+You MUST respond ONLY with a valid JSON object. No markdown, no explanation, no extra text.
+The JSON must match this exact schema:
+{
+  "reply": "your reply text to the customer",
+  "stage": "discovering|recommending|ready_to_order|payment_pending|paid|post_sale|handoff",
+  "actions": [
+    {"type": "create_order|send_payment_link|handoff|tag_customer", "payload": {}}
+  ],
+  "confidence": 0.0 to 1.0
+}
+
+Action payload schemas:
+- create_order: {"customer_name": "...", "customer_phone": "...", "customer_address": "...", "items": [{"product_id": 1, "qty": 1}]}
+- send_payment_link: {"order_id": 1}
+- handoff: {"reason": "..."}
+- tag_customer: {"customer_id": 1, "tag": "repeat-buyer"}
+
+If no action is needed, use "actions": [].
+ONLY output JSON. No other text whatsoever.
+"""
+    if messages and messages[0]["role"] == "system":
+        messages[0]["content"] += structured_instruction
+
+    try:
+        response = await llm_client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            temperature=0.3,  # Lower for more deterministic JSON
+            max_tokens=500,
+        )
+        raw_text = response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"LLM Error in structured response: {e}", exc_info=True)
+        raise ValueError(f"LLM call failed: {e}")
+
+    # Parse JSON
+    try:
+        # Strip markdown code fences if LLM wrapped it
+        clean = raw_text.strip()
+        if clean.startswith("```"):
+            lines = clean.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            clean = "\n".join(lines).strip()
+
+        data = json_module.loads(clean)
+        structured = AIStructuredResponse.model_validate(data)
+    except (json_module.JSONDecodeError, Exception) as e:
+        logger.warning(f"Structured parse failed: {e}, raw: {raw_text[:200]}")
+        raise ValueError(f"Failed to parse structured response: {e}")
+
+    duration_ms = round((time.monotonic() - start_time) * 1000)
+    logger.info(
+        f"Structured AI response ({duration_ms}ms)",
+        extra={
+            "intent": intent,
+            "sales_stage": sales_stage,
+            "stage": structured.stage,
+            "actions": [a.type for a in structured.actions],
+            "confidence": structured.confidence,
+        },
+    )
+
+    return structured, intent, sales_stage
+

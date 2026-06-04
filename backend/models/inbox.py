@@ -53,6 +53,7 @@ class InboxThread(Base):
     channel_id = Column(Integer, ForeignKey("channels.id"), nullable=False, index=True)
     contact_id = Column(Integer, ForeignKey("channel_contacts.id"), nullable=False, index=True)
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     external_thread_id = Column(String(255), default="", index=True)
     mode = Column(String(20), default="ai", nullable=False)
     status = Column(String(20), default="open", nullable=False)

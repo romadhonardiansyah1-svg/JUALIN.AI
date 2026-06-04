@@ -114,7 +114,12 @@ export default function CampaignsPage() {
             {campaigns.map((campaign) => (
               <button key={campaign.id} className={`${styles.listItem} ${selected?.id === campaign.id ? styles.listItemActive : ""}`} onClick={() => { setSelected(campaign); setContent(campaign.content); }}>
                 <div className={styles.listTitle}><span>{campaign.title}</span><span className="badge badge-neutral">{campaign.status}</span></div>
-                <div className={styles.listMeta}>{campaign.segment} / {campaign.channel}</div>
+                <div className={styles.listMeta}>
+                  {campaign.segment} / {campaign.channel}
+                  {campaign.recipient_count > 0 && <span> · {campaign.recipient_count} recipients</span>}
+                  {campaign.sent_count > 0 && <span style={{color: "var(--success)"}}>  ✓{campaign.sent_count}</span>}
+                  {campaign.failed_count > 0 && <span style={{color: "var(--danger)"}}>  ✗{campaign.failed_count}</span>}
+                </div>
               </button>
             ))}
           </div>
@@ -127,11 +132,12 @@ export default function CampaignsPage() {
                 <span className="badge badge-primary">{selected.status}</span>
               </div>
               <div className={styles.panelBody}>
-                <textarea className={`input ${styles.textarea}`} value={content} onChange={(e) => setContent(e.target.value)} />
+                <textarea className={`input ${styles.textarea}`} value={content} onChange={(e) => setContent(e.target.value)} disabled={["queued", "sending", "sent", "partial_failed"].includes(selected.status)} />
                 <div className={styles.toolbar} style={{ marginTop: 12 }}>
-                  <button className="btn btn-outline" onClick={saveDraft}>Simpan Draft</button>
-                  <button className="btn btn-outline" onClick={preview}>Preview</button>
-                  <button className="btn btn-primary" onClick={send}>Approve Send</button>
+                  <button className="btn btn-outline" onClick={saveDraft} disabled={["queued", "sending", "sent"].includes(selected.status)}>Simpan Draft</button>
+                  <button className="btn btn-outline" onClick={preview} disabled={["queued", "sending", "sent"].includes(selected.status)}>Preview</button>
+                  <button className="btn btn-primary" onClick={send} disabled={["queued", "sending", "sent"].includes(selected.status)}>Approve Send</button>
+                  <button className="btn btn-outline" onClick={loadCampaigns}>Refresh</button>
                 </div>
               </div>
             </>

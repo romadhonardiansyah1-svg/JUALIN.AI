@@ -6,17 +6,43 @@ import styles from "../scale.module.css";
 export default function ImportPage() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+  const [importMode, setImportMode] = useState("skip_duplicates");
+  const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
   async function runPreview(e) {
     e.preventDefault();
     if (!file) return;
     setError("");
+    setMessage("");
     setPreview(null);
+    setImportResult(null);
     try {
       setPreview(await api.previewProductImport(file));
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  async function runImport() {
+    if (!preview?.preview_token) return;
+    if (!confirm("Import produk dari preview ini?")) return;
+    setImporting(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await api.executeProductImport({
+        preview_token: preview.preview_token,
+        mode: importMode,
+      });
+      setImportResult(result);
+      setMessage(`Import selesai: ${result.inserted} ditambahkan, ${result.updated} diupdate, ${result.skipped} dilewati.`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -44,10 +70,11 @@ export default function ImportPage() {
       <div className={styles.header}>
         <div className={styles.titleBlock}>
           <h2>Marketplace Import/Export</h2>
-          <p className={styles.muted}>V1 memvalidasi CSV produk sebelum import final. Export order tetap memakai endpoint CSV order yang sudah ada.</p>
+          <p className={styles.muted}>Upload CSV, preview validasi, lalu import ke katalog produk.</p>
         </div>
       </div>
       {error && <div className={styles.error}>{error}</div>}
+      {message && <div className={styles.success}>{message}</div>}
       <div className={styles.grid}>
         <div className={styles.panel}>
           <div className={styles.panelHeader}><strong>Preview Import Produk</strong></div>
@@ -63,7 +90,7 @@ export default function ImportPage() {
               <button className="btn btn-outline" onClick={() => downloadCsv("/api/orders/export/csv", "jualin_orders.csv")}>Export Orders</button>
               <button className="btn btn-outline" onClick={() => downloadCsv("/api/customers/export/csv", "jualin_customers.csv")}>Export Customers</button>
             </div>
-            <p className={styles.muted} style={{ marginTop: 12 }}>Kolom import wajib: nama, harga. Kolom opsional: deskripsi, stok, kategori, foto_url.</p>
+            <p className={styles.muted} style={{ marginTop: 12 }}>Kolom import wajib: nama, harga. Kolom opsional: deskripsi, stok, kategori.</p>
           </div>
         </div>
       </div>
@@ -91,6 +118,33 @@ export default function ImportPage() {
                 })}
               </tbody>
             </table>
+          </div>
+          {preview.preview_token && (
+            <div className={styles.panelBody} style={{ borderTop: "1px solid var(--border-color)", paddingTop: 16 }}>
+              <div className={styles.formRow}>
+                <label>Mode duplikat:</label>
+                <select className="input" value={importMode} onChange={(e) => setImportMode(e.target.value)} style={{ maxWidth: 220 }}>
+                  <option value="skip_duplicates">Lewati duplikat</option>
+                  <option value="update_duplicates">Update duplikat</option>
+                </select>
+              </div>
+              <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runImport} disabled={importing}>
+                {importing ? "Mengimport..." : `Import ${preview.count} Produk`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {importResult && (
+        <div className={styles.panel}>
+          <div className={styles.panelHeader}><strong>Hasil Import</strong></div>
+          <div className={styles.panelBody}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, textAlign: "center" }}>
+              <div><strong style={{ fontSize: 24, color: "var(--success)" }}>{importResult.inserted}</strong><br /><span className={styles.muted}>Ditambahkan</span></div>
+              <div><strong style={{ fontSize: 24, color: "var(--info)" }}>{importResult.updated}</strong><br /><span className={styles.muted}>Diupdate</span></div>
+              <div><strong style={{ fontSize: 24, color: "var(--warning)" }}>{importResult.skipped}</strong><br /><span className={styles.muted}>Dilewati</span></div>
+              <div><strong style={{ fontSize: 24 }}>{importResult.total_processed}</strong><br /><span className={styles.muted}>Total</span></div>
+            </div>
           </div>
         </div>
       )}

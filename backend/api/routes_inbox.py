@@ -195,3 +195,91 @@ async def update_thread_mode(
     )
     await db.commit()
     return {"thread_id": thread.id, "mode": thread.mode}
+
+
+class FeedbackRequest(BaseModel):
+    rating: str = Field(pattern="^(up|down|neutral)$")
+    reason: str = Field(default="", max_length=100)
+    note: str = Field(default="", max_length=1000)
+
+
+class AssignCustomerRequest(BaseModel):
+    customer_id: int = Field(gt=0)
+
+
+@router.patch("/messages/{message_id}/feedback")
+async def submit_feedback(
+    message_id: int,
+    req: FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit feedback on an AI-generated inbox message."""
+    from models.ai_quality import AIFeedback
+
+    # Verify message belongs to seller
+    result = await db.execute(
+        select(InboxMessage)
+        .where(InboxMessage.id == message_id)
+        .where(InboxMessage.seller_id == current_user.id)
+    )
+    message = result.scalar_one_or_none()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message tidak ditemukan")
+    if message.role != "ai":
+        raise HTTPException(status_code=400, detail="Feedback hanya untuk pesan AI")
+
+    feedback = AIFeedback(
+        seller_id=current_user.id,
+        message_id=message_id,
+        rating=req.rating,
+        reason=req.reason,
+        note=req.note,
+    )
+    db.add(feedback)
+    await db.commit()
+    return {"message": "Feedback disimpan", "feedback_id": feedback.id}
+
+
+@router.post("/threads/{thread_id}/assign-customer")
+async def assign_customer(
+    thread_id: int,
+    req: AssignCustomerRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link a CRM customer to an inbox thread."""
+    from models.crm import Customer
+
+    result = await db.execute(
+        select(InboxThread)
+        .where(InboxThread.id == thread_id)
+        .where(InboxThread.seller_id == current_user.id)
+    )
+    thread = result.scalar_one_or_none()
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread tidak ditemukan")
+
+    cust_result = await db.execute(
+        select(Customer)
+        .where(Customer.id == req.customer_id)
+        .where(Customer.seller_id == current_user.id)
+    )
+    customer = cust_result.scalar_one_or_none()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer tidak ditemukan")
+
+    thread.customer_id = req.customer_id
+    await record_audit(
+        db,
+        action="inbox.assign_customer",
+        entity_type="inbox_thread",
+        entity_id=thread.id,
+        seller_id=current_user.id,
+        actor_user_id=current_user.id,
+        actor_type="seller",
+        after={"customer_id": req.customer_id},
+    )
+    await db.commit()
+    return {"message": "Customer assigned", "thread_id": thread.id, "customer_id": req.customer_id}
+

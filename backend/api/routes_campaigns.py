@@ -50,6 +50,37 @@ async def list_campaigns(
         .order_by(Campaign.created_at.desc())
         .limit(50)
     )
+    campaigns = result.scalars().all()
+    # Batch load recipient/message counts
+    campaign_ids = [c.id for c in campaigns]
+    stats_map = {}
+    if campaign_ids:
+        from sqlalchemy import func
+        msg_result = await db.execute(
+            select(
+                CampaignMessage.campaign_id,
+                func.count(CampaignMessage.id).label("total"),
+                func.count(CampaignMessage.id).filter(CampaignMessage.status == "sent").label("sent"),
+                func.count(CampaignMessage.id).filter(CampaignMessage.status == "failed").label("failed"),
+            )
+            .where(CampaignMessage.campaign_id.in_(campaign_ids))
+            .group_by(CampaignMessage.campaign_id)
+        )
+        for row in msg_result.all():
+            stats_map[row[0]] = {"total": row[1], "sent": row[2], "failed": row[3]}
+        recip_result = await db.execute(
+            select(
+                CampaignRecipient.campaign_id,
+                func.count(CampaignRecipient.id).label("count"),
+            )
+            .where(CampaignRecipient.campaign_id.in_(campaign_ids))
+            .group_by(CampaignRecipient.campaign_id)
+        )
+        for row in recip_result.all():
+            if row[0] not in stats_map:
+                stats_map[row[0]] = {"total": 0, "sent": 0, "failed": 0}
+            stats_map[row[0]]["recipients"] = row[1]
+
     return [
         {
             "id": campaign.id,
@@ -58,9 +89,12 @@ async def list_campaigns(
             "channel": campaign.channel,
             "content": campaign.content,
             "status": campaign.status,
+            "recipient_count": stats_map.get(campaign.id, {}).get("recipients", 0),
+            "sent_count": stats_map.get(campaign.id, {}).get("sent", 0),
+            "failed_count": stats_map.get(campaign.id, {}).get("failed", 0),
             "created_at": campaign.created_at.isoformat() if campaign.created_at else "",
         }
-        for campaign in result.scalars().all()
+        for campaign in campaigns
     ]
 
 
@@ -123,16 +157,31 @@ async def preview_campaign(
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign tidak ditemukan")
 
-    customers_result = await db.execute(
-        select(Customer)
-        .where(Customer.seller_id == current_user.id)
-        .order_by(Customer.last_seen_at.desc().nullslast(), Customer.created_at.desc())
-        .limit(25)
+    from services.campaign_segments import get_segment_customers
+
+    # Use real segment service
+    segment_customers = await get_segment_customers(
+        db,
+        seller_id=current_user.id,
+        segment=campaign.segment,
+        metadata=campaign.metadata_json,
+        limit=200,
     )
+
+    # Clear stale recipients if content/segment changed
+    if campaign.status == "draft":
+        existing_result = await db.execute(
+            select(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign.id)
+        )
+        for old in existing_result.scalars().all():
+            await db.delete(old)
+        await db.flush()
+
     existing_result = await db.execute(select(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign.id))
-    existing_customer_ids = {recipient.customer_id for recipient in existing_result.scalars().all() if recipient.customer_id}
+    existing_customer_ids = {r.customer_id for r in existing_result.scalars().all() if r.customer_id}
+
     recipients = []
-    for customer in customers_result.scalars().all():
+    for customer in segment_customers:
         if not customer.phone or customer.id in existing_customer_ids:
             continue
         recipients.append(CampaignRecipient(
@@ -143,6 +192,7 @@ async def preview_campaign(
         ))
     if recipients:
         db.add_all(recipients)
+
     campaign.status = "previewed"
     await db.flush()
     total_result = await db.execute(select(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign.id))
@@ -152,6 +202,7 @@ async def preview_campaign(
         "campaign_id": campaign.id,
         "status": campaign.status,
         "recipient_count": total_recipients,
+        "segment": campaign.segment,
         "content": campaign.content,
     }
 
@@ -178,14 +229,34 @@ async def send_campaign(
     quota = await check_usage_quota(db, user=current_user, metric="campaign_sends", increment=len(recipients))
     if not quota["allowed"]:
         raise HTTPException(status_code=403, detail=f"Quota campaign tidak cukup. Sisa {quota['remaining']} dari limit {quota['limit']}.")
+    from core.idempotency import enqueue_job_record
+
     for recipient in recipients:
-        db.add(CampaignMessage(
+        cm = CampaignMessage(
             campaign_id=campaign.id,
             recipient_id=recipient.id,
             status="queued",
             content=campaign.content,
-        ))
+        )
+        db.add(cm)
         recipient.status = "queued"
+    await db.flush()
+
+    # Enqueue as background jobs
+    msg_result = await db.execute(
+        select(CampaignMessage)
+        .where(CampaignMessage.campaign_id == campaign.id)
+        .where(CampaignMessage.status == "queued")
+    )
+    for cm in msg_result.scalars().all():
+        await enqueue_job_record(
+            db,
+            job_type="campaign_send_message",
+            seller_id=current_user.id,
+            payload={"campaign_message_id": cm.id},
+            idempotency_key=f"campaign_send_message:{cm.id}",
+        )
+
     await increment_usage(db, user=current_user, metric="campaign_sends", amount=len(recipients))
     campaign.status = "queued"
     campaign.updated_at = datetime.now(timezone.utc)

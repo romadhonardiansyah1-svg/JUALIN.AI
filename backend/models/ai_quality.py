@@ -59,6 +59,7 @@ class AIFeedback(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     seller_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    message_id = Column(Integer, nullable=True, index=True)
     trace_id = Column(String(100), default="", index=True)
     rating = Column(String(20), nullable=False)
     reason = Column(String(100), default="")

@@ -247,3 +247,73 @@ async def get_system_health(
         "llm_model": settings.LLM_MODEL,
         "embedding_model": settings.EMBEDDING_MODEL,
     }
+
+
+@router.get("/provider-health")
+async def get_provider_health(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get provider health status for admin dashboard."""
+    providers = {}
+
+    # 1. Database
+    try:
+        await db.execute(text("SELECT 1"))
+        providers["database"] = {"status": "alive", "provider": "PostgreSQL"}
+    except Exception:
+        providers["database"] = {"status": "offline", "provider": "PostgreSQL"}
+
+    # 2. Redis
+    try:
+        from cache import get_redis
+        r = await get_redis()
+        if r:
+            await r.ping()
+            providers["redis"] = {"status": "alive", "provider": "Redis"}
+        else:
+            providers["redis"] = {"status": "offline", "provider": "Redis"}
+    except Exception:
+        providers["redis"] = {"status": "offline", "provider": "Redis"}
+
+    # 3. Worker (via heartbeat)
+    try:
+        from models.system_heartbeat import SystemHeartbeat
+        hb_result = await db.execute(
+            select(SystemHeartbeat).where(SystemHeartbeat.service == "worker")
+        )
+        hb = hb_result.scalar_one_or_none()
+        if hb and hb.last_seen_at:
+            last_seen = hb.last_seen_at
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=datetime.now(timezone.utc).tzinfo)
+            age_seconds = (datetime.now(timezone.utc) - last_seen).total_seconds()
+            if age_seconds < 90:
+                providers["worker"] = {"status": "alive", "last_seen": hb.last_seen_at.isoformat()}
+            elif age_seconds < 300:
+                providers["worker"] = {"status": "degraded", "last_seen": hb.last_seen_at.isoformat()}
+            else:
+                providers["worker"] = {"status": "offline", "last_seen": hb.last_seen_at.isoformat()}
+        else:
+            providers["worker"] = {"status": "unknown", "last_seen": None}
+    except Exception:
+        providers["worker"] = {"status": "unknown"}
+
+    # 4. WhatsApp
+    if settings.ENABLE_WHATSAPP:
+        providers["whatsapp"] = {
+            "status": "configured" if settings.WHATSAPP_ACCESS_TOKEN else "not_configured",
+            "provider": "WhatsApp Cloud API",
+        }
+    else:
+        providers["whatsapp"] = {"status": "disabled"}
+
+    # 5. LLM
+    providers["llm"] = {
+        "status": "configured",
+        "provider": settings.LLM_MODEL,
+        "base_url_set": bool(settings.LLM_BASE_URL),
+    }
+
+    return providers
+

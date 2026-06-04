@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "jualin-ai-secret-key-change-in-production"
     SCHEDULER_ENABLED: bool = True
+    AUTO_CREATE_TABLES: bool = True
+    ARQ_MAX_JOBS: int = 2
 
     # Scale-up feature flags
     ENABLE_WHATSAPP: bool = False

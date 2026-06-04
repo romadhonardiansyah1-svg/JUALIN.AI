@@ -212,6 +212,10 @@ export const api = {
     fetchAPI(`/api/inbox/threads/${id}/reply`, { method: "POST", body: JSON.stringify(body) }),
   updateInboxThreadMode: (id, body) =>
     fetchAPI(`/api/inbox/threads/${id}/mode`, { method: "PATCH", body: JSON.stringify(body) }),
+  submitInboxFeedback: (messageId, body) =>
+    fetchAPI(`/api/inbox/messages/${messageId}/feedback`, { method: "PATCH", body: JSON.stringify(body) }),
+  assignInboxCustomer: (threadId, body) =>
+    fetchAPI(`/api/inbox/threads/${threadId}/assign-customer`, { method: "POST", body: JSON.stringify(body) }),
 
   // Scale-up: customers
   getCustomers: (q = "") => fetchAPI(`/api/customers/${q ? `?q=${encodeURIComponent(q)}` : ""}`),
@@ -244,11 +248,22 @@ export const api = {
     fetchAPI("/api/workflows/rules", { method: "POST", body: JSON.stringify(body) }),
   updateWorkflowRule: (id, body) =>
     fetchAPI(`/api/workflows/rules/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  getWorkflowRuns: () => fetchAPI("/api/workflows/runs"),
+  getWorkflowRun: (id) => fetchAPI(`/api/workflows/runs/${id}`),
 
   // Scale-up: billing/import
   getBillingPlans: () => fetchAPI("/api/billing/plans"),
   getBillingUsage: () => fetchAPI("/api/billing/usage"),
   previewProductImport: (file) => uploadFile("/api/marketplace/products/preview", file),
+  executeProductImport: (body) =>
+    fetchAPI("/api/marketplace/products/import", { method: "POST", body: JSON.stringify(body) }),
+
+  // Admin extra
+  getProviderHealth: () => fetchAPI("/api/admin/provider-health"),
+  adminChangePlan: (sellerId, body) =>
+    fetchAPI(`/api/billing/admin/sellers/${sellerId}/plan`, { method: "POST", body: JSON.stringify(body) }),
+  adminOverrideQuota: (sellerId, body) =>
+    fetchAPI(`/api/billing/admin/sellers/${sellerId}/override-quota`, { method: "POST", body: JSON.stringify(body) }),
 
   // Orders
   getOrderStats: () => fetchCached("/api/orders/stats", {}, 30000),

@@ -2,6 +2,7 @@
 Billing and usage endpoints.
 """
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,3 +76,103 @@ async def reset_usage(
         counter.used = 0
     await db.commit()
     return {"message": "Usage reset", "seller_id": seller_id}
+
+
+class ChangePlanRequest(BaseModel):
+    plan_code: str = Field(min_length=1, max_length=50)
+
+
+class OverrideQuotaRequest(BaseModel):
+    metric: str = Field(min_length=1, max_length=100)
+    new_limit: int = Field(ge=0)
+
+
+@router.post("/admin/sellers/{seller_id}/plan")
+async def admin_change_plan(
+    seller_id: int,
+    req: ChangePlanRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: change a seller's plan."""
+    if not settings.ENABLE_BILLING:
+        raise HTTPException(status_code=403, detail="Billing belum diaktifkan")
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Hanya admin")
+
+    from models.user import UserTier
+    try:
+        new_tier = UserTier(req.plan_code)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Plan tidak valid: {req.plan_code}")
+
+    seller_result = await db.execute(select(User).where(User.id == seller_id))
+    seller = seller_result.scalar_one_or_none()
+    if not seller:
+        raise HTTPException(status_code=404, detail="Seller tidak ditemukan")
+
+    old_tier = seller.tier.value
+    seller.tier = new_tier
+
+    # Upsert subscription record
+    sub_result = await db.execute(
+        select(Subscription).where(Subscription.seller_id == seller_id).limit(1)
+    )
+    sub = sub_result.scalar_one_or_none()
+    if not sub:
+        from datetime import datetime, timezone
+        sub = Subscription(
+            seller_id=seller_id,
+            plan_code=req.plan_code,
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+        )
+        db.add(sub)
+    else:
+        sub.plan_code = req.plan_code
+        sub.status = "active"
+
+    await db.commit()
+    return {"message": f"Plan changed from {old_tier} to {req.plan_code}", "seller_id": seller_id}
+
+
+@router.post("/admin/sellers/{seller_id}/override-quota")
+async def admin_override_quota(
+    seller_id: int,
+    req: OverrideQuotaRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin: override a specific quota metric for a seller."""
+    if not settings.ENABLE_BILLING:
+        raise HTTPException(status_code=403, detail="Billing belum diaktifkan")
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="Hanya admin")
+
+    # Update subscription override_limits
+    sub_result = await db.execute(
+        select(Subscription).where(Subscription.seller_id == seller_id).limit(1)
+    )
+    sub = sub_result.scalar_one_or_none()
+    if not sub:
+        from datetime import datetime, timezone
+        seller_result = await db.execute(select(User).where(User.id == seller_id))
+        seller = seller_result.scalar_one_or_none()
+        if not seller:
+            raise HTTPException(status_code=404, detail="Seller tidak ditemukan")
+        sub = Subscription(
+            seller_id=seller_id,
+            plan_code=seller.tier.value,
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            override_limits={req.metric: req.new_limit},
+        )
+        db.add(sub)
+    else:
+        overrides = sub.override_limits or {}
+        overrides[req.metric] = req.new_limit
+        sub.override_limits = overrides
+
+    await db.commit()
+    return {"message": f"Quota {req.metric} overridden to {req.new_limit}", "seller_id": seller_id}
+

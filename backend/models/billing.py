@@ -28,6 +28,7 @@ class Subscription(Base):
     status = Column(String(20), default="active")
     current_period_start = Column(DateTime(timezone=True), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
+    override_limits = Column(JSON, default=dict)
     metadata_json = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

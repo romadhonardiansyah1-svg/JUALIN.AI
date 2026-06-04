@@ -343,33 +343,90 @@ async def send_message(
     intent = "general"
     sales_stage = "greeting"
     response_start = time.monotonic()
-    try:
-        from ai.agent import get_ai_response
-        ai_response_text, intent, sales_stage = await get_ai_response(
-            message=req.message,
-            seller_id=seller.id,
-            conversation_history=history,
-            seller_style=seller.ai_style,
-            db=db,
-            memory_context=memory_context,
-        )
-    except Exception as e:
-        logger.error(f"AI Error: {e}", exc_info=True)
-        ai_response_text = (
-            f"Hai kak! Terima kasih sudah menghubungi {seller.nama_toko} 😊\n"
-            f"Maaf, asisten kami sedang sibuk. Coba kirim pesan lagi ya kak!"
-        )
+    order_created = False
+    ai_response_text = ""
+    structured_used = False
+
+    # ── Try structured AI actions first if enabled ──
+    if settings.ENABLE_AI_ACTIONS:
+        try:
+            from ai.agent import get_ai_structured_response
+            from ai.actions import execute_ai_actions
+
+            structured, intent, sales_stage = await get_ai_structured_response(
+                message=req.message,
+                seller_id=seller.id,
+                conversation_history=history,
+                seller_style=seller.ai_style,
+                db=db,
+                memory_context=memory_context,
+            )
+            ai_response_text = structured.reply
+            structured_used = True
+
+            # Execute actions in nested transaction
+            if structured.actions:
+                try:
+                    action_results = await execute_ai_actions(
+                        seller_id=seller.id,
+                        actions=structured.actions,
+                        db=db,
+                        actor="ai",
+                    )
+                    for ar in action_results:
+                        if ar.get("type") == "create_order" and ar.get("success"):
+                            order_created = True
+                            ai_response_text += (
+                                f"\n\nOrder #{ar['order_id']} berhasil dibuat."
+                                f"\nTotal: Rp {ar['total']:,.0f}"
+                            )
+                            if ar.get("payment_url"):
+                                ai_response_text += f"\nLink pembayaran: {ar['payment_url']}"
+                        elif ar.get("type") == "create_order" and not ar.get("success"):
+                            ai_response_text += (
+                                "\n\nMaaf kak, order belum bisa dibuat otomatis karena "
+                                "stok/produk perlu dicek. Admin akan bantu cek ya."
+                            )
+                        elif ar.get("type") == "send_payment_link" and ar.get("success") and ar.get("payment_url"):
+                            ai_response_text += f"\n\nLink pembayaran: {ar['payment_url']}"
+                except Exception as action_exc:
+                    logger.warning(f"Structured action execution failed: {action_exc}")
+        except (ValueError, Exception) as e:
+            logger.warning(f"Structured AI failed, falling back to legacy: {e}")
+            ai_response_text = ""
+            structured_used = False
+
+    # ── Fallback to legacy AI response ──
+    if not ai_response_text:
+        try:
+            from ai.agent import get_ai_response
+            ai_response_text, intent, sales_stage = await get_ai_response(
+                message=req.message,
+                seller_id=seller.id,
+                conversation_history=history,
+                seller_style=seller.ai_style,
+                db=db,
+                memory_context=memory_context,
+            )
+        except Exception as e:
+            logger.error(f"AI Error: {e}", exc_info=True)
+            ai_response_text = (
+                f"Hai kak! Terima kasih sudah menghubungi {seller.nama_toko} 😊\n"
+                f"Maaf, asisten kami sedang sibuk. Coba kirim pesan lagi ya kak!"
+            )
+
+        # Legacy order parser (only if structured didn't handle it)
+        if not structured_used:
+            ai_response_text, order_created = await maybe_create_order_from_ai_response(
+                ai_response_text=ai_response_text,
+                seller=seller,
+                conversation=conversation,
+                session_id=session_id,
+                db=db,
+            )
+
     response_time_ms = round((time.monotonic() - response_start) * 1000)
     
-    # Parse and create order if AI confirmed the order
-    ai_response_text, order_created = await maybe_create_order_from_ai_response(
-        ai_response_text=ai_response_text,
-        seller=seller,
-        conversation=conversation,
-        session_id=session_id,
-        db=db,
-    )
-
     # Save AI response
     ai_msg = Message(
         conversation_id=conversation.id,

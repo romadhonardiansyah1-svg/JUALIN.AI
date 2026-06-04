@@ -79,10 +79,56 @@ services:
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_GRAPH_VERSION: ${WHATSAPP_GRAPH_VERSION:-v20.0}
       WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-false}
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-2}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - model_cache:/root/.cache
+      - uploads:/app/uploads
+
+  # ── ARQ Worker (Background Jobs) ──
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jualin-worker
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jualin:${DB_PASSWORD:-jualin_secure_2026}@db:5432/jualin_ai
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-jualin-secret-change-in-production}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-jwt-secret-change-in-production}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:20128/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-not-needed}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      DEBUG: ${DEBUG:-false}
+      SCHEDULER_ENABLED: "false"
+      AUTO_CREATE_TABLES: "false"
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-2}
+      ENABLE_WHATSAPP: ${ENABLE_WHATSAPP:-false}
+      ENABLE_AI_ACTIONS: ${ENABLE_AI_ACTIONS:-false}
+      ENABLE_CAMPAIGNS: ${ENABLE_CAMPAIGNS:-false}
+      ENABLE_WORKFLOWS: ${ENABLE_WORKFLOWS:-false}
+      ENABLE_BILLING: ${ENABLE_BILLING:-false}
+      ENABLE_MARKETPLACE_IMPORT: ${ENABLE_MARKETPLACE_IMPORT:-false}
+      ENABLE_AI_QUALITY: ${ENABLE_AI_QUALITY:-true}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_GRAPH_VERSION: ${WHATSAPP_GRAPH_VERSION:-v20.0}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+    command: ["arq", "worker.WorkerSettings"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - model_cache:/root/.cache
       - uploads:/app/uploads

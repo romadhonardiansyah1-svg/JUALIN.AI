@@ -91,6 +91,71 @@ export default function WorkflowsPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Run History ── */}
+      <RunHistory />
+    </div>
+  );
+}
+
+function RunHistory() {
+  const [runs, setRuns] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  async function loadRuns() {
+    try {
+      setRuns(await api.getWorkflowRuns());
+    } catch (e) {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { loadRuns(); }, []);
+
+  return (
+    <div className={styles.panel} style={{ marginTop: 20 }}>
+      <div className={styles.panelHeader}>
+        <strong>Run History</strong>
+        <button className="btn btn-sm btn-outline" onClick={loadRuns}>Refresh</button>
+      </div>
+      {loading && <div className={styles.stateBox}>Memuat...</div>}
+      {!loading && runs.length === 0 && <div className={styles.stateBox}>Belum ada automation run.</div>}
+      {runs.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Template</th>
+                <th>Entity</th>
+                <th>Status</th>
+                <th>Started</th>
+                <th>Finished</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.id}>
+                  <td>{run.id}</td>
+                  <td>{run.context?.template_key || "-"}</td>
+                  <td>{run.context?.entity_type}:{run.context?.entity_id}</td>
+                  <td>
+                    <span className={`badge ${run.status === "done" ? "badge-success" : run.status === "failed" ? "badge-danger" : "badge-warning"}`}>
+                      {run.status}
+                    </span>
+                  </td>
+                  <td>{run.started_at ? new Date(run.started_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "-"}</td>
+                  <td>{run.finished_at ? new Date(run.finished_at).toLocaleString("id-ID", { dateStyle: "short", timeStyle: "short" }) : "-"}</td>
+                  <td style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.error_message || "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
