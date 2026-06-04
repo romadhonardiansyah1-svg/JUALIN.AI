@@ -50,6 +50,25 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
     
+    # Base URL (for webhook callbacks — set to your domain in production)
+    BASE_URL: str = "http://localhost:8000"
+    FRONTEND_URL: str = "http://localhost:3000"
+    
+    # ── Payment Gateways ──
+    
+    # Midtrans (Snap API)
+    MIDTRANS_SERVER_KEY: str = ""
+    MIDTRANS_CLIENT_KEY: str = ""
+    MIDTRANS_IS_PRODUCTION: bool = False  # False = sandbox, True = production
+    
+    # Cashi.id (QRIS + VA)
+    CASHI_API_KEY: str = ""
+    CASHI_BASE_URL: str = "https://cashi.id/api"
+    
+    # Default payment provider per seller tier
+    # Free/Starter = cashi (simpler), Pro/Bisnis = midtrans (full features)
+    DEFAULT_PAYMENT_PROVIDER: str = "cashi"
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
