@@ -25,6 +25,11 @@ from models.product_import import ProductImportBatch
 from models.prompt_registry import PromptVersion
 from models.inbox_extras import InboxThreadLabel, InboxInternalNote, CannedReply
 from models.usage_event import UsageEvent
+from models.daily_metrics import DailySellerMetric
+from models.template import Template
+from models.onboarding import SellerOnboarding
+from models.storefront import Storefront, StorefrontSection
+from models.campaign_recommendation import CampaignRecommendation
 
 __all__ = [
     "Base",
@@ -47,5 +52,10 @@ __all__ = [
     "PromptVersion",
     "InboxThreadLabel", "InboxInternalNote", "CannedReply",
     "UsageEvent",
+    "DailySellerMetric",
+    "Template",
+    "SellerOnboarding",
+    "Storefront", "StorefrontSection",
+    "CampaignRecommendation",
 ]
 

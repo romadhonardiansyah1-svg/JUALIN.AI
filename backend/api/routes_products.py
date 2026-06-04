@@ -321,3 +321,124 @@ async def upload_product_image(
         "foto_url": product.foto_url,
         "product_id": product.id,
     }
+
+
+@router.post("/{product_id}/ai-enrich")
+async def ai_enrich_product(
+    product_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    AI enrichment preview for a product.
+    Returns suggestions but does NOT auto-apply. Seller must approve.
+    """
+    result = await db.execute(
+        select(Product)
+        .where(Product.id == product_id)
+        .where(Product.seller_id == current_user.id)
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+
+    # Calculate catalog health score
+    score = 0
+    reasons = []
+    if product.nama and len(product.nama) > 3:
+        score += 20
+    else:
+        reasons.append("Nama produk terlalu pendek")
+    if product.deskripsi and len(product.deskripsi) > 20:
+        score += 25
+    else:
+        reasons.append("Deskripsi kurang detail")
+    if product.foto_url:
+        score += 20
+    else:
+        reasons.append("Belum ada foto produk")
+    if product.harga and product.harga > 0:
+        score += 15
+    else:
+        reasons.append("Harga belum diset")
+    if product.stok and product.stok > 0:
+        score += 10
+    else:
+        reasons.append("Stok habis")
+    if product.kategori and product.kategori != "umum":
+        score += 10
+    else:
+        reasons.append("Kategori masih default")
+
+    # Generate SEO suggestions
+    seo_title = f"{product.nama} - Beli Online | {current_user.nama_toko}"
+    seo_description = product.deskripsi[:160] if product.deskripsi else f"Beli {product.nama} dari {current_user.nama_toko} dengan harga terbaik."
+
+    # Auto-detect tags from description
+    tags = []
+    if product.deskripsi:
+        keywords = ["murah", "premium", "original", "baru", "promo", "diskon", "terlaris", "best seller", "handmade", "import"]
+        desc_lower = product.deskripsi.lower()
+        tags = [k for k in keywords if k in desc_lower]
+
+    return {
+        "product_id": product.id,
+        "product_name": product.nama,
+        "catalog_score": score,
+        "score_reasons": reasons,
+        "suggestions": {
+            "seo_title": seo_title,
+            "seo_description": seo_description,
+            "tags": tags,
+            "category_suggestion": product.kategori,
+        },
+        "message": "Preview enrichment. Gunakan PATCH /products/{id} untuk apply.",
+    }
+
+
+@router.get("/insights")
+async def product_insights(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Product health overview: scores, categories, alerts."""
+    result = await db.execute(
+        select(Product)
+        .where(Product.seller_id == current_user.id, Product.is_active == 1)
+    )
+    products = result.scalars().all()
+
+    if not products:
+        return {"total": 0, "avg_score": 0, "categories": {}, "alerts": []}
+
+    scores = []
+    categories = {}
+    alerts = []
+
+    for p in products:
+        # Quick score
+        s = 0
+        if p.nama and len(p.nama) > 3: s += 20
+        if p.deskripsi and len(p.deskripsi) > 20: s += 25
+        if p.foto_url: s += 20
+        if p.harga and p.harga > 0: s += 15
+        if p.stok and p.stok > 0: s += 10
+        if p.kategori and p.kategori != "umum": s += 10
+        scores.append(s)
+
+        cat = p.kategori or "umum"
+        categories[cat] = categories.get(cat, 0) + 1
+
+        if (p.stok or 0) == 0:
+            alerts.append({"type": "out_of_stock", "product": p.nama, "id": p.id})
+        elif (p.stok or 0) <= 5:
+            alerts.append({"type": "low_stock", "product": p.nama, "stock": p.stok, "id": p.id})
+        if not p.foto_url:
+            alerts.append({"type": "no_image", "product": p.nama, "id": p.id})
+
+    return {
+        "total": len(products),
+        "avg_score": round(sum(scores) / len(scores)) if scores else 0,
+        "categories": categories,
+        "alerts": alerts[:20],
+    }

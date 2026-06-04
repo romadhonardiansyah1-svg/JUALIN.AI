@@ -292,3 +292,140 @@ async def get_sales_stages(
         "stages": ordered,
         "period_days": days,
     }
+
+
+@router.get("/revenue")
+async def get_revenue(
+    period: str = "30d",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revenue intelligence from pre-aggregated daily metrics."""
+    from models.daily_metrics import DailySellerMetric
+
+    days = int(period.replace("d", ""))
+    start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+
+    result = await db.execute(
+        select(DailySellerMetric)
+        .where(DailySellerMetric.seller_id == current_user.id)
+        .where(DailySellerMetric.date >= start_date)
+        .order_by(DailySellerMetric.date.asc())
+    )
+    metrics = result.scalars().all()
+
+    total_revenue = sum(m.revenue_paid for m in metrics)
+    total_orders_paid = sum(m.orders_paid for m in metrics)
+    total_orders_created = sum(m.orders_created for m in metrics)
+    total_chats = sum(m.chats_in for m in metrics)
+    total_pending = sum(m.pending_payment_value for m in metrics)
+
+    daily = [
+        {
+            "date": m.date,
+            "revenue": m.revenue_paid,
+            "orders_paid": m.orders_paid,
+            "orders_created": m.orders_created,
+            "chats": m.chats_in,
+        }
+        for m in metrics
+    ]
+
+    return {
+        "summary": {
+            "total_revenue": total_revenue,
+            "total_orders_paid": total_orders_paid,
+            "total_orders_created": total_orders_created,
+            "total_chats": total_chats,
+            "total_pending_value": total_pending,
+            "avg_order_value": round(total_revenue / total_orders_paid, 0) if total_orders_paid > 0 else 0,
+            "chat_to_order_rate": round(total_orders_created / total_chats * 100, 1) if total_chats > 0 else 0,
+        },
+        "daily": daily,
+        "period_days": days,
+    }
+
+
+@router.get("/campaign-roi")
+async def get_campaign_roi(
+    campaign_id: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Campaign ROI: sent, delivered, conversions."""
+    from models.campaign import Campaign, CampaignRecipient
+
+    query = select(Campaign).where(Campaign.seller_id == current_user.id)
+    if campaign_id > 0:
+        query = query.where(Campaign.id == campaign_id)
+    query = query.order_by(Campaign.created_at.desc()).limit(20)
+
+    result = await db.execute(query)
+    campaigns = result.scalars().all()
+
+    roi_data = []
+    for c in campaigns:
+        # Get recipient stats
+        sent_count = await db.execute(
+            select(func.count(CampaignRecipient.id))
+            .where(CampaignRecipient.campaign_id == c.id, CampaignRecipient.status == "sent")
+        )
+        delivered_count = await db.execute(
+            select(func.count(CampaignRecipient.id))
+            .where(CampaignRecipient.campaign_id == c.id, CampaignRecipient.status == "delivered")
+        )
+
+        roi_data.append({
+            "id": c.id,
+            "name": c.name,
+            "status": c.status,
+            "sent": sent_count.scalar() or 0,
+            "delivered": delivered_count.scalar() or 0,
+            "created_at": c.created_at.isoformat() if c.created_at else "",
+        })
+
+    return roi_data
+
+
+@router.get("/product-insights")
+async def get_product_insights(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Product insights: best sellers, low stock, no-sales."""
+    seller_id = current_user.id
+
+    # All active products
+    products_result = await db.execute(
+        select(Product).where(Product.seller_id == seller_id, Product.is_active == 1)
+    )
+    products = products_result.scalars().all()
+
+    # Get order counts per product from last 30 days
+    start_date = datetime.now(timezone.utc).date() - timedelta(days=30)
+    orders_result = await db.execute(
+        select(Order)
+        .where(Order.seller_id == seller_id)
+        .where(Order.status != OrderStatus.CANCELLED)
+        .where(func.date(Order.created_at) >= start_date)
+    )
+    orders = orders_result.scalars().all()
+
+    product_sales = {}
+    for order in orders:
+        items = order.items if isinstance(order.items, list) else []
+        for item in items:
+            name = item.get("nama", "Unknown")
+            product_sales[name] = product_sales.get(name, 0) + item.get("qty", 1)
+
+    best_sellers = sorted(product_sales.items(), key=lambda x: x[1], reverse=True)[:10]
+    low_stock = [p for p in products if (p.stok or 0) <= 5 and (p.stok or 0) > 0]
+    no_sales = [p for p in products if p.nama not in product_sales]
+
+    return {
+        "total_products": len(products),
+        "best_sellers": [{"name": n, "qty": q} for n, q in best_sellers],
+        "low_stock": [{"id": p.id, "name": p.nama, "stock": p.stok} for p in low_stock[:10]],
+        "no_sales_30d": [{"id": p.id, "name": p.nama} for p in no_sales[:10]],
+        "period_days": 30,
+    }

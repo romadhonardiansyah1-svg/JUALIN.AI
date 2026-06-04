@@ -31,6 +31,10 @@ from api.routes_campaigns import router as campaigns_router
 from api.routes_workflows import router as workflows_router
 from api.routes_billing import router as billing_router
 from api.routes_marketplace import router as marketplace_router
+from api.routes_templates import router as templates_router
+from api.routes_onboarding import router as onboarding_router
+from api.routes_storefront import router as storefront_router
+from api.routes_campaign_recommendations import router as campaign_recs_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -191,6 +195,10 @@ app.include_router(campaigns_router, prefix="/api/campaigns", tags=["Campaigns"]
 app.include_router(workflows_router, prefix="/api/workflows", tags=["Workflows"])
 app.include_router(billing_router, prefix="/api/billing", tags=["Billing"])
 app.include_router(marketplace_router, prefix="/api/marketplace", tags=["Marketplace"])
+app.include_router(templates_router, prefix="/api/templates", tags=["Templates"])
+app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Onboarding"])
+app.include_router(storefront_router, prefix="/api/storefront", tags=["Storefront"])
+app.include_router(campaign_recs_router, prefix="/api/campaigns", tags=["Campaign Recommendations"])
 
 # ── Static Files (uploads) ──
 import os

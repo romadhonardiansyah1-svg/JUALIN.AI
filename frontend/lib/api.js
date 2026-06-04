@@ -290,6 +290,39 @@ export const api = {
 
   // Utility
   clearCache: () => clearCache(),
+
+  // Plan B: Templates
+  getTemplates: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return fetchAPI(`/api/templates/?${qs}`);
+  },
+  installTemplate: (id) => fetchAPI(`/api/templates/${id}/install`, { method: "POST" }),
+  duplicateTemplate: (id) => fetchAPI(`/api/templates/${id}/duplicate`, { method: "POST" }),
+
+  // Plan B: Onboarding
+  getOnboarding: () => fetchAPI("/api/onboarding/"),
+  updateOnboarding: (body) => fetchAPI("/api/onboarding/", { method: "PATCH", body: JSON.stringify(body) }),
+  completeOnboarding: () => fetchAPI("/api/onboarding/complete", { method: "POST" }),
+  onboardingTestChat: () => fetchAPI("/api/onboarding/test-chat", { method: "POST" }),
+
+  // Plan B: Storefront
+  getMyStorefront: () => fetchAPI("/api/storefront/"),
+  updateStorefront: (body) => fetchAPI("/api/storefront/", { method: "PATCH", body: JSON.stringify(body) }),
+  generateStorefront: () => fetchAPI("/api/storefront/generate", { method: "POST" }),
+
+  // Plan B: Campaign recommendations
+  getCampaignRecommendations: (status = "") =>
+    fetchAPI(`/api/campaigns/recommendations${status ? `?status=${status}` : ""}`),
+  createDraftFromRecommendation: (id) =>
+    fetchAPI(`/api/campaigns/recommendations/${id}/create-draft`, { method: "POST" }),
+  dismissRecommendation: (id) =>
+    fetchAPI(`/api/campaigns/recommendations/${id}/dismiss`, { method: "POST" }),
+
+  // Plan B: Analytics extras
+  getRevenue: (period = "30d") => fetchAPI(`/api/analytics/revenue?period=${period}`),
+  getCampaignROI: (campaignId = 0) => fetchAPI(`/api/analytics/campaign-roi?campaign_id=${campaignId}`),
+  getProductInsights: () => fetchAPI("/api/analytics/product-insights"),
+  aiEnrichProduct: (id) => fetchAPI(`/api/products/${id}/ai-enrich`, { method: "POST" }),
 };
 
 
@@ -438,4 +471,97 @@ export async function workflowDryRun(ruleId) {
 
 export async function listPrompts() {
   return apiFetch("/api/ai-quality/prompts");
+}
+
+// ══════════════════════════════════════════════════
+// Plan B: Templates
+// ══════════════════════════════════════════════════
+
+export async function getTemplates(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/api/templates/?${qs}`);
+}
+
+export async function installTemplate(templateId) {
+  return apiFetch(`/api/templates/${templateId}/install`, { method: "POST" });
+}
+
+export async function duplicateTemplate(templateId) {
+  return apiFetch(`/api/templates/${templateId}/duplicate`, { method: "POST" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan B: Onboarding
+// ══════════════════════════════════════════════════
+
+export async function getOnboarding() {
+  return apiFetch("/api/onboarding/");
+}
+
+export async function updateOnboarding(data) {
+  return apiFetch("/api/onboarding/", { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function completeOnboarding() {
+  return apiFetch("/api/onboarding/complete", { method: "POST" });
+}
+
+export async function onboardingTestChat() {
+  return apiFetch("/api/onboarding/test-chat", { method: "POST" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan B: Storefront
+// ══════════════════════════════════════════════════
+
+export async function getMyStorefront() {
+  return apiFetch("/api/storefront/");
+}
+
+export async function updateStorefront(data) {
+  return apiFetch("/api/storefront/", { method: "PATCH", body: JSON.stringify(data) });
+}
+
+export async function generateStorefront() {
+  return apiFetch("/api/storefront/generate", { method: "POST" });
+}
+
+export async function updateStorefrontSection(sectionId, data) {
+  return apiFetch(`/api/storefront/sections/${sectionId}`, { method: "PATCH", body: JSON.stringify(data) });
+}
+
+// ══════════════════════════════════════════════════
+// Plan B: Campaign Recommendations
+// ══════════════════════════════════════════════════
+
+export async function getCampaignRecommendations(status = "") {
+  return apiFetch(`/api/campaigns/recommendations${status ? `?status=${status}` : ""}`);
+}
+
+export async function createDraftFromRecommendation(recId) {
+  return apiFetch(`/api/campaigns/recommendations/${recId}/create-draft`, { method: "POST" });
+}
+
+export async function dismissRecommendation(recId) {
+  return apiFetch(`/api/campaigns/recommendations/${recId}/dismiss`, { method: "POST" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan B: Analytics extras
+// ══════════════════════════════════════════════════
+
+export async function getRevenue(period = "30d") {
+  return apiFetch(`/api/analytics/revenue?period=${period}`);
+}
+
+export async function getCampaignROI(campaignId = 0) {
+  return apiFetch(`/api/analytics/campaign-roi?campaign_id=${campaignId}`);
+}
+
+export async function getProductInsights() {
+  return apiFetch("/api/analytics/product-insights");
+}
+
+export async function aiEnrichProduct(productId) {
+  return apiFetch(`/api/products/${productId}/ai-enrich`, { method: "POST" });
 }

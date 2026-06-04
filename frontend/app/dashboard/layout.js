@@ -20,6 +20,9 @@ const sellerNavItems = [
   { href: "/dashboard/import", icon: "X", label: "Import" },
   { href: "/dashboard/billing", icon: "$", label: "Billing" },
   { href: "/dashboard/analytics", icon: "📈", label: "Analitik" },
+  { href: "/dashboard/templates", icon: "📚", label: "Templates" },
+  { href: "/dashboard/storefront", icon: "🏪", label: "Storefront" },
+  { href: "/dashboard/onboarding", icon: "🎯", label: "Setup" },
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
 ];
 
@@ -41,6 +44,9 @@ const adminNavItems = [
   { href: "/dashboard/import", icon: "X", label: "Import" },
   { href: "/dashboard/billing", icon: "$", label: "Billing" },
   { href: "/dashboard/analytics", icon: "📈", label: "Analitik" },
+  { href: "/dashboard/templates", icon: "📚", label: "Templates" },
+  { href: "/dashboard/storefront", icon: "🏪", label: "Storefront" },
+  { href: "/dashboard/onboarding", icon: "🎯", label: "Setup" },
   { href: "/dashboard/settings", icon: "⚙️", label: "Settings" },
 ];
 
