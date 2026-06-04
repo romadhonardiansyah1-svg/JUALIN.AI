@@ -245,3 +245,55 @@ async def _execute_step(db: AsyncSession, run: AutomationRun, template_key: str,
         return {"success": True, "action": "paid_message_sent", "order_id": order_id}
 
     return {"success": False, "error": f"unknown template: {template_key}"}
+
+
+async def dry_run_workflow(db: AsyncSession, rule: AutomationRule) -> list[dict]:
+    """
+    Simulate a workflow rule — match entities but don't create runs or execute.
+    Returns list of matched entities.
+    """
+    matched = []
+
+    if rule.template_key == "pending_payment_2h":
+        params = rule.action_json.get("params", {}) if rule.action_json else {}
+        delay_hours = params.get("delay_hours", 2)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=delay_hours)
+        result = await db.execute(
+            select(Order)
+            .where(Order.seller_id == rule.seller_id, Order.status == OrderStatus.PENDING, Order.created_at < cutoff)
+            .limit(50)
+        )
+        for order in result.scalars().all():
+            matched.append({"entity_type": "order", "entity_id": order.id, "detail": f"Order #{order.id} pending since {order.created_at}"})
+
+    elif rule.template_key == "low_stock_alert":
+        params = rule.action_json.get("params", {}) if rule.action_json else {}
+        threshold = params.get("stock_threshold", 3)
+        result = await db.execute(
+            select(Product)
+            .where(Product.seller_id == rule.seller_id, Product.is_active == 1, Product.stok < threshold, Product.stok > 0)
+            .limit(50)
+        )
+        for product in result.scalars().all():
+            matched.append({"entity_type": "product", "entity_id": product.id, "detail": f"{product.nama} (stok: {product.stok})"})
+
+    elif rule.template_key == "repeat_buyer_bundle":
+        result = await db.execute(
+            select(Customer)
+            .where(Customer.seller_id == rule.seller_id, Customer.total_orders >= 2)
+            .limit(50)
+        )
+        for customer in result.scalars().all():
+            matched.append({"entity_type": "customer", "entity_id": customer.id, "detail": f"{customer.name} ({customer.total_orders} orders)"})
+
+    elif rule.template_key == "paid_processing_message":
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        result = await db.execute(
+            select(Order)
+            .where(Order.seller_id == rule.seller_id, Order.status == OrderStatus.PAID, Order.updated_at > cutoff)
+            .limit(50)
+        )
+        for order in result.scalars().all():
+            matched.append({"entity_type": "order", "entity_id": order.id, "detail": f"Order #{order.id} paid"})
+
+    return matched

@@ -308,7 +308,13 @@ async def get_provider_health(
     else:
         providers["whatsapp"] = {"status": "disabled"}
 
-    # 5. LLM
+    # 5. Payment
+    providers["payment"] = {
+        "midtrans": "configured" if settings.MIDTRANS_SERVER_KEY else "missing_config",
+        "cashi": "configured" if settings.CASHI_API_KEY else "missing_config",
+    }
+
+    # 6. LLM
     providers["llm"] = {
         "status": "configured",
         "provider": settings.LLM_MODEL,
@@ -317,3 +323,168 @@ async def get_provider_health(
 
     return providers
 
+
+# ══════════════════════════════════════════════════
+# Jobs Management
+# ══════════════════════════════════════════════════
+
+@router.get("/jobs")
+async def list_jobs(
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """List background jobs with optional filters."""
+    from models.scale_core import BackgroundJob
+
+    query = select(BackgroundJob).order_by(BackgroundJob.created_at.desc())
+    if status:
+        query = query.where(BackgroundJob.status == status)
+    if job_type:
+        query = query.where(BackgroundJob.job_type == job_type)
+    query = query.limit(min(limit, 200)).offset(offset)
+
+    result = await db.execute(query)
+    jobs = result.scalars().all()
+
+    # Count totals by status
+    count_result = await db.execute(
+        select(BackgroundJob.status, func.count(BackgroundJob.id))
+        .group_by(BackgroundJob.status)
+    )
+    status_counts = {row[0]: row[1] for row in count_result.all()}
+
+    return {
+        "jobs": [
+            {
+                "id": j.id,
+                "job_type": j.job_type,
+                "status": j.status,
+                "seller_id": j.seller_id,
+                "attempts": j.attempts,
+                "max_attempts": j.max_attempts,
+                "retryable": j.retryable,
+                "error_message": j.error_message[:500] if j.error_message else "",
+                "last_error_code": j.last_error_code,
+                "created_at": j.created_at.isoformat() if j.created_at else "",
+                "started_at": j.started_at.isoformat() if j.started_at else "",
+                "finished_at": j.finished_at.isoformat() if j.finished_at else "",
+            }
+            for j in jobs
+        ],
+        "status_counts": status_counts,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.post("/jobs/{job_id}/retry")
+async def retry_job(
+    job_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-enqueue a failed/dead_letter job for retry."""
+    from models.scale_core import BackgroundJob
+    from core.audit import record_audit
+
+    result = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status not in ("failed", "dead_letter"):
+        raise HTTPException(status_code=400, detail=f"Cannot retry job with status '{job.status}'")
+
+    old_status = job.status
+    job.status = "queued"
+    job.max_attempts = job.attempts + 3
+    job.retryable = True
+    job.error_message = ""
+    job.last_error_code = ""
+    job.locked_at = None
+    job.locked_by = ""
+    job.finished_at = None
+
+    await record_audit(
+        db, action="admin.job.retry", entity_type="background_job", entity_id=job_id,
+        actor_user_id=admin.id, actor_type="admin",
+        before={"status": old_status}, after={"status": "queued"},
+    )
+    await db.commit()
+
+    return {"message": "Job re-queued", "job_id": job.id, "new_status": "queued"}
+
+
+@router.post("/webhooks/{event_id}/replay")
+async def replay_webhook(
+    event_id: int,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replay a webhook event by resetting its status."""
+    from models.scale_core import WebhookEvent
+    from core.audit import record_audit
+
+    result = await db.execute(select(WebhookEvent).where(WebhookEvent.id == event_id))
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Webhook event not found")
+
+    old_status = event.status
+    event.status = "received"
+    event.processed_at = None
+    event.error_message = ""
+
+    await record_audit(
+        db, action="admin.webhook.replay", entity_type="webhook_event", entity_id=event_id,
+        actor_user_id=admin.id, actor_type="admin",
+        before={"status": old_status}, after={"status": "received"},
+    )
+    await db.commit()
+
+    return {"message": "Webhook event reset for replay", "event_id": event.id}
+
+
+@router.get("/audit-logs")
+async def list_audit_logs(
+    seller_id: Optional[int] = None,
+    entity_type: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Browse audit logs with filters."""
+    from models.scale_core import AuditLog
+
+    query = select(AuditLog).order_by(AuditLog.created_at.desc())
+    if seller_id:
+        query = query.where(AuditLog.seller_id == seller_id)
+    if entity_type:
+        query = query.where(AuditLog.entity_type == entity_type)
+    if action:
+        query = query.where(AuditLog.action == action)
+    query = query.limit(min(limit, 200)).offset(offset)
+
+    result = await db.execute(query)
+    logs = result.scalars().all()
+
+    return [
+        {
+            "id": log.id,
+            "seller_id": log.seller_id,
+            "actor_user_id": log.actor_user_id,
+            "actor_type": log.actor_type,
+            "action": log.action,
+            "entity_type": log.entity_type,
+            "entity_id": log.entity_id,
+            "before": log.before,
+            "after": log.after,
+            "created_at": log.created_at.isoformat() if log.created_at else "",
+        }
+        for log in logs
+    ]

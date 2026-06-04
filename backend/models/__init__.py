@@ -22,6 +22,9 @@ from models.workflow import AutomationRule, AutomationRun, AutomationRunStep
 from models.billing import Plan, Subscription, UsageCounter, BillingEvent
 from models.system_heartbeat import SystemHeartbeat
 from models.product_import import ProductImportBatch
+from models.prompt_registry import PromptVersion
+from models.inbox_extras import InboxThreadLabel, InboxInternalNote, CannedReply
+from models.usage_event import UsageEvent
 
 __all__ = [
     "Base",
@@ -41,5 +44,8 @@ __all__ = [
     "Plan", "Subscription", "UsageCounter", "BillingEvent",
     "SystemHeartbeat",
     "ProductImportBatch",
+    "PromptVersion",
+    "InboxThreadLabel", "InboxInternalNote", "CannedReply",
+    "UsageEvent",
 ]
 

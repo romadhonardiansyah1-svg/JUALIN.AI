@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
@@ -37,13 +38,21 @@ class EvalCaseRequest(BaseModel):
 @router.get("/traces")
 async def list_traces(
     status: str = "",
+    min_confidence: Optional[float] = None,
+    max_confidence: Optional[float] = None,
+    limit: int = 50,
+    offset: int = 0,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(AITrace).where(AITrace.seller_id == current_user.id)
     if status:
         query = query.where(AITrace.status == status)
-    query = query.order_by(AITrace.created_at.desc()).limit(100)
+    if min_confidence is not None:
+        query = query.where(AITrace.confidence >= min_confidence)
+    if max_confidence is not None:
+        query = query.where(AITrace.confidence <= max_confidence)
+    query = query.order_by(AITrace.created_at.desc()).limit(min(limit, 200)).offset(offset)
     result = await db.execute(query)
     return [
         {
@@ -55,6 +64,7 @@ async def list_traces(
             "status": t.status,
             "latency_ms": t.latency_ms,
             "confidence": t.confidence,
+            "prompt_version": t.prompt_version,
             "prompt_preview": t.prompt_preview,
             "response_preview": t.response_preview,
             "error_message": t.error_message,
@@ -140,3 +150,53 @@ async def run_eval_placeholder(
     db.add(run)
     await db.commit()
     return {"message": "Eval run queued", "id": run.id, "total_cases": run.total_cases}
+
+
+@router.get("/evals/runs/{run_id}")
+async def get_eval_run(
+    run_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(AIEvalRun).where(AIEvalRun.id == run_id, AIEvalRun.seller_id == current_user.id)
+    )
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Eval run not found")
+    return {
+        "id": run.id,
+        "status": run.status,
+        "total_cases": run.total_cases,
+        "passed_cases": run.passed_cases,
+        "failed_cases": run.failed_cases,
+        "result_json": run.result_json,
+        "created_at": run.created_at.isoformat() if run.created_at else "",
+    }
+
+
+# ══════════════════════════════════════════════════
+# Prompt Registry
+# ══════════════════════════════════════════════════
+
+@router.get("/prompts")
+async def list_prompts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from models.prompt_registry import PromptVersion
+    result = await db.execute(
+        select(PromptVersion).order_by(PromptVersion.prompt_key.asc(), PromptVersion.version.desc())
+    )
+    return [
+        {
+            "id": p.id,
+            "prompt_key": p.prompt_key,
+            "version": p.version,
+            "content": p.content[:500],
+            "description": p.description,
+            "is_active": p.is_active,
+            "created_at": p.created_at.isoformat() if p.created_at else "",
+        }
+        for p in result.scalars().all()
+    ]

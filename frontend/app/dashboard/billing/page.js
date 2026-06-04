@@ -52,14 +52,25 @@ export default function BillingPage() {
           <table className="table">
             <thead><tr><th>Metric</th><th>Period</th><th>Used</th><th>Limit</th></tr></thead>
             <tbody>
-              {usage.map((item) => (
-                <tr key={`${item.metric}-${item.period}`}>
-                  <td>{item.metric}</td>
-                  <td>{item.period}</td>
-                  <td>{item.used}</td>
-                  <td>{item.limit}</td>
-                </tr>
-              ))}
+              {usage.map((item) => {
+                const pct = item.limit > 0 ? Math.round(item.used / item.limit * 100) : 0;
+                const badgeCls = pct >= 90 ? "badge-danger" : pct >= 70 ? "badge-warning" : "badge-success";
+                return (
+                  <tr key={`${item.metric}-${item.period}`}>
+                    <td>{item.metric}</td>
+                    <td>{item.period}</td>
+                    <td>
+                      {item.used}
+                      {item.limit > 0 && (
+                        <span className={`badge ${badgeCls}`} style={{ marginLeft: 8, fontSize: "0.75em" }}>
+                          {pct}%
+                        </span>
+                      )}
+                    </td>
+                    <td>{item.limit < 0 ? "∞" : item.limit}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

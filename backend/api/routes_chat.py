@@ -3,7 +3,7 @@ JUALIN.AI — Chat API Routes
 Send message → AI response → save to DB
 Optimized: sequential safe DB calls, reduced context
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel
@@ -257,12 +257,19 @@ async def maybe_create_order_from_ai_response(
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
     req: ChatSendRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Customer sends a message → AI processes → returns response.
     Public endpoint (no auth needed — customers don't have accounts).
     """
+    # ── Rate limit ──
+    from core.rate_limit import check_rate_limit
+    client_ip = request.client.host if request.client else "unknown"
+    rl = await check_rate_limit(f"chat:{client_ip}", max_requests=30, window_seconds=60)
+    if not rl["allowed"]:
+        raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Coba lagi nanti.")
     # Find seller by slug
     result = await db.execute(select(User).where(User.slug == req.seller_slug))
     seller = result.scalar_one_or_none()
@@ -447,6 +454,18 @@ async def send_message(
         converted_to_order=order_created,
     )
     db.add(analytics)
+
+    # ── Record usage event ──
+    try:
+        from core.metering import record_usage_event
+        await record_usage_event(
+            db, seller_id=seller.id, metric="chat.sent", quantity=1,
+            source="chat", source_id=str(conversation.id),
+            idempotency_key=f"chat.sent:{conversation.id}:{ai_msg.id}",
+        )
+    except Exception:
+        pass  # metering should not block chat
+
     await db.commit()
     
     return ChatResponse(

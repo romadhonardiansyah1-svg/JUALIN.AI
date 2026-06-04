@@ -198,6 +198,7 @@ export const api = {
   updateAdminSeller: (id, body) =>
     fetchAPI(`/api/admin/sellers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   getSystemHealth: () => fetchAPI("/api/admin/system"),
+  getProviderHealth: () => fetchAPI("/api/admin/provider-health"),
 
   // Scale-up: integrations
   getIntegrations: () => fetchAPI("/api/integrations/"),
@@ -206,7 +207,7 @@ export const api = {
     fetchAPI("/api/integrations/whatsapp/connect", { method: "POST", body: JSON.stringify(body) }),
 
   // Scale-up: inbox
-  getInboxThreads: () => fetchAPI("/api/inbox/threads"),
+  getInboxThreads: (params = "") => fetchAPI(`/api/inbox/threads${params}`),
   getInboxThread: (id) => fetchAPI(`/api/inbox/threads/${id}`),
   replyInboxThread: (id, body) =>
     fetchAPI(`/api/inbox/threads/${id}/reply`, { method: "POST", body: JSON.stringify(body) }),
@@ -366,4 +367,75 @@ export function sendChatStream({ body, onToken, onMetadata, onDone, onError }) {
 
   // Return abort function
   return () => controller.abort();
+}
+
+// ══════════════════════════════════════════════════
+// Plan A: Admin endpoints
+// ══════════════════════════════════════════════════
+
+export async function adminListJobs(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/api/admin/jobs?${qs}`);
+}
+
+export async function adminRetryJob(jobId) {
+  return apiFetch(`/api/admin/jobs/${jobId}/retry`, { method: "POST" });
+}
+
+export async function adminReplayWebhook(eventId) {
+  return apiFetch(`/api/admin/webhooks/${eventId}/replay`, { method: "POST" });
+}
+
+export async function adminListAuditLogs(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/api/admin/audit-logs?${qs}`);
+}
+
+// ══════════════════════════════════════════════════
+// Plan A: Inbox productization
+// ══════════════════════════════════════════════════
+
+export async function inboxManageLabel(threadId, label, action = "add") {
+  return apiFetch(`/api/inbox/threads/${threadId}/labels`, {
+    method: "POST",
+    body: JSON.stringify({ label, action }),
+  });
+}
+
+export async function inboxAddNote(threadId, content) {
+  return apiFetch(`/api/inbox/threads/${threadId}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function inboxListNotes(threadId) {
+  return apiFetch(`/api/inbox/threads/${threadId}/notes`);
+}
+
+export async function listCannedReplies() {
+  return apiFetch("/api/inbox/canned-replies");
+}
+
+export async function createCannedReply(data) {
+  return apiFetch("/api/inbox/canned-replies", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// ══════════════════════════════════════════════════
+// Plan A: Workflow dry-run
+// ══════════════════════════════════════════════════
+
+export async function workflowDryRun(ruleId) {
+  return apiFetch(`/api/workflows/rules/${ruleId}/dry-run`, { method: "POST" });
+}
+
+// ══════════════════════════════════════════════════
+// Plan A: AI Quality prompts
+// ══════════════════════════════════════════════════
+
+export async function listPrompts() {
+  return apiFetch("/api/ai-quality/prompts");
 }

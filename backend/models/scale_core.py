@@ -1,7 +1,7 @@
 """
 Core production tables for scale-up modules.
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Boolean
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -50,12 +50,17 @@ class BackgroundJob(Base):
     seller_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     job_type = Column(String(100), nullable=False, index=True)
     idempotency_key = Column(String(255), nullable=False, unique=True, index=True)
-    status = Column(String(20), default="queued", nullable=False)
+    status = Column(String(20), default="queued", nullable=False)  # queued|running|done|failed|dead_letter|skipped
     payload = Column(JSON, default=dict)
     attempts = Column(Integer, default=0)
     max_attempts = Column(Integer, default=3)
+    retryable = Column(Boolean, default=True, nullable=False)
     error_message = Column(Text, default="")
+    last_error_code = Column(String(50), default="")
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
+    next_run_at = Column(DateTime(timezone=True), nullable=True)
+    locked_at = Column(DateTime(timezone=True), nullable=True)
+    locked_by = Column(String(100), default="")
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

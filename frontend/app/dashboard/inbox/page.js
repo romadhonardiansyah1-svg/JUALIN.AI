@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, inboxManageLabel, inboxAddNote, inboxListNotes, listCannedReplies } from "@/lib/api";
 import styles from "../scale.module.css";
 
 function fmtDate(value) {
@@ -16,11 +16,18 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [searchQ, setSearchQ] = useState("");
+  const [notes, setNotes] = useState([]);
+  const [noteText, setNoteText] = useState("");
+  const [cannedReplies, setCannedReplies] = useState([]);
+  const [showCanned, setShowCanned] = useState(false);
+  const [labelInput, setLabelInput] = useState("");
 
   const loadThreads = useCallback(async () => {
     setError("");
     try {
-      const data = await api.getInboxThreads();
+      const params = searchQ ? `?q=${encodeURIComponent(searchQ)}&limit=50` : "?limit=50";
+      const data = await api.getInboxThreads(params);
       setThreads(data);
       if (!activeId && data.length) setActiveId(data[0].id);
     } catch (e) {
@@ -28,7 +35,7 @@ export default function InboxPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeId]);
+  }, [activeId, searchQ]);
 
   async function loadDetail(id) {
     if (!id) return;
@@ -47,7 +54,43 @@ export default function InboxPage() {
 
   useEffect(() => {
     loadDetail(activeId);
+    if (activeId) loadNotes(activeId);
   }, [activeId]);
+
+  useEffect(() => {
+    listCannedReplies().then(setCannedReplies).catch(() => {});
+  }, []);
+
+  async function loadNotes(threadId) {
+    try {
+      setNotes(await inboxListNotes(threadId));
+    } catch (e) { setNotes([]); }
+  }
+
+  async function addNote() {
+    if (!noteText.trim() || !activeId) return;
+    try {
+      await inboxAddNote(activeId, noteText.trim());
+      setNoteText("");
+      await loadNotes(activeId);
+    } catch (e) { setError(e.message); }
+  }
+
+  async function addLabel(threadId) {
+    if (!labelInput.trim()) return;
+    try {
+      await inboxManageLabel(threadId, labelInput.trim(), "add");
+      setLabelInput("");
+      await loadThreads();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function removeLabel(threadId, label) {
+    try {
+      await inboxManageLabel(threadId, label, "remove");
+      await loadThreads();
+    } catch (e) { setError(e.message); }
+  }
 
   async function changeMode(mode) {
     if (!detail) return;
@@ -84,7 +127,17 @@ export default function InboxPage() {
           <h2>WhatsApp Inbox</h2>
           <p className={styles.muted}>Thread masuk dari channel resmi, dengan kontrol AI/manual per percakapan.</p>
         </div>
-        <button className="btn btn-outline" onClick={loadThreads}>Refresh</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            className="input"
+            placeholder="🔍 Cari nama/nomor..."
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && loadThreads()}
+            style={{ width: 200 }}
+          />
+          <button className="btn btn-outline" onClick={loadThreads}>Refresh</button>
+        </div>
       </div>
       {error && <div className={styles.error}>{error}</div>}
       <div className={styles.twoColumn}>
@@ -112,6 +165,15 @@ export default function InboxPage() {
                   {thread.unread_count > 0 && <span>{thread.unread_count} unread</span>}
                 </div>
                 <div className={styles.muted}>{thread.last_message_preview || "Belum ada preview"}</div>
+                {thread.labels && thread.labels.length > 0 && (
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
+                    {thread.labels.map((lbl) => (
+                      <span key={lbl} className="badge badge-muted" style={{ fontSize: "0.7em", padding: "1px 6px", cursor: "pointer" }}
+                        onClick={(e) => { e.stopPropagation(); removeLabel(thread.id, lbl); }}
+                      >🏷 {lbl} ✕</span>
+                    ))}
+                  </div>
+                )}
               </button>
             ))}
           </div>
@@ -170,9 +232,47 @@ export default function InboxPage() {
                 ))}
               </div>
               <form className={styles.replyBar} onSubmit={sendReply}>
-                <input className="input" value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Balas manual..." disabled={sending} />
-                <button className="btn btn-primary" disabled={sending || !reply.trim()}>{sending ? "Mengirim..." : "Kirim"}</button>
+                <div style={{ display: "flex", gap: 4, width: "100%", alignItems: "center" }}>
+                  <button type="button" className="btn btn-sm btn-outline" onClick={() => setShowCanned(!showCanned)} title="Canned Replies"
+                    style={{ fontSize: "0.85rem", padding: "4px 8px" }}>⚡</button>
+                  <input className="input" value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Balas manual..." disabled={sending} style={{ flex: 1 }} />
+                  <button className="btn btn-primary" disabled={sending || !reply.trim()}>{sending ? "..." : "Kirim"}</button>
+                </div>
+                {showCanned && cannedReplies.length > 0 && (
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
+                    {cannedReplies.map((cr) => (
+                      <button key={cr.id} type="button" className="badge badge-primary" style={{ cursor: "pointer", padding: "4px 10px" }}
+                        onClick={() => { setReply(cr.content); setShowCanned(false); }}>
+                        {cr.title}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </form>
+              {/* Labels & Notes Panel */}
+              <div style={{ padding: 10, borderTop: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center" }}>
+                <input className="input" value={labelInput} onChange={(e) => setLabelInput(e.target.value)}
+                  placeholder="+ Label" style={{ width: 100, fontSize: "0.8rem" }}
+                  onKeyDown={(e) => e.key === "Enter" && addLabel(detail.id)} />
+                <button className="btn btn-sm btn-outline" onClick={() => addLabel(detail.id)}>🏷</button>
+                <span style={{ flex: 1 }} />
+                <span className="text-xs text-muted">{notes.length} notes</span>
+              </div>
+              {notes.length > 0 && (
+                <div style={{ padding: "0 10px 10px", maxHeight: 120, overflow: "auto" }}>
+                  {notes.map((n) => (
+                    <div key={n.id} style={{ fontSize: "0.8rem", padding: "4px 0", borderBottom: "1px solid var(--border-light)" }}>
+                      <span className="text-muted">{fmtDate(n.created_at)}</span>: {n.content}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ padding: "0 10px 10px", display: "flex", gap: 4 }}>
+                <input className="input" value={noteText} onChange={(e) => setNoteText(e.target.value)}
+                  placeholder="Tambah catatan internal..." style={{ flex: 1, fontSize: "0.8rem" }}
+                  onKeyDown={(e) => e.key === "Enter" && addNote()} />
+                <button className="btn btn-sm btn-outline" onClick={addNote} disabled={!noteText.trim()}>📝</button>
+              </div>
             </>
           ) : (
             <div className={styles.stateBox}>Pilih thread untuk melihat percakapan.</div>

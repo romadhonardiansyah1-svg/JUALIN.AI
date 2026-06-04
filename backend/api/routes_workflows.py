@@ -21,18 +21,28 @@ WORKFLOW_TEMPLATES = [
         "name": "Follow-up pembayaran tertunda",
         "trigger": {"type": "order_pending_for", "hours": 2},
         "action": {"type": "send_message", "template": "payment_followup"},
+        "params_schema": {
+            "delay_hours": {"type": "int", "default": 2, "min": 1, "max": 72, "label": "Delay (jam)"},
+            "message_template": {"type": "text", "default": "", "label": "Custom message (kosong = default)"},
+        },
     },
     {
         "key": "low_stock_alert",
         "name": "Alert stok rendah",
         "trigger": {"type": "stock_below", "qty": 3},
         "action": {"type": "notify_seller", "template": "low_stock"},
+        "params_schema": {
+            "stock_threshold": {"type": "int", "default": 3, "min": 1, "max": 100, "label": "Batas stok"},
+        },
     },
     {
         "key": "repeat_buyer_bundle",
         "name": "Tawarkan bundle repeat buyer",
         "trigger": {"type": "customer_tagged", "tag": "repeat_buyer"},
         "action": {"type": "suggest_bundle", "template": "repeat_buyer_bundle"},
+        "params_schema": {
+            "message_template": {"type": "text", "default": "", "label": "Custom message"},
+        },
     },
     {
         "key": "paid_processing_message",
@@ -206,3 +216,37 @@ async def get_run_detail(
         "steps": steps,
     }
 
+
+# ══════════════════════════════════════════════════
+# Dry-Run
+# ══════════════════════════════════════════════════
+
+@router.post("/rules/{rule_id}/dry-run")
+async def dry_run_rule(
+    rule_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Simulate a workflow rule execution without side effects."""
+    if not settings.ENABLE_WORKFLOWS:
+        raise HTTPException(status_code=400, detail="Workflows dinonaktifkan")
+
+    result = await db.execute(
+        select(AutomationRule)
+        .where(AutomationRule.id == rule_id, AutomationRule.seller_id == current_user.id)
+    )
+    rule = result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule tidak ditemukan")
+
+    # Run in dry_run mode — match entities but don't execute side effects
+    from services.workflow_runner import dry_run_workflow
+    matched = await dry_run_workflow(db, rule)
+
+    return {
+        "rule_id": rule.id,
+        "template_key": rule.template_key,
+        "matched_entities": matched,
+        "dry_run": True,
+        "message": f"Found {len(matched)} matching entities (no actions executed)",
+    }

@@ -26,6 +26,7 @@ class AITrace(Base):
     confidence = Column(Float, default=0)
     error_message = Column(Text, default="")
     metadata_json = Column(JSON, default=dict)
+    prompt_version = Column(String(50), default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -29,18 +29,21 @@ logger = get_logger(__name__)
 
 async def process_recorded_job(ctx, job_id: int):
     """Dispatch a recorded background job to the appropriate handler."""
+    worker_id = f"worker:{__import__('os').getpid()}"
     async with async_session() as db:
         result = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
         job = result.scalar_one_or_none()
         if not job:
             return {"success": False, "error": "job not found"}
-        if job.status == "done":
+        if job.status in ("done", "dead_letter", "skipped"):
             return {"success": True, "skipped": True}
         if job.status == "running":
             return {"success": True, "status": "already running"}
 
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
+        job.locked_at = datetime.now(timezone.utc)
+        job.locked_by = worker_id
         job.attempts += 1
         await db.commit()
 
@@ -65,9 +68,22 @@ async def process_recorded_job(ctx, job_id: int):
             else:
                 result = {"success": False, "error": f"unknown job_type: {job.job_type}"}
 
-            job.status = "done" if result.get("success") else "failed"
-            job.error_message = "" if result.get("success") else result.get("error", "")
+            if result.get("success"):
+                job.status = "skipped" if result.get("skipped") else "done"
+                job.error_message = ""
+            else:
+                is_permanent = result.get("permanent", False)
+                if is_permanent:
+                    job.status = "dead_letter"
+                    job.retryable = False
+                else:
+                    job.status = "failed"
+                job.error_message = result.get("error", "")
+                job.last_error_code = result.get("error_code", "")
+
             job.finished_at = datetime.now(timezone.utc)
+            job.locked_at = None
+            job.locked_by = ""
             await db.commit()
             logger.info(
                 "Background job processed",
@@ -76,9 +92,16 @@ async def process_recorded_job(ctx, job_id: int):
             return result
 
         except Exception as exc:
-            job.status = "failed" if job.attempts >= job.max_attempts else "queued"
+            if job.attempts >= job.max_attempts:
+                job.status = "dead_letter"
+                job.retryable = False
+            else:
+                job.status = "failed" if getattr(job, 'retryable', True) else "dead_letter"
             job.error_message = str(exc)
+            job.last_error_code = type(exc).__name__
             job.finished_at = datetime.now(timezone.utc)
+            job.locked_at = None
+            job.locked_by = ""
             await db.commit()
             logger.error(f"Job {job.id} failed: {exc}", exc_info=True)
             raise

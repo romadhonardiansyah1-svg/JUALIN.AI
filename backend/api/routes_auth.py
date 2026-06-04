@@ -3,7 +3,7 @@ JUALIN.AI — Auth API Routes
 Register, Login, JWT token management
 """
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
@@ -107,8 +107,15 @@ async def get_current_user(
 # ── Endpoints ──
 
 @router.post("/register", response_model=TokenResponse)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Register seller baru + auto-create toko."""
+    # Rate limit
+    from core.rate_limit import check_rate_limit
+    client_ip = request.client.host if request.client else "unknown"
+    rl = await check_rate_limit(f"auth:{client_ip}", max_requests=10, window_seconds=60)
+    if not rl["allowed"]:
+        raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi nanti.")
+
     email = str(req.email).lower().strip()
     nama_toko = req.nama_toko.strip()
     if not nama_toko:
@@ -161,8 +168,15 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Login seller dengan email + password."""
+    # Rate limit
+    from core.rate_limit import check_rate_limit
+    client_ip = request.client.host if request.client else "unknown"
+    rl = await check_rate_limit(f"auth:{client_ip}", max_requests=10, window_seconds=60)
+    if not rl["allowed"]:
+        raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi nanti.")
+
     email = str(req.email).lower().strip()
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
