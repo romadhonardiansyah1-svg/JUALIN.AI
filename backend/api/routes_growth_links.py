@@ -3,11 +3,11 @@ Growth links endpoints — trackable links for WhatsApp, storefront, campaigns.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 import uuid as uuid_module
+from urllib.parse import urlparse
 
 from config import get_settings
 from models.database import get_db
@@ -18,11 +18,61 @@ from api.routes_auth import get_current_user
 router = APIRouter()
 settings = get_settings()
 
+ALLOWED_EXTERNAL_REDIRECT_HOSTS = {
+    "wa.me",
+    "api.whatsapp.com",
+    "web.whatsapp.com",
+    "www.whatsapp.com",
+}
+ALLOWED_RELATIVE_REDIRECT_PREFIXES = ("/chat/", "/pay/")
+ALLOWED_RELATIVE_REDIRECT_PATHS = {"/register"}
+
 
 class GrowthLinkCreateRequest(BaseModel):
-    source: str = "manual"        # wa_link, storefront_cta, campaign, click_to_whatsapp_ads, manual
-    campaign_name: str = ""
-    target_url: str = ""
+    source: str = Field(default="manual", max_length=50)
+    campaign_name: str = Field(default="", max_length=120)
+    target_url: str = Field(default="", max_length=2048)
+
+
+def _configured_hosts() -> set[str]:
+    hosts: set[str] = set()
+    for base_url in (settings.FRONTEND_URL, settings.BASE_URL):
+        parsed = urlparse(base_url)
+        if parsed.hostname:
+            hosts.add(parsed.hostname.lower())
+    return hosts
+
+
+def _is_allowed_public_path(path: str) -> bool:
+    return path in ALLOWED_RELATIVE_REDIRECT_PATHS or path.startswith(ALLOWED_RELATIVE_REDIRECT_PREFIXES)
+
+
+def _validate_redirect_target(target_url: str) -> str:
+    """Restrict growth links to WhatsApp or this platform to prevent open redirect abuse."""
+    target_url = (target_url or "").strip()
+    if not target_url:
+        raise HTTPException(status_code=400, detail="Target URL wajib diisi")
+
+    if target_url.startswith("//"):
+        raise HTTPException(status_code=400, detail="Target URL tidak valid")
+
+    if target_url.startswith("/"):
+        if _is_allowed_public_path(urlparse(target_url).path):
+            return target_url
+        raise HTTPException(status_code=400, detail="Target URL internal tidak diizinkan")
+
+    parsed = urlparse(target_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Target URL harus memakai http/https yang valid")
+
+    host = parsed.hostname.lower()
+    if host in _configured_hosts() and _is_allowed_public_path(parsed.path):
+        return target_url
+
+    if parsed.scheme == "https" and host in ALLOWED_EXTERNAL_REDIRECT_HOSTS:
+        return target_url
+
+    raise HTTPException(status_code=400, detail="Target URL hanya boleh menuju WhatsApp atau domain JUALIN.AI")
 
 
 @router.post("/")
@@ -44,6 +94,7 @@ async def create_growth_link(
             target_url = f"https://wa.me/{phone}?text=Halo,%20saya%20tertarik%20dengan%20produk%20di%20{current_user.nama_toko}"
         else:
             target_url = f"{settings.FRONTEND_URL}/chat/{current_user.slug}"
+    target_url = _validate_redirect_target(target_url)
 
     link = GrowthLink(
         seller_id=current_user.id,

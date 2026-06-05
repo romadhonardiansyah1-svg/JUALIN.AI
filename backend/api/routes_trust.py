@@ -3,7 +3,7 @@ Trust profile endpoints — seller-facing and public-facing.
 AI prompt harus mengambil trust profile untuk menjawab refund/shipping/support.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -17,12 +17,35 @@ router = APIRouter()
 
 
 class TrustProfileUpdateRequest(BaseModel):
-    refund_policy: Optional[str] = None
-    shipping_policy: Optional[str] = None
-    support_hours: Optional[str] = None
+    refund_policy: Optional[str] = Field(default=None, max_length=5000)
+    shipping_policy: Optional[str] = Field(default=None, max_length=5000)
+    support_hours: Optional[str] = Field(default=None, max_length=255)
     verified_phone: Optional[bool] = None
     payment_enabled: Optional[bool] = None
-    testimonials_json: Optional[list] = None
+    testimonials_json: Optional[list] = Field(default=None, max_length=20)
+
+
+def _normalize_testimonials(testimonials: list | None) -> list:
+    if not testimonials:
+        return []
+    if not isinstance(testimonials, list):
+        return []
+    testimonials = testimonials[:20]
+
+    normalized = []
+    for item in testimonials:
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="Setiap testimonial harus berupa object")
+        name = str(item.get("name", "")).strip()[:100]
+        text = str(item.get("text", "")).strip()[:1000]
+        try:
+            rating = int(item.get("rating", 5))
+        except (TypeError, ValueError):
+            rating = 5
+        rating = max(1, min(5, rating))
+        if text:
+            normalized.append({"name": name or "Customer", "text": text, "rating": rating})
+    return normalized
 
 
 @router.get("/trust-profile")
@@ -50,7 +73,7 @@ async def get_trust_profile(
         "support_hours": tp.support_hours or "",
         "verified_phone": tp.verified_phone,
         "payment_enabled": tp.payment_enabled,
-        "testimonials": tp.testimonials_json or [],
+        "testimonials": _normalize_testimonials(tp.testimonials_json or []),
     }
 
 
@@ -80,7 +103,7 @@ async def update_trust_profile(
     if req.payment_enabled is not None:
         tp.payment_enabled = req.payment_enabled
     if req.testimonials_json is not None:
-        tp.testimonials_json = req.testimonials_json
+        tp.testimonials_json = _normalize_testimonials(req.testimonials_json)
 
     await db.commit()
     return {"message": "Trust profile updated"}
@@ -128,5 +151,5 @@ async def get_public_trust_profile(
         "support_hours": tp.support_hours or "",
         "verified_phone": tp.verified_phone,
         "payment_enabled": tp.payment_enabled,
-        "testimonials": tp.testimonials_json or [],
+        "testimonials": _normalize_testimonials(tp.testimonials_json or []),
     }

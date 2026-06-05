@@ -214,6 +214,11 @@ export default function DashboardLayout({ children }) {
             </div>
           </div>
         </header>
+        {user.impersonation && (
+          <div className={styles.impersonationBanner}>
+            Mode impersonasi aktif. Semua perubahan dicatat atas admin #{user.impersonated_by || "-"}.
+          </div>
+        )}
         <div className={styles.content}><ErrorBoundary>{children}</ErrorBoundary></div>
       </main>
     </div>

@@ -31,6 +31,24 @@ SalesStage = Literal[
 
 ActionType = Literal["create_order", "send_payment_link", "handoff", "tag_customer"]
 
+PROMPT_INJECTION_PATTERNS = (
+    "abaikan instruksi",
+    "ignore previous instructions",
+    "ignore all previous",
+    "system prompt",
+    "developer message",
+    "buat order gratis",
+    "anggap stok tersedia",
+    "kirim data customer lain",
+    "bypass",
+    "jangan validasi",
+)
+
+
+def detect_prompt_injection(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(pattern in lower for pattern in PROMPT_INJECTION_PATTERNS)
+
 
 class CreateOrderItem(BaseModel):
     product_id: int = Field(gt=0)
@@ -101,10 +119,30 @@ async def execute_ai_actions(
     actions: list[AIAction],
     db: AsyncSession,
     actor: str = "ai",
+    user_message: str = "",
 ) -> list[dict[str, Any]]:
     """Execute allowed v1 AI actions without committing the outer transaction."""
     if not settings.ENABLE_AI_ACTIONS:
         return [{"type": action.type, "success": False, "error": "AI actions disabled"} for action in actions]
+
+    if actions and detect_prompt_injection(user_message):
+        await record_audit(
+            db,
+            action="ai.action.blocked",
+            entity_type="ai_action",
+            entity_id="prompt_injection",
+            seller_id=seller_id,
+            actor_type=actor,
+            metadata={
+                "reason": "prompt_injection_detected",
+                "actions": [action.type for action in actions],
+                "message_preview": (user_message or "")[:500],
+            },
+        )
+        return [
+            {"type": action.type, "success": False, "error": "Blocked by AI security policy"}
+            for action in actions
+        ]
 
     results: list[dict[str, Any]] = []
     for action in actions:

@@ -379,6 +379,7 @@ async def send_message(
                         actions=structured.actions,
                         db=db,
                         actor="ai",
+                        user_message=req.message,
                     )
                     for ar in action_results:
                         if ar.get("type") == "create_order" and ar.get("success"):

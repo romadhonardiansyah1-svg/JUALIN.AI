@@ -143,6 +143,7 @@ async def handle_inbox_ai_reply(db: AsyncSession, job: BackgroundJob) -> dict:
                         actions=structured.actions,
                         db=db,
                         actor="ai",
+                        user_message=inbound_msg.content,
                     )
                     # Append payment link if order was created
                     for ar in structured_actions_results:

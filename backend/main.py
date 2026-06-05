@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from config import get_settings
+from config import get_settings, validate_production_security
 from core.logging_config import setup_logging, get_logger
 from core.exceptions import register_exception_handlers
 from models.database import init_db, async_session
@@ -93,6 +93,10 @@ async def lifespan(app: FastAPI):
     Handles startup initialization and graceful shutdown.
     """
     start_time = time.monotonic()
+
+    security_errors = validate_production_security(settings)
+    if security_errors:
+        raise RuntimeError("Production security configuration invalid: " + "; ".join(security_errors))
 
     # 1. Initialize structured logging
     log_level = "DEBUG" if settings.DEBUG else "INFO"

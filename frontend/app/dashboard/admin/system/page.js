@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api, adminListJobs, adminRetryJob } from "@/lib/api";
+import { api, adminGetSecurityEvents, adminListJobs, adminRetryJob } from "@/lib/api";
 import styles from "../admin.module.css";
 
 export default function AdminSystemPage() {
   const [health, setHealth] = useState(null);
   const [providers, setProviders] = useState(null);
   const [jobs, setJobs] = useState(null);
+  const [securityEvents, setSecurityEvents] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [retrying, setRetrying] = useState(null);
@@ -18,14 +19,16 @@ export default function AdminSystemPage() {
 
   async function loadAll() {
     try {
-      const [healthData, providerData, jobData] = await Promise.all([
+      const [healthData, providerData, jobData, securityData] = await Promise.all([
         api.getSystemHealth().catch(() => null),
         api.getProviderHealth().catch(() => null),
         adminListJobs({ limit: 20 }).catch(() => null),
+        adminGetSecurityEvents({ hours: 24 }).catch(() => null),
       ]);
       setHealth(healthData);
       setProviders(providerData);
       setJobs(jobData);
+      setSecurityEvents(securityData);
     } catch (e) {
       console.error("Failed to load system data", e);
     }
@@ -133,6 +136,39 @@ export default function AdminSystemPage() {
           </div>
         ))}
       </div>
+
+      {securityEvents && (
+        <div className="card" style={{ marginTop: 20 }}>
+          <h3 className={styles.cardTitle}>Security Events</h3>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+            <span className="badge badge-warning">Failed webhooks: {securityEvents.failed_webhooks || 0}</span>
+            {Object.entries(securityEvents.counts || {}).slice(0, 8).map(([action, count]) => (
+              <span key={action} className="badge badge-muted">{action}: {count}</span>
+            ))}
+          </div>
+          {securityEvents.recent?.length ? (
+            <div style={{ overflowX: "auto", marginTop: 14 }}>
+              <table className={styles.table || "table"} style={{ width: "100%", fontSize: "0.85rem" }}>
+                <thead>
+                  <tr><th>Action</th><th>Actor</th><th>Seller</th><th>Time</th></tr>
+                </thead>
+                <tbody>
+                  {securityEvents.recent.slice(0, 8).map((event) => (
+                    <tr key={event.id}>
+                      <td><code>{event.action}</code></td>
+                      <td>{event.actor_type || "-"}</td>
+                      <td>{event.seller_id || "-"}</td>
+                      <td>{event.created_at ? new Date(event.created_at).toLocaleString("id-ID") : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-muted text-sm" style={{ marginTop: 12 }}>Tidak ada security event signifikan dalam 24 jam terakhir.</p>
+          )}
+        </div>
+      )}
 
       {/* Job Status Summary */}
       {jobs?.status_counts && (

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from config import get_settings
 from models.database import get_db
@@ -15,7 +15,7 @@ from models.user import User, UserRole, UserTier
 from models.product import Product
 from models.conversation import Conversation, Message
 from models.order import Order, OrderStatus
-from api.routes_auth import get_current_user
+from api.routes_auth import get_current_user, create_access_token
 
 router = APIRouter()
 settings = get_settings()
@@ -490,6 +490,70 @@ async def list_audit_logs(
     ]
 
 
+@router.get("/security-events")
+async def get_security_events(
+    hours: int = 24,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Summarize recent security-relevant audit events for admin incident triage."""
+    from models.scale_core import AuditLog, WebhookEvent
+
+    since = datetime.now(timezone.utc) - timedelta(hours=max(1, min(hours, 168)))
+    security_prefixes = (
+        "auth.",
+        "impersonation.",
+        "payment.status.",
+        "admin.",
+        "ai.action.blocked",
+        "integration.",
+        "campaign.",
+    )
+
+    audit_result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.created_at >= since)
+        .order_by(AuditLog.created_at.desc())
+        .limit(200)
+    )
+    audit_logs = [
+        log for log in audit_result.scalars().all()
+        if any(log.action.startswith(prefix) for prefix in security_prefixes)
+    ]
+
+    failed_webhooks_result = await db.execute(
+        select(func.count(WebhookEvent.id)).where(
+            WebhookEvent.created_at >= since,
+            WebhookEvent.status.in_(["failed", "invalid"]),
+        )
+    )
+    failed_webhooks = failed_webhooks_result.scalar() or 0
+
+    counts: dict[str, int] = {}
+    for log in audit_logs:
+        counts[log.action] = counts.get(log.action, 0) + 1
+
+    return {
+        "window_hours": max(1, min(hours, 168)),
+        "failed_webhooks": failed_webhooks,
+        "counts": counts,
+        "recent": [
+            {
+                "id": log.id,
+                "action": log.action,
+                "seller_id": log.seller_id,
+                "actor_user_id": log.actor_user_id,
+                "actor_type": log.actor_type,
+                "entity_type": log.entity_type,
+                "entity_id": log.entity_id,
+                "metadata": log.metadata_json,
+                "created_at": log.created_at.isoformat() if log.created_at else "",
+            }
+            for log in audit_logs[:50]
+        ],
+    }
+
+
 # ── Concierge Setup Mode (Market Acceptance Sprint 8) ──
 
 class SetupChecklistUpdate(BaseModel):
@@ -612,7 +676,6 @@ async def create_impersonation_token(
     Generate a short-lived JWT for impersonation. 15min default.
     All actions are audit-logged with impersonation=true.
     """
-    import jwt as pyjwt
     from core.audit import record_audit
 
     seller_result = await db.execute(select(User).where(User.id == seller_id))
@@ -624,16 +687,13 @@ async def create_impersonation_token(
     from datetime import timedelta
     exp = datetime.now(timezone.utc) + timedelta(minutes=settings.IMPERSONATION_TOKEN_MINUTES)
 
-    payload = {
-        "sub": str(seller.id),
-        "email": seller.email,
-        "role": seller.role.value if hasattr(seller.role, 'value') else seller.role,
-        "impersonation": True,
-        "impersonated_by": admin.id,
-        "target_seller_id": seller.id,
-        "exp": exp,
-    }
-    token = pyjwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    token = create_access_token(
+        seller.id,
+        expires_delta=timedelta(minutes=settings.IMPERSONATION_TOKEN_MINUTES),
+        impersonation=True,
+        impersonated_by=admin.id,
+        target_seller_id=seller.id,
+    )
 
     # Audit log
     await record_audit(

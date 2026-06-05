@@ -15,6 +15,7 @@ Authentication: x-api-key header with secret key
 import httpx
 import hmac
 import hashlib
+import secrets
 from typing import Optional
 
 from config import get_settings
@@ -304,7 +305,7 @@ class CashiGateway(PaymentGateway):
         """
         # Method 1: Validate API key in headers
         received_key = headers.get("x-api-key", "") if headers else ""
-        if received_key != self.api_key:
+        if not received_key or not self.api_key or not secrets.compare_digest(received_key, self.api_key):
             logger.warning("Cashi webhook: invalid or missing API key")
             return WebhookResult(
                 valid=False,

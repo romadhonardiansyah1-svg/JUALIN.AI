@@ -221,8 +221,16 @@ async def process_webhook(
     old_status = order.status.value if hasattr(order.status, 'value') else str(order.status)
 
     restore_stock = False
+    terminal_paid_statuses = {"paid", "shipped", "done"}
 
-    if result.status == PaymentStatus.PAID:
+    if old_status in terminal_paid_statuses and result.status in (
+        PaymentStatus.PENDING,
+        PaymentStatus.EXPIRED,
+        PaymentStatus.FAILED,
+        PaymentStatus.CANCELLED,
+    ):
+        new_status = old_status
+    elif result.status == PaymentStatus.PAID:
         order.status = OrderStatus.PAID
         order.paid_at = datetime.now(timezone.utc)
         new_status = "paid"
@@ -250,7 +258,12 @@ async def process_webhook(
             product_id = item.get("product_id")
             if not product_id:
                 continue
-            product_result = await db.execute(select(Product).where(Product.id == product_id))
+            product_result = await db.execute(
+                select(Product).where(
+                    Product.id == product_id,
+                    Product.seller_id == order.seller_id,
+                )
+            )
             product = product_result.scalar_one_or_none()
             if product:
                 product.stok += item.get("qty", 1)
@@ -265,6 +278,18 @@ async def process_webhook(
             note=f"Payment {result.status.value} via {provider}",
         )
         db.add(history)
+        from core.audit import record_audit
+        await record_audit(
+            db,
+            action="payment.status.changed",
+            entity_type="order",
+            entity_id=order.id,
+            seller_id=order.seller_id,
+            actor_type="webhook",
+            before={"status": old_status},
+            after={"status": new_status},
+            metadata={"provider": provider, "invoice_id": invoice_id, "amount": result.amount},
+        )
 
     await db.commit()
 

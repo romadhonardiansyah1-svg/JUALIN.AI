@@ -11,10 +11,14 @@ from passlib.context import CryptContext
 from jose import jwt, JWTError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import re
+import asyncio
+import hashlib
+import uuid as uuid_module
 
 from config import get_settings
 from models.database import get_db
 from models.user import User, UserTier, UserRole
+from middleware import get_client_ip
 
 router = APIRouter()
 settings = get_settings()
@@ -47,6 +51,8 @@ class UserResponse(BaseModel):
     ai_style: str
     no_hp: str
     deskripsi_toko: str = ""
+    impersonation: bool = False
+    impersonated_by: int | None = None
 
     class Config:
         from_attributes = True
@@ -77,13 +83,73 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(user_id: int) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
-    payload = {"sub": str(user_id), "exp": expire}
+def create_access_token(
+    user_id: int,
+    *,
+    expires_delta: timedelta | None = None,
+    impersonation: bool = False,
+    impersonated_by: int | None = None,
+    target_seller_id: int | None = None,
+) -> str:
+    expire_delta = expires_delta or timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + expire_delta
+    payload = {
+        "sub": str(user_id),
+        "exp": expire,
+        "token_type": "access",
+        "jti": uuid_module.uuid4().hex,
+    }
+    if impersonation:
+        payload.update({
+            "impersonation": True,
+            "impersonated_by": impersonated_by,
+            "target_seller_id": target_seller_id or user_id,
+        })
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
+def build_user_response(user: User, request: Request | None = None) -> UserResponse:
+    data = UserResponse.model_validate(user)
+    auth_context = getattr(request.state, "auth_context", {}) if request else {}
+    data.impersonation = bool(auth_context.get("impersonation", False))
+    data.impersonated_by = auth_context.get("impersonated_by")
+    return data
+
+
+def _email_rate_key(email: str) -> str:
+    digest = hashlib.sha256(email.encode("utf-8")).hexdigest()[:16]
+    return f"auth:login:email:{digest}"
+
+
+async def _record_auth_audit(
+    db: AsyncSession,
+    action: str,
+    request: Request,
+    user: User | None = None,
+    email: str = "",
+    success: bool = False,
+):
+    from core.audit import record_audit
+
+    await record_audit(
+        db,
+        action=action,
+        entity_type="auth",
+        entity_id=str(user.id if user else email),
+        seller_id=user.id if user else None,
+        actor_user_id=user.id if user else None,
+        actor_type="seller" if user else "anonymous",
+        metadata={
+            "success": success,
+            "email_hash": hashlib.sha256(email.encode("utf-8")).hexdigest()[:16] if email else "",
+            "client_ip": get_client_ip(request),
+            "user_agent": request.headers.get("user-agent", "")[:200],
+        },
+    )
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -91,7 +157,11 @@ async def get_current_user(
     token = credentials.credentials
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("token_type") != "access":
+            raise HTTPException(status_code=401, detail="Token tidak valid")
         user_id = int(payload.get("sub"))
+    except HTTPException:
+        raise
     except (JWTError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token tidak valid")
     
@@ -100,6 +170,13 @@ async def get_current_user(
     
     if user is None:
         raise HTTPException(status_code=401, detail="User tidak ditemukan")
+
+    request.state.auth_context = {
+        "jti": payload.get("jti", ""),
+        "impersonation": bool(payload.get("impersonation", False)),
+        "impersonated_by": payload.get("impersonated_by"),
+        "target_seller_id": payload.get("target_seller_id"),
+    }
     
     return user
 
@@ -111,8 +188,8 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     """Register seller baru + auto-create toko."""
     # Rate limit
     from core.rate_limit import check_rate_limit
-    client_ip = request.client.host if request.client else "unknown"
-    rl = await check_rate_limit(f"auth:{client_ip}", max_requests=10, window_seconds=60)
+    client_ip = get_client_ip(request)
+    rl = await check_rate_limit(f"auth:register:{client_ip}", max_requests=5, window_seconds=60)
     if not rl["allowed"]:
         raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi nanti.")
 
@@ -127,8 +204,8 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         raise HTTPException(status_code=400, detail="Email sudah terdaftar")
     
     # Validate password
-    if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+    if len(req.password) < settings.MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Password minimal {settings.MIN_PASSWORD_LENGTH} karakter")
     
     # Create slug from store name
     base_slug = create_slug(nama_toko)
@@ -157,13 +234,15 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    await _record_auth_audit(db, "auth.register.success", request, user=user, email=email, success=True)
+    await db.commit()
     
     # Generate token
     token = create_access_token(user.id)
     
     return TokenResponse(
         access_token=token,
-        user=UserResponse.model_validate(user),
+        user=build_user_response(user, request),
     )
 
 
@@ -172,30 +251,36 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     """Login seller dengan email + password."""
     # Rate limit
     from core.rate_limit import check_rate_limit
-    client_ip = request.client.host if request.client else "unknown"
-    rl = await check_rate_limit(f"auth:{client_ip}", max_requests=10, window_seconds=60)
-    if not rl["allowed"]:
+    client_ip = get_client_ip(request)
+    email = str(req.email).lower().strip()
+    ip_rl = await check_rate_limit(f"auth:login:ip:{client_ip}", max_requests=8, window_seconds=60)
+    email_rl = await check_rate_limit(_email_rate_key(email), max_requests=5, window_seconds=60)
+    if not ip_rl["allowed"] or not email_rl["allowed"]:
         raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi nanti.")
 
-    email = str(req.email).lower().strip()
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     
     if not user or not verify_password(req.password, user.password_hash):
+        await asyncio.sleep(0.25)
+        await _record_auth_audit(db, "auth.login.failed", request, user=user, email=email, success=False)
+        await db.commit()
         raise HTTPException(status_code=401, detail="Email atau password salah")
     
+    await _record_auth_audit(db, "auth.login.success", request, user=user, email=email, success=True)
+    await db.commit()
     token = create_access_token(user.id)
     
     return TokenResponse(
         access_token=token,
-        user=UserResponse.model_validate(user),
+        user=build_user_response(user, request),
     )
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(request: Request, current_user: User = Depends(get_current_user)):
     """Get current logged-in user info."""
-    return UserResponse.model_validate(current_user)
+    return build_user_response(current_user, request)
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -226,4 +311,4 @@ async def update_settings(
     await db.commit()
     await db.refresh(current_user)
     
-    return UserResponse.model_validate(current_user)
+    return build_user_response(current_user)

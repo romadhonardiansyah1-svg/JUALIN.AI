@@ -14,6 +14,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timezone
+import secrets
 
 from config import get_settings
 from models.database import get_db
@@ -53,7 +54,11 @@ class PublicCreatePaymentRequest(BaseModel):
 
 
 def _verify_public_token(order: Order, token: str | None):
-    if not token or not order.payment_access_token or token != order.payment_access_token:
+    if (
+        not token
+        or not order.payment_access_token
+        or not secrets.compare_digest(str(token), str(order.payment_access_token))
+    ):
         raise HTTPException(status_code=403, detail="Link pembayaran tidak valid atau sudah tidak berlaku")
 
 
@@ -150,7 +155,14 @@ async def _sync_payment_status(order: Order, db: AsyncSession | None = None) -> 
             new_status = old_status
             restore_stock = False
 
-            if status_result.status == PaymentStatus.PAID:
+            if old_status in {"paid", "shipped", "done"} and status_result.status in (
+                PaymentStatus.PENDING,
+                PaymentStatus.EXPIRED,
+                PaymentStatus.CANCELLED,
+                PaymentStatus.FAILED,
+            ):
+                new_status = old_status
+            elif status_result.status == PaymentStatus.PAID:
                 order.status = OrderStatus.PAID
                 order.paid_at = datetime.now(timezone.utc)
                 new_status = "paid"
@@ -171,7 +183,12 @@ async def _sync_payment_status(order: Order, db: AsyncSession | None = None) -> 
                     product_id = item.get("product_id")
                     if not product_id:
                         continue
-                    product_result = await db.execute(select(Product).where(Product.id == product_id))
+                    product_result = await db.execute(
+                        select(Product).where(
+                            Product.id == product_id,
+                            Product.seller_id == order.seller_id,
+                        )
+                    )
                     product = product_result.scalar_one_or_none()
                     if product:
                         product.stok += int(item.get("qty", 1))
@@ -186,6 +203,18 @@ async def _sync_payment_status(order: Order, db: AsyncSession | None = None) -> 
                     changed_by=f"payment_status_{order.payment_provider}",
                     note=f"Payment {status_result.status.value} via status check",
                 ))
+                from core.audit import record_audit
+                await record_audit(
+                    db,
+                    action="payment.status.changed",
+                    entity_type="order",
+                    entity_id=order.id,
+                    seller_id=order.seller_id,
+                    actor_type="payment_status_check",
+                    before={"status": old_status},
+                    after={"status": new_status},
+                    metadata={"provider": order.payment_provider, "invoice_id": invoice_id},
+                )
                 await db.commit()
                 await db.refresh(order)
 

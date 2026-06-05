@@ -3,7 +3,7 @@ Sales Playbook, Customer Scoring, Dynamic Offer, Knowledge Base, QA Review, Expe
 Consolidated route file for Plan C features.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -14,6 +14,38 @@ from models.user import User
 from api.routes_auth import get_current_user
 
 router = APIRouter()
+
+ALLOWED_OFFER_TYPES = {"fixed_discount", "free_shipping", "bundle", "urgency"}
+ALLOWED_OFFER_VALUE_TYPES = {"fixed", "percent"}
+ALLOWED_KNOWLEDGE_TYPES = {"manual", "faq", "policy", "product_note", "import_note"}
+ALLOWED_EXPERIMENT_TYPES = {"prompt", "campaign_cta", "storefront_cta", "offer_wording"}
+
+
+def _normalize_experiment_variants(variants: list | None) -> list[dict]:
+    if not variants:
+        return [
+            {"name": "Control", "content": "", "weight": 50},
+            {"name": "Variant B", "content": "", "weight": 50},
+        ]
+    if len(variants) > 6:
+        raise HTTPException(status_code=400, detail="Maksimal 6 variant per experiment")
+
+    normalized = []
+    for raw in variants:
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="Variant experiment harus berupa object")
+        name = str(raw.get("name", "")).strip()[:100]
+        content = str(raw.get("content", ""))[:10000]
+        try:
+            weight = int(raw.get("weight", 50))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Weight variant harus berupa angka")
+        if not name:
+            raise HTTPException(status_code=400, detail="Nama variant wajib diisi")
+        if weight < 0 or weight > 100:
+            raise HTTPException(status_code=400, detail="Weight variant harus 0-100")
+        normalized.append({"name": name, "content": content, "weight": weight})
+    return normalized
 
 
 # ══════════════════════════════════════════════════
@@ -59,8 +91,8 @@ async def list_playbooks(
 
 class PlaybookUpdate(BaseModel):
     is_enabled: Optional[bool] = None
-    priority: Optional[int] = None
-    tone: Optional[str] = None
+    priority: Optional[int] = Field(default=None, ge=0, le=100)
+    tone: Optional[str] = Field(default=None, max_length=50)
 
 
 @router.patch("/playbooks/{playbook_id}")
@@ -268,11 +300,11 @@ async def _compute_customer_score(db: AsyncSession, customer_id: int, seller_id:
 # ══════════════════════════════════════════════════
 
 class OfferCreate(BaseModel):
-    name: str
-    type: str = "fixed_discount"
-    value: float = 0
-    value_type: str = "fixed"
-    min_order_value: float = 0
+    name: str = Field(min_length=1, max_length=255)
+    type: str = Field(default="fixed_discount", max_length=30)
+    value: float = Field(default=0, ge=0, le=1_000_000_000)
+    value_type: str = Field(default="fixed", max_length=20)
+    min_order_value: float = Field(default=0, ge=0, le=1_000_000_000)
     allow_chat_auto: bool = False
 
 
@@ -283,6 +315,13 @@ async def create_offer(
     db: AsyncSession = Depends(get_db),
 ):
     from models.offer import Offer
+    if req.type not in ALLOWED_OFFER_TYPES:
+        raise HTTPException(status_code=400, detail="Tipe offer tidak valid")
+    if req.value_type not in ALLOWED_OFFER_VALUE_TYPES:
+        raise HTTPException(status_code=400, detail="Value type offer tidak valid")
+    if req.value_type == "percent" and req.value > 100:
+        raise HTTPException(status_code=400, detail="Diskon persen tidak boleh lebih dari 100")
+
     offer = Offer(
         seller_id=current_user.id,
         name=req.name, type=req.type, value=req.value,
@@ -359,9 +398,9 @@ async def approve_offer_recommendation(
 # ══════════════════════════════════════════════════
 
 class KnowledgeSourceCreate(BaseModel):
-    type: str = "manual"
-    title: str
-    content: str = ""
+    type: str = Field(default="manual", max_length=30)
+    title: str = Field(min_length=1, max_length=255)
+    content: str = Field(default="", max_length=100000)
 
 
 @router.post("/knowledge/sources")
@@ -371,6 +410,9 @@ async def create_knowledge_source(
     db: AsyncSession = Depends(get_db),
 ):
     from models.knowledge import KnowledgeSource, KnowledgeChunk
+    if req.type not in ALLOWED_KNOWLEDGE_TYPES:
+        raise HTTPException(status_code=400, detail="Tipe knowledge source tidak valid")
+
     source = KnowledgeSource(
         seller_id=current_user.id, type=req.type,
         title=req.title, content=req.content,
@@ -515,8 +557,8 @@ async def list_qa_reviews(
 
 
 class QAReviewAction(BaseModel):
-    notes: str = ""
-    edited_content: str = ""
+    notes: str = Field(default="", max_length=2000)
+    edited_content: str = Field(default="", max_length=10000)
 
 
 @router.post("/qa-review/{item_id}/approve")
@@ -596,10 +638,10 @@ async def edit_and_send_qa_review(
 # ══════════════════════════════════════════════════
 
 class ExperimentCreate(BaseModel):
-    name: str
-    type: str = "prompt"
-    description: str = ""
-    variants: list = []  # [{name, content, weight}]
+    name: str = Field(min_length=1, max_length=255)
+    type: str = Field(default="prompt", max_length=50)
+    description: str = Field(default="", max_length=5000)
+    variants: list = Field(default_factory=list, max_length=6)
 
 
 @router.post("/experiments")
@@ -609,6 +651,9 @@ async def create_experiment(
     db: AsyncSession = Depends(get_db),
 ):
     from models.experiment import Experiment, ExperimentVariant
+    if req.type not in ALLOWED_EXPERIMENT_TYPES:
+        raise HTTPException(status_code=400, detail="Tipe experiment tidak valid")
+
     exp = Experiment(
         seller_id=current_user.id, name=req.name,
         type=req.type, description=req.description,
@@ -616,7 +661,7 @@ async def create_experiment(
     db.add(exp)
     await db.flush()
 
-    for v in (req.variants or [{"name": "Control", "content": "", "weight": 50}, {"name": "Variant B", "content": "", "weight": 50}]):
+    for v in _normalize_experiment_variants(req.variants):
         variant = ExperimentVariant(
             experiment_id=exp.id, name=v.get("name", ""),
             content=v.get("content", ""), weight=v.get("weight", 50),

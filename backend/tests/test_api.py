@@ -12,18 +12,18 @@ class TestAuthEndpoints:
         """Register request schema valid."""
         body = {
             "email": "test@test.com",
-            "password": "test123",
+            "password": "test123456",
             "nama_toko": "Test Store",
             "no_hp": "081234567890",
         }
         assert "email" in body
         assert "password" in body
         assert "nama_toko" in body
-        assert len(body["password"]) >= 6
+        assert len(body["password"]) >= 10
 
     def test_login_schema(self):
         """Login request schema valid."""
-        body = {"email": "test@test.com", "password": "test123"}
+        body = {"email": "test@test.com", "password": "test123456"}
         assert "email" in body
         assert "password" in body
 

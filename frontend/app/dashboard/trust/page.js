@@ -122,7 +122,7 @@ export default function TrustProfilePage() {
           <div className={styles.toggleRow}>
             <div>
               <div className={styles.toggleLabel}>Nomor Telepon Terverifikasi</div>
-              <div className={styles.toggleDesc}>Tampilkan badge "Verified" di storefront</div>
+              <div className={styles.toggleDesc}>Tampilkan badge &quot;Verified&quot; di storefront</div>
             </div>
             <label className={styles.toggle}>
               <input type="checkbox" checked={verifiedPhone} onChange={(e) => setVerifiedPhone(e.target.checked)} />
@@ -158,7 +158,7 @@ export default function TrustProfilePage() {
                   <span className={styles.testimonialRating}>{"⭐".repeat(t.rating)}</span>
                   <button className={styles.removeBtn} onClick={() => removeTestimonial(i)}>✕</button>
                 </div>
-                <p className={styles.testimonialText}>"{t.text}"</p>
+                <p className={styles.testimonialText}>&quot;{t.text}&quot;</p>
               </div>
             ))}
           </div>

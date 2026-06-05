@@ -3,7 +3,7 @@ Referral & Reseller endpoints.
 V1: tracking + commission report; payout manual.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -18,8 +18,8 @@ router = APIRouter()
 
 
 class ReferralCodeCreate(BaseModel):
-    description: str = ""
-    commission_percent: float = 5.0
+    description: str = Field(default="", max_length=255)
+    commission_percent: float = Field(default=5.0, ge=0, le=100)
 
 
 @router.post("/codes")

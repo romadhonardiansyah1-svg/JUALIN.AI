@@ -480,6 +480,11 @@ export async function adminListAuditLogs(params = {}) {
   return apiFetch(`/api/admin/audit-logs?${qs}`);
 }
 
+export async function adminGetSecurityEvents(params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch(`/api/admin/security-events?${qs}`);
+}
+
 // ══════════════════════════════════════════════════
 // Plan A: Inbox productization
 // ══════════════════════════════════════════════════

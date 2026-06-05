@@ -61,6 +61,17 @@ async def midtrans_webhook(request: Request):
         from services.payments.factory import process_webhook
 
         async with async_session() as db:
+            event, is_new = await get_or_create_webhook_event(
+                db,
+                provider="midtrans",
+                payload=payload,
+                event_type="payment",
+                external_event_id=str(payload.get("transaction_id") or f"{order_id}:{payload.get('transaction_status', '')}"),
+            )
+            if not is_new and event.status == "processed":
+                await db.commit()
+                return Response(status_code=200, content="OK")
+
             result = await process_webhook(
                 provider="midtrans",
                 payload=payload,
@@ -69,17 +80,27 @@ async def midtrans_webhook(request: Request):
             )
 
             if result["success"]:
+                await mark_webhook_processed(event)
+                await db.commit()
                 logger.info(
                     f"Midtrans webhook processed: order #{result['order_id']} → {result['new_status']}",
                 )
             else:
+                error = result.get("error", "")
+                invalid = error == "Invalid signature"
+                await mark_webhook_processed(event, status="invalid" if invalid else "failed", error=error)
+                await db.commit()
                 logger.warning(
-                    f"Midtrans webhook failed: {result.get('error')}",
+                    f"Midtrans webhook failed: {error}",
                     extra={"order_id": order_id},
                 )
+                if invalid:
+                    return Response(status_code=403, content="Invalid signature")
+                return Response(status_code=400, content="Webhook rejected")
 
     except Exception as e:
         logger.error(f"Midtrans webhook error: {e}", exc_info=True)
+        return Response(status_code=500, content="Webhook error")
 
     # Always return 200 to prevent retries
     return Response(status_code=200, content="OK")
@@ -265,6 +286,17 @@ async def cashi_webhook(request: Request):
         from services.payments.factory import process_webhook
 
         async with async_session() as db:
+            event, is_new = await get_or_create_webhook_event(
+                db,
+                provider="cashi",
+                payload=payload,
+                event_type="payment",
+                external_event_id=str(payload.get("id") or f"{order_id}:{payload.get('status', '')}"),
+            )
+            if not is_new and event.status == "processed":
+                await db.commit()
+                return Response(status_code=200, content="OK")
+
             result = await process_webhook(
                 provider="cashi",
                 payload=payload,
@@ -273,17 +305,27 @@ async def cashi_webhook(request: Request):
             )
 
             if result["success"]:
+                await mark_webhook_processed(event)
+                await db.commit()
                 logger.info(
                     f"Cashi webhook processed: order #{result['order_id']} → {result['new_status']}",
                 )
             else:
+                error = result.get("error", "")
+                invalid = error == "Invalid API key"
+                await mark_webhook_processed(event, status="invalid" if invalid else "failed", error=error)
+                await db.commit()
                 logger.warning(
-                    f"Cashi webhook failed: {result.get('error')}",
+                    f"Cashi webhook failed: {error}",
                     extra={"order_id": order_id},
                 )
+                if invalid:
+                    return Response(status_code=403, content="Invalid API key")
+                return Response(status_code=400, content="Webhook rejected")
 
     except Exception as e:
         logger.error(f"Cashi webhook error: {e}", exc_info=True)
+        return Response(status_code=500, content="Webhook error")
 
     # Always return 200 to prevent retries
     return Response(status_code=200, content="OK")

@@ -14,6 +14,7 @@ Sandbox: https://simulator.sandbox.midtrans.com/
 import hashlib
 import httpx
 import base64
+import secrets
 from typing import Optional
 
 from config import get_settings
@@ -248,7 +249,7 @@ class MidtransGateway(PaymentGateway):
         raw = f"{order_id}{status_code}{gross_amount}{self.server_key}"
         expected_sig = hashlib.sha512(raw.encode()).hexdigest()
 
-        if signature_key != expected_sig:
+        if not signature_key or not secrets.compare_digest(signature_key, expected_sig):
             logger.warning(
                 f"Midtrans webhook signature mismatch: {order_id}",
                 extra={"received": signature_key[:20], "expected": expected_sig[:20]},

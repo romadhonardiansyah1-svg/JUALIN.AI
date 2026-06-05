@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 import os
 import uuid as uuid_module
+import io
 
 from config import get_settings
 from models.database import get_db
@@ -23,6 +24,61 @@ settings = get_settings()
 
 
 # ── Pydantic Schemas ──
+
+def _has_valid_image_signature(content_type: str | None, contents: bytes) -> bool:
+    if content_type in ("image/jpeg", "image/jpg"):
+        return contents.startswith(b"\xff\xd8\xff")
+    if content_type == "image/png":
+        return contents.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/webp":
+        return len(contents) >= 12 and contents[:4] == b"RIFF" and contents[8:12] == b"WEBP"
+    return False
+
+
+def _sanitize_image_upload(content_type: str | None, contents: bytes) -> bytes:
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
+    Image.MAX_IMAGE_PIXELS = 20_000_000
+    target_format = {
+        "image/jpeg": "JPEG",
+        "image/jpg": "JPEG",
+        "image/png": "PNG",
+        "image/webp": "WEBP",
+    }.get(content_type)
+    if not target_format:
+        raise HTTPException(status_code=400, detail="Tipe file tidak didukung")
+
+    try:
+        with Image.open(io.BytesIO(contents)) as probe:
+            probe.verify()
+        with Image.open(io.BytesIO(contents)) as image:
+            image = ImageOps.exif_transpose(image)
+            if image.width <= 0 or image.height <= 0 or image.width * image.height > Image.MAX_IMAGE_PIXELS:
+                raise HTTPException(status_code=400, detail="Dimensi gambar tidak valid")
+
+            output = io.BytesIO()
+            if target_format == "JPEG":
+                if image.mode in ("RGBA", "LA", "P"):
+                    background = Image.new("RGB", image.size, (255, 255, 255))
+                    if image.mode == "P":
+                        image = image.convert("RGBA")
+                    background.paste(image, mask=image.getchannel("A") if "A" in image.getbands() else None)
+                    image = background
+                else:
+                    image = image.convert("RGB")
+                image.save(output, format="JPEG", quality=85, optimize=True)
+            elif target_format == "PNG":
+                image.save(output, format="PNG", optimize=True)
+            else:
+                if image.mode not in ("RGB", "RGBA"):
+                    image = image.convert("RGB")
+                image.save(output, format="WEBP", quality=85, method=6)
+            return output.getvalue()
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError):
+        raise HTTPException(status_code=400, detail="File gambar tidak valid atau rusak")
+
 
 class ProductCreate(BaseModel):
     nama: str = Field(min_length=1, max_length=255)
@@ -292,10 +348,15 @@ async def upload_product_image(
     contents = await file.read()
     if len(contents) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Ukuran file maksimal 5MB")
+    if not contents or not _has_valid_image_signature(file.content_type, contents):
+        raise HTTPException(status_code=400, detail="File gambar tidak valid atau rusak")
     
-    # Save file
+    contents = _sanitize_image_upload(file.content_type, contents)
+
+    # Save re-encoded file under a seller-specific path.
     uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "products")
-    os.makedirs(uploads_dir, exist_ok=True)
+    seller_uploads_dir = os.path.join(uploads_dir, str(current_user.id))
+    os.makedirs(seller_uploads_dir, exist_ok=True)
     
     ext_map = {
         "image/jpeg": "jpg",
@@ -304,14 +365,28 @@ async def upload_product_image(
         "image/webp": "webp",
     }
     ext = ext_map[file.content_type]
-    filename = f"{current_user.id}_{product_id}_{uuid_module.uuid4().hex[:8]}.{ext}"
-    filepath = os.path.join(uploads_dir, filename)
+    filename = f"{product_id}_{uuid_module.uuid4().hex[:8]}.{ext}"
+    filepath = os.path.join(seller_uploads_dir, filename)
     
     with open(filepath, "wb") as f:
         f.write(contents)
+
+    old_foto_url = product.foto_url or ""
+    if old_foto_url.startswith("/uploads/products/"):
+        old_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            old_foto_url.lstrip("/").replace("/", os.sep),
+        )
+        old_path = os.path.abspath(old_path)
+        uploads_root = os.path.abspath(uploads_dir)
+        if old_path.startswith(uploads_root) and old_path != os.path.abspath(filepath) and os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
     
     # Update product foto_url
-    product.foto_url = f"/uploads/products/{filename}"
+    product.foto_url = f"/uploads/products/{current_user.id}/{filename}"
     await db.commit()
     await db.refresh(product)
     await cache_invalidate_products(current_user.id)

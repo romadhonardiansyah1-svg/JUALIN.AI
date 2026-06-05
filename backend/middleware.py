@@ -15,8 +15,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from cache import check_rate_limit, get_rate_limit_info
 from core.logging_config import get_logger, request_id_var, request_path_var
+from config import get_settings
 
 logger = get_logger("middleware")
+settings = get_settings()
 
 
 def get_client_ip(request: Request) -> str:
@@ -83,11 +85,54 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         "client_ip": client_ip,
                     },
                 )
+                if response.status_code in (401, 403, 429):
+                    logger.warning(
+                        "security_event",
+                        extra={
+                            "event": "http.security_response",
+                            "status_code": response.status_code,
+                            "method": method,
+                            "path": path,
+                            "client_ip": client_ip,
+                            "user_agent": request.headers.get("user-agent", "")[:200],
+                        },
+                    )
+
+            auth_context = getattr(request.state, "auth_context", {})
+            if (
+                request.method in {"POST", "PUT", "PATCH", "DELETE"}
+                and auth_context.get("impersonation")
+                and response.status_code < 500
+            ):
+                try:
+                    from models.database import async_session
+                    from core.audit import record_audit
+
+                    async with async_session() as db:
+                        await record_audit(
+                            db,
+                            action=f"impersonation.http.{request.method.lower()}",
+                            entity_type="http_request",
+                            entity_id=path[:100],
+                            seller_id=auth_context.get("target_seller_id"),
+                            actor_user_id=auth_context.get("impersonated_by"),
+                            actor_type="admin_impersonation",
+                            metadata={
+                                "status_code": response.status_code,
+                                "path": path,
+                                "method": request.method,
+                                "jti": auth_context.get("jti", ""),
+                                "client_ip": client_ip,
+                            },
+                            request_id=req_id,
+                        )
+                        await db.commit()
+                except Exception as audit_exc:
+                    logger.warning(f"Failed to audit impersonation request: {audit_exc}")
 
             # Inject headers
             response.headers["X-Request-ID"] = req_id
             response.headers["X-Process-Time"] = f"{duration_ms}"
-            response.headers["X-Powered-By"] = "JUALIN.AI"
 
             # Security headers (defense in depth)
             response.headers["X-Content-Type-Options"] = "nosniff"
@@ -95,6 +140,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response.headers["X-XSS-Protection"] = "1; mode=block"
             response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
             response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+            forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+            if request.url.scheme == "https" or forwarded_proto == "https":
+                response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
             return response
 
@@ -151,6 +199,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         client_ip = get_client_ip(request)
         path = request.url.path
+        method = request.method
+
+        if method in {"POST", "PUT", "PATCH"}:
+            content_type = request.headers.get("content-type", "").lower()
+            max_body = settings.MAX_MULTIPART_BODY_BYTES if content_type.startswith("multipart/") else settings.MAX_JSON_BODY_BYTES
+            content_length = request.headers.get("content-length")
+            try:
+                if content_length and int(content_length) > max_body:
+                    logger.warning(
+                        "Request body too large",
+                        extra={"client_ip": client_ip, "path": path, "content_length": content_length, "max_body": max_body},
+                    )
+                    return JSONResponse(
+                        status_code=413,
+                        content={"error": "payload_too_large", "message": "Ukuran request terlalu besar."},
+                    )
+            except ValueError:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "invalid_content_length", "message": "Header Content-Length tidak valid."},
+                )
 
         # Find matching rate limit config
         max_req, window = self.DEFAULT_LIMIT
@@ -161,7 +230,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Build rate limit key: ip + route group
         path_parts = path.strip("/").split("/")
-        route_key = path_parts[1] if len(path_parts) > 1 else (path_parts[0] if path_parts else "root")
+        if path.startswith("/api/") and len(path_parts) >= 3:
+            route_key = ":".join(path_parts[:3])
+        elif path.startswith("/api/") and len(path_parts) >= 2:
+            route_key = ":".join(path_parts[:2])
+        else:
+            route_key = path_parts[0] if path_parts else "root"
         identifier = f"{client_ip}:{route_key}"
 
         # Check rate limit (gracefully degrades if Redis unavailable)

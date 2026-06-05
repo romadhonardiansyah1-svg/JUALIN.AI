@@ -4,6 +4,7 @@ Loads environment variables from .env file
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from urllib.parse import urlparse
 
 
 class Settings(BaseSettings):
@@ -94,6 +95,11 @@ class Settings(BaseSettings):
     WHATSAPP_PHONE_NUMBER_ID: str = ""
     WHATSAPP_GRAPH_VERSION: str = "v20.0"
     WHATSAPP_APP_SECRET: str = ""
+
+    # Security controls
+    MAX_JSON_BODY_BYTES: int = 2 * 1024 * 1024
+    MAX_MULTIPART_BODY_BYTES: int = 8 * 1024 * 1024
+    MIN_PASSWORD_LENGTH: int = 10
     
     class Config:
         env_file = ".env"
@@ -103,3 +109,41 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     return Settings()
+
+
+def validate_production_security(settings: Settings) -> list[str]:
+    """Return blocking production misconfiguration errors."""
+    if settings.DEBUG:
+        return []
+
+    errors: list[str] = []
+    weak_markers = (
+        "change-in-production",
+        "ganti-",
+        "GANTI_",
+        "jualin-secret",
+        "jwt-secret",
+    )
+
+    for key_name in ("SECRET_KEY", "JWT_SECRET_KEY"):
+        value = getattr(settings, key_name, "")
+        if len(value) < 32 or any(marker in value for marker in weak_markers):
+            errors.append(f"{key_name} wajib diganti dengan secret random minimal 32 karakter")
+
+    public_origins = []
+    for origin in settings.CORS_ORIGINS:
+        parsed = urlparse(origin)
+        host = (parsed.hostname or "").lower()
+        if host and host not in {"localhost", "127.0.0.1", "::1"}:
+            public_origins.append(origin)
+    if not public_origins:
+        errors.append("CORS_ORIGINS production wajib memuat minimal satu domain publik HTTPS")
+
+    for url_name in ("BASE_URL", "FRONTEND_URL"):
+        value = getattr(settings, url_name, "")
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or host in {"localhost", "127.0.0.1", "::1"}:
+            errors.append(f"{url_name} production wajib memakai HTTPS domain publik")
+
+    return errors
