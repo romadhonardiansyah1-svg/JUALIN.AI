@@ -86,3 +86,6 @@ async def init_db():
             await conn.execute(text("ALTER TABLE daily_seller_metrics ADD COLUMN IF NOT EXISTS recovered_payment_value FLOAT DEFAULT 0"))
             await conn.execute(text("ALTER TABLE daily_seller_metrics ADD COLUMN IF NOT EXISTS ai_handoff_count INTEGER DEFAULT 0"))
 
+            # ── JUALIN OS Schema Patches ──
+            await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price FLOAT DEFAULT 0"))
+

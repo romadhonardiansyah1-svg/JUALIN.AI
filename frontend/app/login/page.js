@@ -62,7 +62,7 @@ export default function LoginPage() {
               <input
                 type={showPassword ? "text" : "password"}
                 className="input"
-                placeholder="Minimal 6 karakter"
+                placeholder="Masukkan password"
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                 required

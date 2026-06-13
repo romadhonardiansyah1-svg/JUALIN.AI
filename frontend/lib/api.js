@@ -379,6 +379,21 @@ export const api = {
     fetchAPI(`/api/admin/sellers/${sellerId}/setup-checklist`, { method: "PATCH", body: JSON.stringify(body) }),
   getImpersonationToken: (sellerId) =>
     fetchAPI(`/api/admin/sellers/${sellerId}/impersonation-token`, { method: "POST" }),
+
+  // ── JUALIN OS: Agent OS / AI Crew ──
+  agentOsOverview: () => fetchAPI("/api/agent-os/overview"),
+  agentOsActivity: (limit = 30) => fetchAPI(`/api/agent-os/activity?limit=${limit}`),
+  agentOsBrief: () => fetchAPI("/api/agent-os/brief"),
+  agentOsGetPolicy: () => fetchAPI("/api/agent-os/policy"),
+  agentOsUpdatePolicy: (body) =>
+    fetchAPI("/api/agent-os/policy", { method: "PATCH", body: JSON.stringify(body) }),
+  agentOsApprovals: (status = "pending") =>
+    fetchAPI(`/api/agent-os/approvals?status=${status}`),
+  agentOsApprove: (id) =>
+    fetchAPI(`/api/agent-os/approvals/${id}/approve`, { method: "POST" }),
+  agentOsReject: (id) =>
+    fetchAPI(`/api/agent-os/approvals/${id}/reject`, { method: "POST" }),
+  agentOsNegotiations: () => fetchAPI("/api/agent-os/negotiations"),
 };
 
 

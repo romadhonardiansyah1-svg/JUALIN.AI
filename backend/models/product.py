@@ -23,6 +23,7 @@ class Product(Base):
     stok = Column(Integer, default=0)
     kategori = Column(String(100), default="umum")
     foto_url = Column(String(500), default="")
+    cost_price = Column(Float, default=0)  # modal/HPP untuk negosiasi aman-margin (JUALIN OS)
     
     # AI-generated content
     summary = Column(Text, default="")  # Pre-computed summary for AI context

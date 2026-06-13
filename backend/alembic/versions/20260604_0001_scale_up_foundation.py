@@ -14,9 +14,14 @@ depends_on = None
 
 
 def upgrade():
-    # Production installs in this repo still use create_all() during startup.
-    # This revision is the baseline marker for future Alembic migrations.
-    pass
+    # Baseline current SQLAlchemy metadata so a fresh local/CI database can use
+    # `alembic upgrade head` without relying on runtime create_all().
+    import models  # noqa: F401
+    from models.database import Base
+
+    bind = op.get_bind()
+    op.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+    Base.metadata.create_all(bind=bind)
 
 
 def downgrade():

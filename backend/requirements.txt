@@ -19,7 +19,7 @@ pgvector==0.3.6
 python-jose[cryptography]==3.5.0
 PyJWT==2.13.0
 passlib[bcrypt]==1.7.4
-bcrypt==4.3.0
+bcrypt==4.0.1
 
 # AI / LLM
 openai==1.82.0

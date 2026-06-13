@@ -88,11 +88,11 @@ function RegisterForm() {
             <input
               type="password"
               className="input"
-              placeholder="Minimal 6 karakter"
+              placeholder="Minimal 10 karakter"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               required
-              minLength={6}
+              minLength={10}
             />
           </div>
 

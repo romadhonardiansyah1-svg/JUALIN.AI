@@ -41,6 +41,7 @@ from api.routes_ai_commerce import router as ai_commerce_router
 from api.routes_trust import router as trust_router
 from api.routes_growth_links import router as growth_links_router
 from api.routes_wa_templates import router as wa_templates_router
+from api.routes_agent_os import router as agent_os_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -217,6 +218,9 @@ app.include_router(ai_commerce_router, prefix="/api/ai", tags=["AI Commerce"])
 app.include_router(trust_router, prefix="/api", tags=["Trust"])
 app.include_router(growth_links_router, prefix="/api/growth-links", tags=["Growth Links"])
 app.include_router(wa_templates_router, prefix="/api/whatsapp", tags=["WhatsApp Templates"])
+
+# JUALIN OS router
+app.include_router(agent_os_router, prefix="/api/agent-os", tags=["Agent OS"])
 
 # ── Static Files (uploads) ──
 import os

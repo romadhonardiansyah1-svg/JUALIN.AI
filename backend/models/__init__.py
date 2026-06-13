@@ -46,6 +46,9 @@ from models.growth_link import GrowthLink
 from models.wa_template import WhatsAppMessageTemplate
 from models.concierge_checklist import ConciergeChecklist
 
+# JUALIN OS models
+from models.agent_os import AgentPolicy, AgentRun, AgentApproval, NegotiationState
+
 __all__ = [
     "Base",
     "User", "UserTier", "UserRole",
@@ -80,5 +83,6 @@ __all__ = [
     "KnowledgeSource", "KnowledgeChunk",
     "QAReviewItem",
     "Experiment", "ExperimentVariant", "ExperimentAssignment", "ExperimentEvent",
+    "AgentPolicy", "AgentRun", "AgentApproval", "NegotiationState",
 ]
 

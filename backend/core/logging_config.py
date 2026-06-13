@@ -148,6 +148,12 @@ def setup_logging(log_level: str = "INFO", log_to_file: bool = False, log_dir: s
         return
     _configured = True
 
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 

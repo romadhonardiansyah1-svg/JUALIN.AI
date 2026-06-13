@@ -353,9 +353,28 @@ async def send_message(
     order_created = False
     ai_response_text = ""
     structured_used = False
+    agent_os_handled = False
+
+    # ── JUALIN OS: orkestrasi multi-agen (negosiasi dll.) ──
+    if settings.ENABLE_AGENT_OS:
+        try:
+            from services.agent_os.orchestrator import agent_os_handle_turn
+            os_result = await agent_os_handle_turn(
+                seller=seller, conversation=conversation, message=req.message,
+                history=history, db=db, memory_context=memory_context,
+            )
+            if os_result.get("handled"):
+                ai_response_text = os_result["reply"]
+                intent = os_result.get("intent", intent)
+                sales_stage = os_result.get("stage", sales_stage)
+                order_created = os_result.get("order_created", order_created)
+                structured_used = True      # cegah parser order lama berjalan
+                agent_os_handled = True
+        except Exception as e:
+            logger.warning(f"Agent OS turn skipped: {e}")
 
     # ── Try structured AI actions first if enabled ──
-    if settings.ENABLE_AI_ACTIONS:
+    if settings.ENABLE_AI_ACTIONS and not ai_response_text:
         try:
             from ai.agent import get_ai_structured_response
             from ai.actions import execute_ai_actions
@@ -466,6 +485,14 @@ async def send_message(
         )
     except Exception:
         pass  # metering should not block chat
+
+    # ── JUALIN OS: catat aktivitas Pramuniaga untuk activity feed ──
+    if settings.ENABLE_AGENT_OS and not agent_os_handled:
+        try:
+            from services.agent_os.orchestrator import record_sales_activity
+            await record_sales_activity(seller.id, conversation.id, intent, sales_stage, order_created, db)
+        except Exception:
+            pass
 
     await db.commit()
     

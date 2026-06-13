@@ -203,6 +203,23 @@ async def cron_workflow_tick(ctx):
 
 
 # ══════════════════════════════════════════════════
+# Cron: JUALIN OS Tick (proaktif multi-agen)
+# ══════════════════════════════════════════════════
+
+async def cron_agent_os_tick(ctx):
+    """Jalankan siklus proaktif (inventory scan + growth) untuk semua seller."""
+    if not settings.ENABLE_AGENT_OS:
+        return
+    try:
+        from services.agent_os.cycles import run_all_seller_cycles
+        async with async_session() as db:
+            result = await run_all_seller_cycles(db)
+            logger.info("Agent OS tick done", extra=result)
+    except Exception as e:
+        logger.error(f"Agent OS tick error: {e}", exc_info=True)
+
+
+# ══════════════════════════════════════════════════
 # Cron: Worker Heartbeat
 # ══════════════════════════════════════════════════
 
@@ -246,6 +263,8 @@ class WorkerSettings:
         cron(cron_workflow_tick, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}, unique=True),
         # Heartbeat every minute
         cron(cron_heartbeat, minute=None, unique=True),
+        # JUALIN OS proaktif setiap 10 menit
+        cron(cron_agent_os_tick, minute={0, 10, 20, 30, 40, 50}, unique=True),
     ]
     max_jobs = settings.ARQ_MAX_JOBS
     redis_settings = RedisSettings(

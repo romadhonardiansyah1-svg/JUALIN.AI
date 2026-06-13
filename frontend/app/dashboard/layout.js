@@ -8,6 +8,7 @@ import styles from "./dashboard.module.css";
 // Seller navigation
 const sellerNavItems = [
   { href: "/dashboard", icon: "📊", label: "Overview" },
+  { href: "/dashboard/agent-os", icon: "🤖", label: "AI Crew" },
   { href: "/dashboard/products", icon: "📦", label: "Produk" },
   { href: "/dashboard/orders", icon: "🛒", label: "Order" },
   { href: "/dashboard/inbox", icon: "IN", label: "Inbox" },
@@ -42,6 +43,7 @@ const adminNavItems = [
   { href: "/dashboard/admin/sellers", icon: "👥", label: "Kelola Seller" },
   { href: "/dashboard/admin/system", icon: "🖥️", label: "System" },
   { href: "/dashboard", icon: "🏪", label: "Toko Saya", divider: true },
+  { href: "/dashboard/agent-os", icon: "🤖", label: "AI Crew" },
   { href: "/dashboard/products", icon: "📦", label: "Produk" },
   { href: "/dashboard/orders", icon: "🛒", label: "Order" },
   { href: "/dashboard/inbox", icon: "IN", label: "Inbox" },

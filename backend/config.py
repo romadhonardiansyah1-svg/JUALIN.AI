@@ -32,7 +32,14 @@ class Settings(BaseSettings):
     ENABLE_TRUST_PROFILE: bool = True
     ENABLE_CONCIERGE: bool = True
     IMPERSONATION_TOKEN_MINUTES: int = 15
-    
+
+    # ── JUALIN OS (Multi-Agent Business OS) ──
+    ENABLE_AGENT_OS: bool = True
+    AGENT_OS_DEFAULT_MAX_DISCOUNT: float = 15.0      # diskon maksimum (%) default per seller
+    AGENT_OS_DEFAULT_MARGIN_FLOOR: float = 10.0      # margin minimum di atas modal (%) default
+    AGENT_OS_APPROVAL_ABOVE_PERCENT: float = 10.0    # diskon di atas ini butuh persetujuan
+    AGENT_OS_LOW_STOCK_THRESHOLD: int = 3            # stok <= ini dianggap menipis
+
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/jualin_ai"
     
@@ -104,6 +111,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache()
