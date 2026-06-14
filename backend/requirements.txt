@@ -25,6 +25,8 @@ bcrypt==4.0.1
 openai==1.82.0
 
 # Embedding
+# NOTE: CVE-2025-3000 affects torch.jit.script — NOT used by this project.
+# torch is installed as CPU-only in Dockerfile to reduce image size.
 sentence-transformers==5.5.1
 transformers==5.10.2
 
