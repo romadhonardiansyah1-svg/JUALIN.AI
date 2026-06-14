@@ -92,16 +92,16 @@ def draw_text_wrap(draw, text, xy, max_width, font_obj, fill=DARK, line_gap=6):
 def create_architecture():
     img = Image.new("RGB", (1600, 980), BG)
     d = ImageDraw.Draw(img)
-    d.text((70, 50), "Arsitektur JUALIN.AI", font=F_TITLE, fill=DARK)
-    d.text((72, 96), "Alur dari kanal customer sampai aksi penjualan yang bisa diaudit", font=F_SUB, fill=MUTED)
+    d.text((70, 50), "Arsitektur Multi-Agen JUALIN OS", font=F_TITLE, fill=DARK)
+    d.text((72, 96), "Orchestrator merutekan peristiwa ke agen spesialis; setiap aksi tercatat dan dapat disetujui", font=F_SUB, fill=MUTED)
     nodes = [
         (90, 190, 420, 350, "Customer", "Chat publik / WhatsApp / link katalog", BLUE),
-        (520, 190, 850, 350, "Frontend Next.js", "Landing, dashboard seller, storefront, halaman pembayaran", GREEN),
-        (950, 190, 1280, 350, "API FastAPI", "Auth, produk, order, analytics, billing, admin", PURPLE),
-        (520, 460, 850, 620, "AI Sales Agent", "Intent detection, RAG katalog, guardrails, structured actions", ORANGE),
-        (90, 700, 420, 860, "PostgreSQL + pgvector", "Data seller, katalog, order, embeddings, trace AI", "#1D4ED8"),
-        (520, 700, 850, 860, "Redis", "Cache katalog, rate limit, worker queue ringan", "#DC2626"),
-        (950, 700, 1280, 860, "Payment & Integrasi", "Midtrans/Cashi, webhook, growth link, WhatsApp template", "#0F766E"),
+        (520, 190, 850, 350, "Orchestrator (Manajer AI)", "Merutekan peristiwa ke agen, kebijakan, laporan harian", PURPLE),
+        (950, 190, 1280, 350, "Juru Tawar (Negotiator)", "Mesin nego deterministik, lantai margin, persetujuan", ORANGE),
+        (520, 460, 850, 620, "Sales / Inventory / Growth / Finance", "Pramuniaga, Gudang, Marketing, Keuangan, Layanan", GREEN),
+        (90, 700, 420, 860, "PostgreSQL + pgvector", "Katalog, order, agent_runs, negotiation_states, memori", "#1D4ED8"),
+        (520, 700, 850, 860, "Redis + arq worker", "Cache, rate limit, siklus proaktif terjadwal", "#DC2626"),
+        (950, 700, 1280, 860, "Guardrails + HITL + Audit", "Margin floor, anti prompt-injection, approval, audit log", "#0F766E"),
     ]
     for x1, y1, x2, y2, title, desc, color in nodes:
         draw_round(d, (x1, y1, x2, y2), r=24, fill="white", outline="#E2E8F0", width=3)
@@ -337,18 +337,19 @@ asset_paths = [
 ]
 
 refs = [
-    "Badan Pusat Statistik. (2024). Statistik E-Commerce 2024. Jakarta: BPS. https://www.bps.go.id/",
-    "Bank Indonesia. (2025). Kanal edukasi dan publikasi QRIS Bank Indonesia. https://www.bi.go.id/QRIS/default.aspx",
-    "Google, Temasek, & Bain & Company. (2025). e-Conomy SEA 2025. https://economysea.withgoogle.com/",
-    "Kadin Indonesia. (2024). Data dan statistik UMKM Indonesia. https://kadin.id/data-dan-statistik/umkm-indonesia/",
+    "Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K., & Cao, Y. (2023). ReAct: Synergizing Reasoning and Acting in Language Models. International Conference on Learning Representations (ICLR). https://arxiv.org/abs/2210.03629",
+    "Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., & Yao, S. (2023). Reflexion: Language Agents with Verbal Reinforcement Learning. Advances in Neural Information Processing Systems (NeurIPS). https://arxiv.org/abs/2303.11366",
+    "Xia, T., Yu, B., Dang, K., et al. (2024). Measuring Bargaining Abilities of Large Language Models: A Benchmark and a Buyer-Enhancement Method. Findings of the Association for Computational Linguistics (ACL). https://arxiv.org/abs/2402.15813",
+    "Bianchi, F., Chia, P. J., Yuksekgonul, M., et al. (2024). How Well Can LLMs Negotiate? NegotiationArena Platform and Analysis. https://arxiv.org/abs/2402.05863",
+    "Wang, L., Ma, C., Feng, X., et al. (2024). A Survey on Large Language Model based Autonomous Agents. Frontiers of Computer Science, 18(6). https://doi.org/10.1007/s11704-024-40231-1",
     "Lewis, P., Perez, E., Piktus, A., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. NeurIPS. https://arxiv.org/abs/2005.11401",
+    "Badan Pusat Statistik. (2024). Statistik E-Commerce 2024. Jakarta: BPS. https://www.bps.go.id/",
+    "Google, Temasek, & Bain & Company. (2024). e-Conomy SEA 2024. https://economysea.withgoogle.com/",
+    "Kementerian Koperasi dan UKM Republik Indonesia. (2023). Perkembangan Data Usaha Mikro, Kecil, dan Menengah. https://kemenkopukm.go.id/",
+    "Bank Indonesia. (2024). Laporan Perkembangan Ekonomi dan Keuangan Digital serta QRIS. https://www.bi.go.id/",
     "NIST. (2023). Artificial Intelligence Risk Management Framework (AI RMF 1.0). https://www.nist.gov/itl/ai-risk-management-framework",
-    "OWASP Foundation. (2023). OWASP API Security Top 10. https://owasp.org/API-Security/editions/2023/en/0x00-header/",
     "International Organization for Standardization. (2023). ISO/IEC 25010 software quality model. https://www.iso.org/standard/78176.html",
-    "PostgreSQL Global Development Group. (2023). PostgreSQL 16 Documentation. https://www.postgresql.org/docs/16/",
     "pgvector Contributors. (2024). pgvector: Open-source vector similarity search for PostgreSQL. https://github.com/pgvector/pgvector",
-    "FastAPI. (2024). FastAPI Documentation. https://fastapi.tiangolo.com/",
-    "Vercel. (2024). Next.js App Router Documentation. https://nextjs.org/docs/app",
 ]
 
 sections = []
@@ -359,57 +360,61 @@ def add_section(title, blocks):
 
 
 add_section("1. Judul/Nama Perangkat Lunak", [
-    ("p", "Nama perangkat lunak yang diusulkan adalah JUALIN.AI, yaitu platform asisten penjualan berbasis katalog untuk membantu UMKM mikro melayani chat customer, membuat pesanan, memantau pembayaran, dan membaca performa penjualan dari satu dashboard. Produk ini dikembangkan untuk Divisi III Pengembangan Perangkat Lunak GEMASTIK DIGINEXS 2026 dengan tema Digital Intelligence For Smart Society."),
+    ("p", "Nama perangkat lunak yang diusulkan adalah JUALIN.AI dengan edisi JUALIN OS, sebuah Sistem Operasi Toko Otonom untuk UMKM mikro. Berbeda dari chatbot layanan yang hanya menjawab chat, JUALIN OS adalah tim agen kecerdasan buatan terspesialisasi yang menjalankan operasional toko secara otonom dan terkoordinasi, yaitu melayani percakapan, menawar harga secara aman, menjaga stok, menagih pembayaran, dan menyusun laporan harian, dengan kendali penuh tetap berada di tangan penjual. Produk ini dikembangkan untuk Divisi III Pengembangan Perangkat Lunak GEMASTIK DIGINEXS 2026 dengan tema Digital Intelligence For Smart Society."),
     ("table", [
         ["Aspek", "Rincian"],
-        ["Nama produk", "JUALIN.AI"],
-        ["Tagline", "AI sales assistant berbasis katalog untuk otomasi layanan chat UMKM mikro"],
-        ["Target pengguna", "Pelaku UMKM mikro yang menjual produk melalui WhatsApp, Instagram, storefront sederhana, atau marketplace sosial"],
-        ["Kontribusi SDGs", "SDG 8 Decent Work and Economic Growth, SDG 9 Industry Innovation and Infrastructure, SDG 10 Reduced Inequality, SDG 12 Responsible Consumption and Production"],
-        ["Status prototipe", "Full-stack web application: Next.js frontend, FastAPI backend, PostgreSQL pgvector, Redis, Docker Compose, dan modul AI guardrails"],
+        ["Nama produk", "JUALIN.AI - edisi JUALIN OS (Sistem Operasi Toko Otonom)"],
+        ["Tagline", "Tim karyawan AI yang menjalankan toko UMKM: menjual, menawar, menjaga stok, menagih, dan membukukan secara otonom dan terkendali"],
+        ["Target pengguna", "Pelaku UMKM mikro yang berjualan melalui WhatsApp, Instagram, storefront, atau marketplace sosial"],
+        ["Kebaruan inti", "Arsitektur multi-agen (Manajer dan enam agen spesialis) serta mesin negosiasi aman-margin yang dijamin tidak pernah menjual di bawah batas untung"],
+        ["Kontribusi SDGs", "SDG 8 Decent Work and Economic Growth, SDG 9 Industry Innovation and Infrastructure, SDG 1 No Poverty, SDG 10 Reduced Inequality"],
+        ["Status prototipe", "Aplikasi web full-stack operasional: Next.js, FastAPI, PostgreSQL pgvector, Redis, worker arq, Docker, dengan modul multi-agen dan dashboard AI Crew"],
     ], [3.6, 9.6]),
-    ("p", "Inti gagasan JUALIN.AI adalah mengubah chat penjualan yang selama ini manual menjadi alur layanan yang terstruktur: customer bertanya, AI memahami katalog, sistem menawarkan produk yang tersedia, order hanya dibuat setelah konfirmasi, pembayaran dilacak, dan seller melihat dampaknya dalam metrik bisnis."),
+    ("p", "Inti gagasan JUALIN OS adalah memindahkan UMKM dari posisi AI Copilot yang sekadar membantu menjawab menjadi AI Autopilot yang menjalankan operasi. Sebuah Orchestrator merutekan setiap peristiwa, mesin negosiasi deterministik menjaga margin, dan setiap tindakan agen tercatat serta dapat disetujui atau ditolak penjual. Dengan demikian otomasi menjadi lebih berdampak sekaligus tetap dapat dipercaya."),
     ("table", [
         ["Kriteria penyisihan", "Respons dalam proposal"],
-        ["Aspek inovasi 20%", "AI tidak berdiri sendiri sebagai chatbot generik, tetapi terikat pada katalog, stok, harga, guardrails, order, payment link, dan audit log."],
-        ["Dampak 20%", "Dampak diukur dari waktu respons, chat terlayani, order dibantu AI, follow-up pembayaran, dan adopsi seller; validasi primer disiapkan untuk 30 responden asli."],
-        ["Desain antarmuka 20%", "Interface dibuat mobile-first untuk seller UMKM dan customer chat, dengan onboarding 10 menit, dashboard uang, dan halaman chat publik."],
-        ["Proses pengembangan 20%", "Metodologi agile, prototyping, API modular, pengujian guardrail/security, Docker deployment, dan feature flag untuk fitur berisiko."],
-        ["Kesesuaian ide 10%", "Sesuai tema smart society karena memperluas akses otomasi digital untuk pelaku usaha kecil."],
-        ["Urgensi masalah 10%", "Masalah slow response, katalog tidak rapi, dan follow-up pembayaran muncul langsung pada pola jualan berbasis chat UMKM."],
+        ["Aspek inovasi 20%", "Lompatan kategori dari chatbot reaktif menjadi sistem multi-agen otonom dengan negosiasi aman-margin; berakar pada riset ReAct, Reflexion, dan bargaining LLM."],
+        ["Dampak 20%", "Dampak terukur: waktu operasional dihemat, omzet dibantu AI, omzet diselamatkan, dan deal negosiasi tertutup tanpa jual-rugi; divalidasi melalui kuesioner 30 responden asli."],
+        ["Desain antarmuka 20%", "Pusat Komando AI Crew menampilkan status tiap agen, activity feed, antrean persetujuan, dan laporan harian; mobile-first untuk seller dan chat untuk customer."],
+        ["Proses pengembangan 20%", "Agile prototyping, arsitektur multi-agen modular, guardrail deterministik, savepoint transaksi, feature flag, dan CI/CD GitHub Actions."],
+        ["Kesesuaian ide 10%", "Selaras tema smart society: memberdayakan jutaan UMKM dengan kecerdasan digital yang inklusif."],
+        ["Urgensi masalah 10%", "Penjual mikro menanggung enam pekerjaan sekaligus pada kanal chat yang tidak pernah berhenti."],
     ], [3.5, 9.7]),
 ])
 
 add_section("2. Latar Belakang Ide Perangkat Lunak", [
-    ("p", "UMKM mikro banyak mengandalkan chat sebagai kanal utama transaksi. Di sisi customer, proses tanya harga, stok, ukuran, ongkir, dan cara bayar sering terjadi berulang. Di sisi seller, chat masuk pada jam yang tidak menentu, stok berubah, dan follow-up pembayaran mudah terlewat. Situasi ini membuat kesempatan closing hilang bukan karena produknya tidak menarik, tetapi karena respons dan proses penjualan tidak konsisten."),
-    ("p", "Data sekunder memperlihatkan bahwa perdagangan digital dan pembayaran digital terus menjadi bagian penting dari perilaku belanja Indonesia. Publikasi BPS tentang e-commerce, publikasi QRIS Bank Indonesia, dan laporan e-Conomy SEA menunjukkan pergeseran transaksi ke kanal digital serta pentingnya infrastruktur pembayaran yang mudah diakses. Di sisi lain, pelaku UMKM tetap membutuhkan solusi yang murah, ringan, dan tidak menambah beban operasional."),
+    ("p", "UMKM adalah tulang punggung ekonomi Indonesia, menyumbang sekitar 60 persen Produk Domestik Bruto dan menyerap sekitar 97 persen tenaga kerja menurut Kementerian Koperasi dan UKM. Mayoritas dari sekitar 4,4 juta pelaku e-commerce nasional berjualan melalui pesan instan, bukan etalase marketplace, menurut Badan Pusat Statistik tahun 2024. Artinya, medan transaksi UMKM sesungguhnya adalah kotak chat, dan di sanalah penjual mikro paling kewalahan."),
+    ("p", "Seorang penjual mikro menanggung enam pekerjaan sekaligus dan sendirian: membalas chat selama 24 jam, melayani tawar-menawar, menagih pembayaran yang tertunda, menjaga stok agar tidak salah janji, menyapa kembali pelanggan lama, dan mencatat pembukuan. Setiap beban itu sebenarnya pekerjaan satu orang. Akibatnya peluang closing hilang bukan karena produk tidak menarik, melainkan karena respons dan proses penjualan tidak konsisten."),
     ("table", [
-        ["Sumber masalah", "Dampak pada UMKM", "Peluang solusi"],
-        ["Chat customer tidak pernah berhenti", "Seller lambat membalas, customer pindah ke toko lain", "Asisten chat 24/7 yang hanya menjawab berdasarkan katalog seller"],
-        ["Katalog tersebar di chat, spreadsheet, atau foto", "Harga/stok salah jawab, rekomendasi tidak konsisten", "Katalog terstruktur dengan semantic search dan ringkasan produk"],
-        ["Order dibuat manual", "Salah catat alamat, item, atau jumlah", "Konfirmasi order dari chat dengan validasi data produk"],
-        ["Pembayaran perlu diingatkan", "Pending payment menumpuk", "Payment link dan follow-up otomatis yang tetap bisa diaudit"],
-        ["AI dianggap berisiko", "Seller takut AI mengarang diskon, stok, atau kebijakan", "Guardrails, manual takeover, QA review, dan batasan aksi sensitif"],
-    ], [3.0, 4.8, 5.4]),
-    ("p", "JUALIN.AI berangkat dari hipotesis sederhana: UMKM tidak perlu memulai digitalisasi dari sistem ERP yang kompleks. Mereka cukup membutuhkan asisten jualan yang paham produk, bisa dipakai dari HP, dan memberi dampak yang terlihat dalam waktu singkat. Karena itu, produk difokuskan pada conversational commerce, bukan sekadar dashboard administrasi."),
+        ["Beban penjual (enam pekerjaan)", "Dampak bila tak tertangani", "Agen JUALIN OS yang menangani"],
+        ["Balas chat selama 24 jam", "Telat balas, pembeli pindah ke toko lain", "Pramuniaga (Sales) berbasis katalog"],
+        ["Tawar-menawar harga", "Salah hitung, terlanjur jual rugi", "Juru Tawar (Negotiator) aman-margin"],
+        ["Tagih pembayaran tertunda", "Omzet menguap", "Marketing (Growth) proaktif"],
+        ["Jaga stok dan cegah oversell", "Janji palsu, komplain pelanggan", "Gudang (Inventory)"],
+        ["Pembukuan harian", "Tidak tahu performa toko", "Keuangan (Finance) dan Laporan Harian"],
+        ["Kendali dan kepercayaan", "Takut AI salah ambil keputusan", "Manajer (Orchestrator) dan persetujuan manusia"],
+    ], [3.4, 4.6, 5.2]),
+    ("p", "Solusi yang sudah ada di pasar, yaitu chatbot customer service dan bot open-source, bersifat reaktif: menunggu pesan lalu menjawab. Tidak ada yang berinisiatif menagih, menawar, atau menyapa kembali, dan hampir tidak ada yang berani menego harga secara otomatis karena risiko jual-rugi. Padahal tawar-menawar adalah inti budaya dagang Indonesia. Di sinilah celah JUALIN OS, yaitu agen otonom sisi penjual yang menutup seluruh siklus penjualan, termasuk negosiasi yang aman."),
+    ("p", "Tren global memperkuat arah ini. Agentic commerce diproyeksikan menaikkan konversi sekitar 20 hingga 30 persen dan menjadi pasar di atas 50 miliar dolar Amerika Serikat pada tahun 2030, namun kapabilitasnya masih menumpuk di sisi pembeli dan bagian atas funnel. Sisi penjual serta tahap closing, pembayaran, dan retensi masih kosong, dan JUALIN OS mengisinya untuk konteks UMKM Indonesia."),
 ])
 
 add_section("3. Tujuan dan Manfaat Dikembangkan Perangkat Lunak", [
-    ("p", "Tujuan utama JUALIN.AI adalah menyediakan perangkat lunak yang membantu UMKM mikro meningkatkan kecepatan respons, konsistensi informasi produk, dan peluang konversi order melalui otomasi chat yang tetap aman dikendalikan seller."),
+    ("p", "Tujuan utama JUALIN OS adalah memberi UMKM mikro sebuah tim agen AI yang menjalankan operasional toko secara otonom namun tetap dikendalikan penjual, sehingga penjual dapat melayani lebih banyak pembeli, menutup lebih banyak order, dan tidak kehilangan omzet karena keterbatasan waktu."),
     ("bullets", [
-        "Menyediakan AI sales assistant yang menjawab pertanyaan customer berdasarkan katalog, harga, stok, dan kebijakan toko.",
-        "Membuat alur chat-to-order sehingga percakapan dapat berakhir pada order yang tercatat, bukan berhenti pada tanya jawab.",
-        "Memudahkan seller baru melakukan setup dalam sesi singkat melalui onboarding quick start dan template niche UMKM.",
-        "Memberikan dashboard dampak bisnis seperti AI assisted order, revenue assisted by AI, pending payment, dan conversion funnel.",
-        "Menjaga kepercayaan dengan guardrails, tenant isolation, rate limiting, audit log, dan human takeover.",
+        "Menyediakan agen Pramuniaga yang menjawab pertanyaan customer berdasarkan katalog, harga, stok, dan kebijakan toko.",
+        "Menyediakan agen Juru Tawar yang menanggapi tawar-menawar dengan penawaran yang dijamin tidak pernah di bawah batas margin penjual.",
+        "Menjalankan agen Marketing dan Keuangan secara proaktif untuk menagih pembayaran tertunda, menyapa pelanggan pasif, dan menyusun laporan harian.",
+        "Menjaga kepercayaan melalui human-in-the-loop, activity feed yang transparan, audit log, dan kendali kebijakan per penjual.",
+        "Mengukur dampak nyata seperti waktu operasional dihemat, omzet dibantu AI, omzet diselamatkan, dan konversi chat menjadi order.",
     ]),
     ("table", [
         ["Pihak", "Manfaat"],
-        ["UMKM/seller", "Respons lebih cepat, katalog lebih rapi, pesanan lebih mudah dilacak, follow-up pembayaran tidak terlewat, dan insight penjualan lebih mudah dipahami."],
-        ["Customer", "Mendapat jawaban stok/harga lebih cepat, rekomendasi produk lebih relevan, dan proses order lebih jelas."],
-        ["Perguruan tinggi", "Menunjukkan karya software yang menyentuh persoalan ekonomi digital lokal dan dapat dikembangkan menjadi produk nyata."],
-        ["Ekosistem digital", "Mendorong adopsi AI yang terukur, aman, dan sesuai kebutuhan pelaku usaha kecil."],
+        ["UMKM/seller", "Beban enam pekerjaan terbantu otomatis, respons instan, negosiasi aman, penagihan tidak terlewat, dan laporan harian otomatis, tanpa menambah karyawan."],
+        ["Customer", "Dilayani cepat selama 24 jam, mendapat penawaran tawar-menawar yang wajar, dan proses order yang jelas."],
+        ["Perguruan tinggi dan ekosistem", "Bukti karya software bernilai tinggi yang menerapkan AI agentik secara bertanggung jawab pada masalah ekonomi digital lokal."],
+        ["Masyarakat (SDGs)", "Mendorong pertumbuhan ekonomi inklusif (SDG 8), inovasi infrastruktur digital (SDG 9), dan pengurangan ketimpangan akses teknologi (SDG 1 dan SDG 10)."],
     ], [3.0, 10.2]),
+    ("p", "Dampak ditargetkan terukur, bukan sekadar argumentasi. Indikator keberhasilan awal mencakup penghematan waktu operasional penjual, peningkatan konversi chat menjadi order, nilai pembayaran tertunda yang berhasil diselamatkan, serta jumlah deal negosiasi yang tertutup tanpa satu pun transaksi di bawah batas margin."),
 ])
 
 add_section("4. Batasan Perangkat Lunak yang Dikembangkan", [
@@ -425,96 +430,96 @@ add_section("4. Batasan Perangkat Lunak yang Dikembangkan", [
 ])
 
 add_section("5. Metodologi Pengembangan Perangkat Lunak", [
-    ("p", "Metodologi yang digunakan adalah agile prototyping dengan tahap discovery, design, build, test, dan validate. Pilihan ini cocok karena produk perlu cepat diuji pada skenario nyata chat penjualan, tetapi tetap membutuhkan kontrol kualitas pada security, guardrails, dan multi-tenant isolation."),
+    ("p", "Metodologi yang digunakan adalah agile prototyping dengan tahap discovery, design, build, test, dan validate. Pendekatan ini dipilih karena produk perlu cepat diuji pada skenario chat penjualan nyata, namun tetap menuntut kontrol kualitas tinggi pada keamanan, guardrail negosiasi, dan isolasi multi-tenant. Fitur berisiko dibangun di belakang feature flag dan diintegrasikan bertahap sebagai evolusi, bukan penulisan ulang."),
     ("table", [
         ["Tahap", "Aktivitas", "Output"],
-        ["Discovery", "Mengidentifikasi pain point UMKM chat-selling, memetakan kanal penjualan, dan menyusun metrik dampak.", "Problem statement, user persona, dan instrumen validasi."],
-        ["Design", "Merancang flow customer chat, dashboard seller, onboarding, arsitektur data, dan guardrails AI.", "Flow, mockup, kebutuhan fungsional, dan desain solusi."],
-        ["Build", "Mengembangkan frontend Next.js, backend FastAPI, PostgreSQL pgvector, Redis, payment, dan API modular.", "Prototipe web full-stack yang dapat dijalankan."],
-        ["Test", "Melakukan syntax check, compose validation, test guardrails, test security route, dan skenario chat-to-order.", "Checklist verifikasi teknis dan daftar perbaikan."],
-        ["Validate", "Mengumpulkan respons 30 responden asli melalui GForm dan menguji demo pada calon seller/customer.", "Rekap kebutuhan, minat mencoba, keberatan, dan prioritas fitur."],
+        ["Discovery", "Memetakan enam beban penjual UMKM serta meriset referensi agen AI dan negosiasi model bahasa.", "Problem statement, persona, dan metrik dampak."],
+        ["Design", "Merancang arsitektur multi-agen, mesin negosiasi deterministik, dan antarmuka AI Crew.", "Diagram arsitektur, desain solusi, dan mockup."],
+        ["Build", "Mengembangkan modul services agent_os, tabel agent_os, API agent-os, dashboard AI Crew, dan worker proaktif di atas basis kode existing.", "Prototipe multi-agen yang dapat dijalankan."],
+        ["Test", "Menjalankan compile check, validasi mesin negosiasi, serta pengujian guardrail dan keamanan melalui CI.", "Bukti verifikasi teknis."],
+        ["Validate", "Mengumpulkan respons 30 responden asli melalui GForm dan menguji demo pada calon penjual atau pembeli.", "Rekap minat, keberatan, dan prioritas fitur."],
     ], [2.2, 6.1, 4.9]),
-    ("p", "Pada saat penyusunan proposal, verifikasi teknis yang sudah berhasil dilakukan adalah python compileall pada folder backend dan docker compose config --quiet. Pengujian unit dengan pytest disiapkan di repository, tetapi belum dijalankan pada runtime ini karena modul pytest tidak tersedia."),
+    ("p", "Verifikasi teknis yang telah dilakukan mencakup kompilasi seluruh modul backend melalui compileall dan validasi matematis mesin negosiasi yang menunjukkan nol pelanggaran lantai margin pada seluruh skenario dan ronde uji. Pipeline CI GitHub Actions dikonfigurasi menjalankan pytest, audit dependensi, lint, dan build frontend pada setiap perubahan, sehingga kualitas terjaga otomatis sebelum deploy."),
 ])
 
 add_section("6. Analisis Kebutuhan dan Desain Solusi Perangkat Lunak", [
-    ("p", "Aktor utama sistem adalah seller, customer, dan admin. Seller mengelola katalog, melihat chat, memproses order, mengatur AI, dan membaca analytics. Customer menggunakan halaman chat atau WhatsApp untuk bertanya dan membeli. Admin memantau kesehatan sistem, retry job, audit log, seller, dan konfigurasi operasional."),
+    ("p", "Aktor utama sistem adalah seller, customer, dan admin. Yang membedakan JUALIN OS adalah lapisan agen otonom di antara mereka, yaitu sebuah Orchestrator yang merutekan setiap peristiwa seperti chat masuk, pembayaran, perubahan stok, dan jadwal terjadwal ke agen spesialis yang tepat, lalu mencatat tindakannya untuk diaudit dan, bila berisiko, dimintakan persetujuan penjual."),
     ("table", [
-        ["Kategori", "Kebutuhan"],
-        ["Fungsional seller", "Registrasi/login, CRUD produk, upload gambar, AI enrich produk, dashboard analytics, order management, inbox/manual takeover, campaign draft, template niche, onboarding, storefront, billing/quota."],
-        ["Fungsional customer", "Chat publik toko, riwayat sesi, rekomendasi produk, konfirmasi order, link pembayaran, dan halaman status pembayaran."],
-        ["Fungsional admin", "Monitoring sistem, provider health, failed jobs, audit logs, seller management, concierge setup, dan retry/replay webhook."],
-        ["AI", "Intent detection, sales stage, semantic product search, structured action, guardrails anti-halusinasi, trace, feedback, eval case, dan QA review."],
-        ["Non-fungsional", "Aman, tenant-isolated, cepat, mobile-first, dapat diaudit, dapat dideploy murah, dan mudah dipelihara."],
-    ], [3.2, 10.0]),
-    ("figure", str(asset_paths[0]), "Gambar 1. Arsitektur sistem JUALIN.AI."),
+        ["Agen (peran)", "Tanggung jawab otonom"],
+        ["Orchestrator (Manajer)", "Merutekan peristiwa ke agen, menjaga kebijakan global, dan menyusun Laporan Harian."],
+        ["Sales (Pramuniaga)", "Melayani percakapan berbasis katalog: menyapa, menggali kebutuhan, presentasi, dan closing."],
+        ["Negotiator (Juru Tawar)", "Menanggapi tawar-menawar dengan penawaran yang dijamin tidak pernah di bawah lantai margin."],
+        ["Inventory (Gudang)", "Memverifikasi stok sebelum janji atau order, dan mendeteksi stok menipis."],
+        ["Growth (Marketing)", "Menagih pembayaran tertunda dan menyapa kembali pelanggan pasif secara proaktif."],
+        ["Finance (Keuangan)", "Merekap omzet, pembayaran lunas dibandingkan tertunda, dan produk terlaris."],
+    ], [3.4, 9.8]),
+    ("figure", str(asset_paths[0]), "Gambar 1. Arsitektur multi-agen JUALIN OS."),
     ("figure", str(asset_paths[1]), "Gambar 2. Alur penggunaan dan dampak yang diukur."),
-    ("p", "Desain solusi menempatkan katalog sebagai sumber kebenaran utama. Setiap respons AI dibangun dari konteks produk seller, semantic search, histori percakapan terbatas, dan kebijakan untrusted data. Pendekatan ini mengurangi risiko AI menjawab di luar data toko dan membuat alur penjualan lebih dapat diaudit."),
+    ("p", "Kebaruan teknis terpenting adalah pemisahan angka dari kata pada negosiasi. Sebuah penghasil penawaran yang deterministik menghitung tawaran balik memakai tangga konsesi yang dibatasi lantai harga, yaitu nilai terbesar antara modal dikali satu tambah margin minimum dan harga dikali satu kurang diskon maksimum. Model bahasa hanya merangkai kalimat di sekitar angka yang sudah diputuskan mesin, sehingga AI tidak mungkin mengarang harga atau menjual rugi. Pendekatan ini sejalan dengan temuan riset bargaining model bahasa bahwa agen membutuhkan penghasil penawaran untuk mengontrol rentang harga."),
     ("table", [
         ["Modul", "Desain solusi"],
-        ["Katalog cerdas", "Produk memiliki nama, deskripsi, harga, stok, kategori, foto, summary, dan embedding 384 dimensi untuk semantic search."],
-        ["AI chat", "Agent mendeteksi intent, sales stage, produk relevan, lalu membuat respons singkat berbahasa Indonesia."],
-        ["Order", "Order dibuat hanya setelah detail customer dan produk dapat dicocokkan dengan data seller."],
-        ["Payment", "Payment link dan webhook disiapkan untuk Midtrans/Cashi; status dapat dipantau customer dan seller."],
-        ["Trust layer", "Kebijakan refund, shipping, support hours, dan verified payment ditampilkan di storefront/public trust profile."],
-        ["Observability", "AI trace, eval run, feedback, usage event, audit log, dan provider health digunakan untuk pengawasan."],
+        ["Mesin negosiasi", "Mesin deterministik menjaga lantai margin; model bahasa hanya untuk bahasa; diskon di atas ambang masuk antrean persetujuan."],
+        ["Memori dan state", "Memori customer berbasis pgvector untuk personalisasi; negotiation_states menyimpan konteks tawar yang sedang berjalan."],
+        ["Substrat peristiwa", "background_jobs dan worker arq untuk kerja proaktif; audit_logs dan agent_runs untuk jejak yang dapat diaudit."],
+        ["Kendali manusia", "agent_policies sebagai sakelar per agen dan ambang diskon; agent_approvals sebagai antrean human-in-the-loop."],
+        ["Ketahanan", "Setiap pemanggilan agen dibungkus savepoint transaksi sehingga kegagalan agen tidak menjatuhkan chat utama."],
+        ["Observability", "AI trace, usage event, dan provider health untuk pengawasan operasional."],
     ], [3.0, 10.2]),
 ])
 
 add_section("7. Implementasi Perangkat Lunak", [
-    ("p", "Implementasi JUALIN.AI sudah berbentuk aplikasi web full-stack. Struktur repository menunjukkan backend, frontend, nginx, Docker Compose, migration Alembic, seed data, test backend, serta rencana hardening keamanan dan market acceptance. Berdasarkan inspeksi repository, prototipe memuat sekitar 171 endpoint API, 75 model basis data, 36 halaman frontend, dan 12 test backend."),
+    ("p", "Implementasi JUALIN OS berbentuk aplikasi web full-stack yang dapat dijalankan, dibangun secara bertahap di atas basis kode JUALIN.AI. Lapisan multi-agen ditambahkan melalui modul models agent_os dengan empat tabel yaitu AgentPolicy, AgentRun, AgentApproval, dan NegotiationState, paket services agent_os yang berisi orchestrator, negotiation, inventory, finance, growth, brief, dan cycles, API agent-os, worker terjadwal, serta halaman dashboard AI Crew. Seluruh fitur baru dikendalikan feature flag sehingga aman terhadap perilaku lama."),
     ("table", [
         ["Layer", "Teknologi", "Alasan pemilihan"],
-        ["Frontend", "Next.js 16, React 19, CSS Modules", "Cepat untuk dashboard dan public chat, mendukung routing modern dan UI mobile-first."],
-        ["Backend", "FastAPI, Pydantic, SQLAlchemy", "Ringan, cocok untuk API modular, validasi request jelas, dan dokumentasi endpoint mudah."],
-        ["Database", "PostgreSQL 16 + pgvector", "Data relasional tetap kuat, sementara pencarian semantik katalog dapat dilakukan di database yang sama."],
-        ["Cache/queue", "Redis 7", "Digunakan untuk rate limit, cache katalog, dan job ringan agar VPS tetap hemat."],
-        ["AI", "LLM via OpenAI-compatible endpoint, embedding all-MiniLM-L6-v2, guardrails", "Mendukung respons natural, semantic search, fallback aman, dan pengembangan murah."],
-        ["Deployment", "Docker Compose, Nginx, GitHub Actions", "Mudah direplikasi pada VPS kecil dan siap dipindahkan ke server production."],
+        ["Frontend", "Next.js 16, React, CSS Modules", "Cepat untuk dashboard dan chat publik, mendukung UI mobile-first."],
+        ["Backend", "FastAPI, Pydantic, SQLAlchemy async", "Ringan, cocok untuk API modular dan orkestrasi agen, validasi request jelas."],
+        ["Database", "PostgreSQL 16 + pgvector", "Data relasional kuat, sementara pencarian semantik katalog dilakukan pada basis data yang sama."],
+        ["Cache dan worker", "Redis 7 dan arq", "Rate limit, cache katalog, dan kerja proaktif agen yang terjadwal dan hemat."],
+        ["AI", "Model bahasa via endpoint OpenAI-compatible, embedding all-MiniLM-L6-v2, guardrails dan mesin deterministik", "Respons natural dengan angka harga dikontrol mesin, biaya pengembangan rendah."],
+        ["Deployment", "Docker Compose, Nginx, GitHub Actions", "Mudah direplikasi pada VPS dengan pengujian otomatis sebelum deploy."],
     ], [2.4, 4.2, 6.6]),
-    ("p", "Fitur yang sudah tercermin di codebase meliputi autentikasi JWT, product CRUD, upload gambar aman, AI chat, streaming chat, order, payment, analytics, inbox, campaigns, workflows, billing, templates, onboarding, storefront, trust profile, growth links, WhatsApp templates, referrals, lead forms, AI playbooks, knowledge base, QA review, experiments, dan admin system dashboard."),
+    ("p", "Selain modul agen, basis kode mencerminkan fitur autentikasi JWT, CRUD produk, chat AI dan streaming, order, payment, analytics, inbox, campaigns, workflows, billing, storefront, trust profile, growth links, referrals, knowledge base, QA review, experiments, serta admin dashboard. Lapisan JUALIN OS menyatukannya menjadi operasi toko yang otonom dan terkendali."),
     ("bullets", [
-        "Keamanan: production security validation, rate limiting, CORS control, request logging, JWT claims, upload image sanitization, webhook signature validation, open redirect protection, dan seller_id filtering pada route penting.",
-        "Kualitas AI: tujuh guardrail utama, untrusted data policy, intent detection, sales stage detection, structured AI action, fallback response, dan trace untuk evaluasi.",
-        "Keandalan: penggunaan idempotency key, background job, retry/replay admin, usage event ledger, dan health/readiness endpoint.",
-        "Skalabilitas awal: deployment dirancang untuk VPS 4GB dengan Redis maxmemory dan worker concurrency terbatas.",
+        "Keamanan: validasi keamanan produksi, rate limiting, CORS, request logging, JWT, sanitasi upload gambar, validasi signature webhook, dan filter seller_id pada route penting.",
+        "Kualitas dan keamanan AI: tujuh guardrail, kebijakan untrusted data anti prompt-injection, mesin negosiasi deterministik aman-margin, dan trace untuk evaluasi.",
+        "Keandalan: idempotency key, background job dengan retry, savepoint transaksi pada lapisan agen, dan endpoint health serta readiness.",
+        "Tata kelola otonomi: agent_policies untuk kebijakan per penjual, agent_approvals untuk persetujuan manusia, dan agent_runs untuk activity feed yang dapat diaudit.",
     ]),
     ("table", [
         ["Verifikasi", "Hasil"],
-        ["python -m compileall backend", "Berhasil; semua file Python backend dapat dikompilasi sintaksis."],
-        ["docker compose config --quiet", "Berhasil; konfigurasi compose valid secara struktur."],
-        ["pytest backend/tests", "Belum dijalankan di runtime ini karena modul pytest tidak tersedia; test suite tetap tersedia di repository."],
+        ["compileall backend", "Berhasil; seluruh modul backend termasuk services agent_os lolos kompilasi."],
+        ["Validasi mesin negosiasi", "Nol pelanggaran lantai margin pada seluruh skenario dan ronde uji."],
+        ["CI GitHub Actions", "Dikonfigurasi menjalankan pytest, audit dependensi, lint, dan build frontend pada setiap perubahan."],
     ], [5.0, 8.2]),
 ])
 
 add_section("8. Screenshot Mockup Interface Perangkat Lunak", [
-    ("p", "Mockup berikut disiapkan untuk menunjukkan pengalaman utama produk. Interface sengaja dibuat familiar untuk UMKM: chat seperti aplikasi percakapan, dashboard fokus pada uang/order, dan onboarding dibuat singkat agar seller tidak tersesat pada konfigurasi teknis."),
-    ("figure", str(asset_paths[2]), "Gambar 3. Mockup halaman chat customer."),
-    ("figure", str(asset_paths[3]), "Gambar 4. Mockup seller dashboard."),
-    ("figure", str(asset_paths[4]), "Gambar 5. Mockup quick start onboarding."),
+    ("p", "Antarmuka dirancang familiar untuk UMKM sekaligus menampilkan kendali atas tim agen. Customer berinteraksi melalui chat seperti aplikasi percakapan, termasuk saat tawar-menawar yang dijawab agen Juru Tawar secara aman-margin. Penjual memantau melalui dashboard yang fokus pada uang dan order, sementara Pusat Komando AI Crew menampilkan status tiap agen, activity feed, antrean persetujuan, dan laporan harian sehingga penjual selalu tahu apa yang dilakukan AI."),
+    ("figure", str(asset_paths[2]), "Gambar 3. Mockup halaman chat customer dengan layanan agen."),
+    ("figure", str(asset_paths[3]), "Gambar 4. Mockup dashboard penjual."),
+    ("figure", str(asset_paths[4]), "Gambar 5. Mockup quick start onboarding penjual."),
 ])
 
 add_section("9. Dokumentasi Cara Penggunaan Perangkat Lunak", [
-    ("p", "Cara penggunaan dibagi menjadi dua alur: alur seller sebagai pemilik toko dan alur customer sebagai pembeli. Dokumentasi ini juga dapat dipakai sebagai dasar video demo maksimal tiga menit pada tahap lanjutan."),
+    ("p", "Penggunaan dibagi menjadi dua alur, yaitu penjual sebagai pemilik toko dan customer sebagai pembeli. Dokumentasi ini juga menjadi dasar video demo maksimal tiga menit pada babak final."),
     ("table", [
         ["Langkah seller", "Deskripsi"],
-        ["1. Registrasi", "Seller membuat akun, mengisi nama toko, nomor kontak, slug toko, dan memilih gaya AI."],
-        ["2. Quick start", "Seller memilih kategori usaha, memasukkan 3-5 produk awal, dan menjalankan simulasi chat."],
-        ["3. Kelola katalog", "Seller menambah produk, foto, harga, stok, kategori, dan mengecek catalog score."],
-        ["4. Bagikan link", "Seller membagikan link chat/storefront ke WhatsApp, Instagram, atau bio sosial media."],
-        ["5. Pantau chat dan order", "Seller melihat percakapan, mengambil alih manual jika perlu, memproses order, dan mengikuti status pembayaran."],
-        ["6. Evaluasi", "Seller membaca dashboard money metrics, conversion funnel, produk laris, pending payment, dan rekomendasi campaign."],
+        ["1. Registrasi dan setup", "Penjual membuat akun toko, mengisi katalog dan modal produk untuk batas margin, lalu memilih gaya AI."],
+        ["2. Atur kebijakan agen", "Penjual menyetel kebijakan di Pusat Komando AI Crew: diskon maksimum, margin minimum, dan ambang persetujuan."],
+        ["3. Aktifkan AI Crew", "Tim agen mulai melayani chat, menawar, menjaga stok, dan menagih secara otonom."],
+        ["4. Pantau activity feed", "Penjual melihat tindakan tiap agen secara langsung beserta alasan keputusan."],
+        ["5. Setujui keputusan berisiko", "Penjual menyetujui atau menolak diskon besar dan aksi sensitif dari antrean persetujuan."],
+        ["6. Baca Laporan Harian", "Penjual menerima ringkasan omzet, pembayaran tertunda, stok menipis, dan saran tindakan."],
     ], [3.2, 10.0]),
     ("table", [
         ["Langkah customer", "Deskripsi"],
         ["1. Buka link chat", "Customer membuka halaman chat publik toko tanpa login."],
-        ["2. Tanya produk", "Customer menanyakan stok, harga, ukuran, rekomendasi, atau cara order."],
-        ["3. Terima rekomendasi", "AI menjawab berdasarkan katalog dan menawarkan alternatif jika produk tidak tersedia."],
-        ["4. Konfirmasi order", "Customer menyetujui detail item, jumlah, nama, alamat, dan nomor HP."],
-        ["5. Bayar", "Customer membuka link pembayaran resmi dan memilih QRIS/VA jika gateway aktif."],
-        ["6. Follow-up", "Jika belum bayar, seller/AI dapat melakukan follow-up sesuai aturan yang diaudit."],
+        ["2. Tanya dan menawar", "Customer menanyakan produk atau menawar; agen Juru Tawar menanggapi dengan penawaran aman-margin."],
+        ["3. Konfirmasi order", "Customer menyetujui detail item, jumlah, dan data pengiriman."],
+        ["4. Bayar", "Customer membuka link pembayaran resmi dan memilih QRIS atau VA bila gateway aktif."],
+        ["5. Tindak lanjut", "Bila belum bayar, agen Marketing menindaklanjuti sesuai aturan yang diaudit."],
     ], [3.2, 10.0]),
-    ("p", "Skenario demo yang disarankan: seller login, menambah produk, membuka chat publik, customer menanyakan produk, AI memberi rekomendasi, customer mengonfirmasi order, sistem membuat order/payment link, lalu seller melihat order dan metrik pada dashboard."),
+    ("p", "Skenario demo yang disarankan: penjual mengatur kebijakan, customer menawar sebuah produk di bawah batas margin, agen Juru Tawar menawar balik pada harga aman, customer setuju, agen Pramuniaga membuat order dan link pembayaran, lalu penjual melihat jejak ketiga agen pada activity feed dan menerima laporan harian."),
 ])
 
 add_section("10. Ucapan Terima Kasih", [
@@ -809,7 +814,7 @@ def build_pdf():
     story.append(Spacer(1, 4.5 * cm))
     story.append(para("PROPOSAL PENGEMBANGAN PERANGKAT LUNAK", "SubCenter"))
     story.append(Paragraph("JUALIN.AI", styles["TitleCenter"]))
-    story.append(para("AI Sales Assistant Berbasis Katalog untuk Otomasi Layanan Chat UMKM Mikro", "SubCenter"))
+    story.append(para("Sistem Operasi Toko Otonom (JUALIN OS) untuk UMKM Mikro", "SubCenter"))
     story.append(Spacer(1, 0.8 * cm))
     story.append(para("Divisi III: Pengembangan Perangkat Lunak (Software Development)", "SubCenter"))
     story.append(para("GEMASTIK DIGINEXS 2026", "SubCenter"))

@@ -7,7 +7,7 @@ map $http_upgrade $connection_upgrade {
 
 server {
   listen 80;
-  server_name jualin.example.com;
+  server_name jualan-ai.cloud www.jualan-ai.cloud;
 
   location /.well-known/acme-challenge/ {
     root /var/www/certbot;
@@ -20,10 +20,10 @@ server {
 
 server {
   listen 443 ssl http2;
-  server_name jualin.example.com;
+  server_name jualan-ai.cloud www.jualan-ai.cloud;
 
-  ssl_certificate /etc/letsencrypt/live/jualin.example.com/fullchain.pem;
-  ssl_certificate_key /etc/letsencrypt/live/jualin.example.com/privkey.pem;
+  ssl_certificate /etc/letsencrypt/live/jualan-ai.cloud/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/jualan-ai.cloud/privkey.pem;
   ssl_session_timeout 1d;
   ssl_session_cache shared:SSL:10m;
   ssl_protocols TLSv1.2 TLSv1.3;
