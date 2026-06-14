@@ -359,6 +359,10 @@ def add_section(title, blocks):
     sections.append((title, blocks))
 
 
+add_section("Ringkasan", [
+    ("p", "Kami memulai JUALIN.AI dari hal sederhana yang kami lihat sendiri. Teman-teman kami yang berjualan online lewat WhatsApp selalu kewalahan. Chat masuk tengah malam, pembeli menawar, stok lupa diperbarui, dan tidak sedikit orderan batal hanya karena telat dibalas. Dari situ muncul pertanyaan kami, bagaimana kalau penjual kecil punya karyawan yang tidak pernah tidur? JUALIN.AI dalam edisi JUALIN OS adalah jawaban kami, yaitu bukan sekadar chatbot yang menjawab, melainkan satu tim agen AI yang menjalankan toko: melayani percakapan, menawar harga secara aman tanpa membuat penjual rugi, menjaga stok, menagih pembayaran, dan menyusun laporan harian, sementara keputusan penting tetap dipegang penjual. Proposal ini memaparkan latar masalah, rancangan, dan prototipe yang sudah berjalan, beserta rencana pengukuran dampaknya bagi UMKM mikro Indonesia."),
+])
+
 add_section("1. Judul/Nama Perangkat Lunak", [
     ("p", "Nama perangkat lunak yang diusulkan adalah JUALIN.AI dengan edisi JUALIN OS, sebuah Sistem Operasi Toko Otonom untuk UMKM mikro. Berbeda dari chatbot layanan yang hanya menjawab chat, JUALIN OS adalah tim agen kecerdasan buatan terspesialisasi yang menjalankan operasional toko secara otonom dan terkoordinasi, yaitu melayani percakapan, menawar harga secara aman, menjaga stok, menagih pembayaran, dan menyusun laporan harian, dengan kendali penuh tetap berada di tangan penjual. Produk ini dikembangkan untuk Divisi III Pengembangan Perangkat Lunak GEMASTIK DIGINEXS 2026 dengan tema Digital Intelligence For Smart Society."),
     ("table", [
@@ -383,8 +387,9 @@ add_section("1. Judul/Nama Perangkat Lunak", [
 ])
 
 add_section("2. Latar Belakang Ide Perangkat Lunak", [
-    ("p", "UMKM adalah tulang punggung ekonomi Indonesia, menyumbang sekitar 60 persen Produk Domestik Bruto dan menyerap sekitar 97 persen tenaga kerja menurut Kementerian Koperasi dan UKM. Mayoritas dari sekitar 4,4 juta pelaku e-commerce nasional berjualan melalui pesan instan, bukan etalase marketplace, menurut Badan Pusat Statistik tahun 2024. Artinya, medan transaksi UMKM sesungguhnya adalah kotak chat, dan di sanalah penjual mikro paling kewalahan."),
-    ("p", "Seorang penjual mikro menanggung enam pekerjaan sekaligus dan sendirian: membalas chat selama 24 jam, melayani tawar-menawar, menagih pembayaran yang tertunda, menjaga stok agar tidak salah janji, menyapa kembali pelanggan lama, dan mencatat pembukuan. Setiap beban itu sebenarnya pekerjaan satu orang. Akibatnya peluang closing hilang bukan karena produk tidak menarik, melainkan karena respons dan proses penjualan tidak konsisten."),
+    ("p", "Ide ini tidak kami dapat dari laporan riset, melainkan dari apa yang kami lihat sehari-hari. Banyak teman dan tetangga kami berjualan baju, makanan, dan barang harian lewat WhatsApp dan Instagram. Mereka pandai membuat produk, tetapi kewalahan mengurus chat. Pesan menumpuk saat mereka sedang masak, mengantar anak, atau tidur. Saat ditawar, mereka ragu boleh turun berapa supaya tidak rugi. Orderan yang sudah dibuat pun sering batal hanya karena lupa ditagih. Dari situ kami sadar, masalahnya bukan pada produk, tetapi pada keterbatasan satu orang melayani semuanya sekaligus."),
+    ("p", "Pengamatan kami ternyata sejalan dengan data. UMKM menyumbang sekitar 60 persen Produk Domestik Bruto dan menyerap hampir 97 persen tenaga kerja Indonesia menurut Kementerian Koperasi dan UKM. Dari sekitar 4,4 juta pelaku e-commerce nasional, mayoritas justru berjualan lewat pesan instan, bukan etalase marketplace, menurut Badan Pusat Statistik tahun 2024. Artinya jutaan transaksi UMKM benar-benar terjadi di dalam kotak chat, dan di situlah penjual paling mudah kehabisan tenaga."),
+    ("p", "Kalau dirinci, seorang penjual mikro sebenarnya mengerjakan enam peran sekaligus, sendirian:"),
     ("table", [
         ["Beban penjual (enam pekerjaan)", "Dampak bila tak tertangani", "Agen JUALIN OS yang menangani"],
         ["Balas chat selama 24 jam", "Telat balas, pembeli pindah ke toko lain", "Pramuniaga (Sales) berbasis katalog"],
@@ -394,8 +399,8 @@ add_section("2. Latar Belakang Ide Perangkat Lunak", [
         ["Pembukuan harian", "Tidak tahu performa toko", "Keuangan (Finance) dan Laporan Harian"],
         ["Kendali dan kepercayaan", "Takut AI salah ambil keputusan", "Manajer (Orchestrator) dan persetujuan manusia"],
     ], [3.4, 4.6, 5.2]),
-    ("p", "Solusi yang sudah ada di pasar, yaitu chatbot customer service dan bot open-source, bersifat reaktif: menunggu pesan lalu menjawab. Tidak ada yang berinisiatif menagih, menawar, atau menyapa kembali, dan hampir tidak ada yang berani menego harga secara otomatis karena risiko jual-rugi. Padahal tawar-menawar adalah inti budaya dagang Indonesia. Di sinilah celah JUALIN OS, yaitu agen otonom sisi penjual yang menutup seluruh siklus penjualan, termasuk negosiasi yang aman."),
-    ("p", "Tren global memperkuat arah ini. Agentic commerce diproyeksikan menaikkan konversi sekitar 20 hingga 30 persen dan menjadi pasar di atas 50 miliar dolar Amerika Serikat pada tahun 2030, namun kapabilitasnya masih menumpuk di sisi pembeli dan bagian atas funnel. Sisi penjual serta tahap closing, pembayaran, dan retensi masih kosong, dan JUALIN OS mengisinya untuk konteks UMKM Indonesia."),
+    ("p", "Kami sempat mencoba beberapa chatbot yang sudah ada. Hampir semuanya reaktif, yaitu hanya menunggu pertanyaan lalu menjawab. Tidak ada yang berinisiatif menagih, menyapa pelanggan lama, apalagi berani menawar harga, padahal menawar justru bagian paling khas dari jual-beli di Indonesia. Dari sinilah kami yakin ada celah yang belum diisi siapa pun, yaitu AI yang benar-benar menjalankan toko di sisi penjual, termasuk menawar dengan aman."),
+    ("p", "Arah ini juga didukung tren global. Perdagangan yang dijalankan agen AI diperkirakan menaikkan konversi sekitar 20 sampai 30 persen dan menjadi pasar di atas 50 miliar dolar Amerika Serikat pada tahun 2030, tetapi hampir semuanya masih berfokus membantu pembeli, bukan penjual kecil. Kami merancang JUALIN OS untuk mengisi ruang kosong itu, dengan konteks dan bahasa yang akrab bagi UMKM Indonesia."),
 ])
 
 add_section("3. Tujuan dan Manfaat Dikembangkan Perangkat Lunak", [

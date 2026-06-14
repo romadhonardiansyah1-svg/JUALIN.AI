@@ -90,10 +90,10 @@ export default function AgentOsPage() {
   });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="aurora-bg" style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16, borderRadius: 20 }}>
       {/* Header */}
       <div style={{ ...card, background: "linear-gradient(135deg,#0b3b2e,#0f172a)" }}>
-        <h2 style={{ margin: 0, fontSize: 22 }}>🤖 AI Crew — Pusat Komando Toko Otonom</h2>
+        <h2 className="gradient-text" style={{ margin: 0, fontSize: 22 }}>🤖 AI Crew — Pusat Komando Toko Otonom</h2>
         <p style={{ margin: "6px 0 0", color: "#94a3b8" }}>
           Tim karyawan AI yang menjalankan tokomu. Semua tindakan tercatat &amp; bisa kamu kendalikan.
         </p>
@@ -128,9 +128,9 @@ export default function AgentOsPage() {
       {/* Crew cards */}
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>Tim Agen</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
+        <div className="deck-3d" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
           {(overview?.crew || []).map((c) => (
-            <div key={c.role} style={{ background: "#111c33", borderRadius: 12, padding: 12, textAlign: "center" }}>
+            <div key={c.role} className="card-3d" style={{ background: "#111c33", borderRadius: 12, padding: 12, textAlign: "center" }}>
               <div style={{ fontSize: 26 }}>{ROLE_EMOJI[c.role] || "🤖"}</div>
               <div style={{ fontWeight: 700, marginTop: 4 }}>{c.label}</div>
               <div style={{ fontSize: 12, color: "#94a3b8" }}>{c.actions_24h} aksi / 24 jam</div>
