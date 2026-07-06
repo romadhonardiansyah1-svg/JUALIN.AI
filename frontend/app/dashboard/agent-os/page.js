@@ -18,24 +18,27 @@ export default function AgentOsPage() {
   const [approvals, setApprovals] = useState([]);
   const [negotiations, setNegotiations] = useState([]);
   const [policy, setPolicy] = useState(null);
+  const [impact, setImpact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
     try {
       setError("");
-      const [ov, act, appr, neg, pol] = await Promise.all([
+      const [ov, act, appr, neg, pol, imp] = await Promise.all([
         api.agentOsOverview(),
         api.agentOsActivity(40),
         api.agentOsApprovals("pending"),
         api.agentOsNegotiations(),
         api.agentOsGetPolicy(),
+        api.agentOsImpact(),
       ]);
       setOverview(ov);
       setActivity(act);
       setApprovals(appr);
       setNegotiations(neg);
       setPolicy(pol);
+      setImpact(imp);
     } catch (e) {
       setError(e.message || "Gagal memuat");
     } finally {
@@ -123,6 +126,16 @@ export default function AgentOsPage() {
           <div style={{ color: "#94a3b8", fontSize: 12 }}>Produk terlaris</div>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{overview?.finance?.top_product || "-"}</div>
         </div>
+        <div style={card}>
+          <div style={{ color: "#94a3b8", fontSize: 12 }}>🛡️ Diselamatkan Guardrail</div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>{rupiah(impact?.guardrail_saved)}</div>
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>{impact?.blocked_below_floor ?? 0} tawaran di bawah batas ditahan</div>
+        </div>
+        <div style={card}>
+          <div style={{ color: "#94a3b8", fontSize: 12 }}>🌙 Omzet Saat Offline (21.00–08.00)</div>
+          <div style={{ fontSize: 22, fontWeight: 800 }}>{rupiah(impact?.offline_omzet)}</div>
+          <div style={{ fontSize: 12, color: "#94a3b8" }}>{impact?.offline_orders ?? 0} order saat kamu istirahat</div>
+        </div>
       </div>
 
       {/* Crew cards */}
@@ -138,6 +151,26 @@ export default function AgentOsPage() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Nego Live — bukti guardrail untuk juri */}
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>🤝 Nego Live — Guardrail Monitor</h3>
+        {negotiations.length === 0 && <div style={{ color: "#94a3b8" }}>Belum ada negosiasi.</div>}
+        {negotiations.slice(0, 8).map((n) => (
+          <div key={n.id} style={{ padding: "10px 0", borderBottom: "1px solid #1e293b" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontWeight: 700 }}>#{n.conversation_id} · produk {n.product_id}</div>
+              <span style={chip(n.status === "fulfilled" ? "#34d399" : n.status === "accepted" ? "#a7f3d0" : n.status === "escalated" ? "#fbbf24" : "#93c5fd")}>{n.status}</span>
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+              List {rupiah(n.list_price)} · <b style={{ color: "#f87171" }}>Floor {rupiah(n.floor_price)}</b> · Tawaran AI {rupiah(n.current_offer)} · Minta pembeli {rupiah(n.last_customer_ask)} · ronde {n.rounds}
+            </div>
+            <div style={{ fontSize: 11, marginTop: 4, color: n.current_offer >= n.floor_price ? "#34d399" : "#f87171" }}>
+              {n.current_offer >= n.floor_price ? "✅ Tidak pernah menembus floor" : "❌ ANOMALI — laporkan!"}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Approvals */}

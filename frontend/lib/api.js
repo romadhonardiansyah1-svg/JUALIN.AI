@@ -394,6 +394,7 @@ export const api = {
   agentOsReject: (id) =>
     fetchAPI(`/api/agent-os/approvals/${id}/reject`, { method: "POST" }),
   agentOsNegotiations: () => fetchAPI("/api/agent-os/negotiations"),
+  agentOsImpact: () => fetchAPI("/api/agent-os/impact"),
 };
 
 
@@ -409,7 +410,7 @@ export const api = {
  * @param {Function} onError - Called on error: (error: Error) => void
  * @returns {Function} abort - Call this to cancel the stream
  */
-export function sendChatStream({ body, onToken, onMetadata, onDone, onError }) {
+export function sendChatStream({ body, onToken, onMetadata, onNego, onDone, onError }) {
   const controller = new AbortController();
 
   (async () => {
@@ -452,6 +453,8 @@ export function sendChatStream({ body, onToken, onMetadata, onDone, onError }) {
               onMetadata(event);
             } else if (event.type === "token" && onToken) {
               onToken(event.token);
+            } else if (event.type === "nego" && onNego) {
+              onNego(event);
             } else if (event.type === "done" && onDone) {
               onDone(event);
             }

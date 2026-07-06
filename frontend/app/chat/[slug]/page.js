@@ -54,6 +54,29 @@ export default function PublicChatPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Poll pesan baru saat idle — agar balasan "owner sudah ACC" muncul tanpa refresh
+  useEffect(() => {
+    if (!sessionId) return;
+    const t = setInterval(async () => {
+      if (sending || streaming || document.visibilityState !== "visible") return;
+      try {
+        const data = await api.getChatHistory(sessionId);
+        if (data.messages && data.messages.length > messages.length) {
+          setMessages(
+            data.messages.map((m) => ({
+              role: m.role === "customer" ? "customer" : "ai",
+              content: m.content,
+              time: m.created_at
+                ? new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+                : "",
+            }))
+          );
+        }
+      } catch (e) { /* diam saja */ }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [sessionId, sending, streaming, messages.length]);
+
   // Cleanup: abort stream on unmount
   useEffect(() => {
     return () => {
@@ -159,6 +182,16 @@ export default function PublicChatPage() {
         onMetadata: (data) => {
           if (data.stage) setSalesStage(data.stage);
         },
+        onNego: (ev) => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastAi = updated[updated.length - 1];
+            if (lastAi && lastAi.role === "ai") {
+              updated[updated.length - 1] = { ...lastAi, nego: ev };
+            }
+            return updated;
+          });
+        },
         onToken: (token) => {
           setMessages((prev) => {
             const updated = [...prev];
@@ -263,6 +296,12 @@ export default function PublicChatPage() {
                 {msg.content}
                 {msg.isStreaming && <span className={styles.streamCursor}>▍</span>}
               </div>
+              {msg.nego && (
+                <div className={styles.negoBadge}>
+                  🛡️ Mesin Nego JUALIN — diskon {msg.nego.discount_pct}% ({msg.nego.decision === "counter_floor" ? "batas aman tercapai" : msg.nego.decision === "accept" ? "deal!" : "penawaran"})
+                  {msg.nego.requires_approval ? " · ⏳ menunggu ACC owner" : " · ✅ dalam batas aman owner"}
+                </div>
+              )}
               <span className={styles.bubbleTime}>{msg.time}</span>
             </div>
           </div>
