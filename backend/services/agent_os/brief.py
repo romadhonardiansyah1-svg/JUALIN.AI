@@ -38,6 +38,9 @@ async def build_daily_brief(seller_id: int, db: AsyncSession) -> dict:
     finance = await build_finance_snapshot(seller_id, db)
     low_stock = await scan_low_stock(seller_id, db, threshold=3)
 
+    from services.agent_os.impact import build_impact
+    impact = await build_impact(seller_id, db)
+
     data = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "activity_by_role": by_role,
@@ -45,6 +48,9 @@ async def build_daily_brief(seller_id: int, db: AsyncSession) -> dict:
         "finance": finance,
         "low_stock_count": len(low_stock),
         "low_stock_items": low_stock[:5],
+        "impact": {"guardrail_saved": impact["guardrail_saved"],
+                   "offline_omzet": impact["offline_omzet"],
+                   "omzet_nego": impact["omzet_nego"]},
     }
 
     # Narasi LLM (dengan fallback)
@@ -84,5 +90,6 @@ def _fallback_narrative(data: dict) -> str:
         f"{f['pending_today']} pembayaran tertunda senilai Rp {f['pending_value']:,.0f}. "
         f"{data['pending_approvals']} keputusan menunggu persetujuan; "
         f"{data['low_stock_count']} produk stok menipis. "
+        f"Guardrail menyelamatkan Rp {data.get('impact', {}).get('guardrail_saved', 0):,.0f} dari tawaran di bawah batas. "
         f"Saran: tindak lanjuti pembayaran tertunda dan restock produk yang menipis."
     )

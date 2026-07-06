@@ -372,7 +372,7 @@ async def _build_llm_context(
     # 6. Build messages array
     messages = [{"role": "system", "content": system_prompt}]
     history = format_chat_history(conversation_history[:-1])  # Exclude current
-    messages.extend(history[-6:])  # Last 6 for speed
+    messages.extend(history[-10:])
     messages.append({"role": "user", "content": message})
 
     return messages, intent, sales_stage

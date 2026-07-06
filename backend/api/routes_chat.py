@@ -352,7 +352,7 @@ async def send_message(
         select(Message)
         .where(Message.conversation_id == conversation.id)
         .order_by(Message.created_at.desc())
-        .limit(6)  # Reduced from 10 for faster AI response
+        .limit(10)
     )
     history = list(reversed(result.scalars().all()))
     

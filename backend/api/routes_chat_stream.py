@@ -154,7 +154,7 @@ async def stream_chat(
         select(Message)
         .where(Message.conversation_id == conversation.id)
         .order_by(Message.created_at.desc())
-        .limit(6)
+        .limit(10)
     )
     history = list(reversed(result.scalars().all()))
 
