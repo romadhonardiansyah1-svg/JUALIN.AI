@@ -182,7 +182,6 @@ async def _execute_create_order(
     products = {product.id: product for product in result.scalars().all()}
 
     order_items = []
-    total = 0.0
     for item in payload.items:
         product = products.get(item.product_id)
         if not product:
@@ -190,14 +189,17 @@ async def _execute_create_order(
         if product.stok < item.qty:
             raise ValueError(f"Stok {product.nama} tidak cukup")
         product.stok -= item.qty
-        line_total = float(product.harga) * item.qty
-        total += line_total
         order_items.append({
             "product_id": product.id,
             "nama": product.nama,
             "qty": item.qty,
             "harga": product.harga,
         })
+
+    # JUALIN OS: hormati harga deal negosiasi 'accepted' di percakapan ini
+    from services.agent_os.negotiation import apply_deal_prices, mark_deals_fulfilled
+    deal_states = await apply_deal_prices(seller_id, payload.conversation_id, order_items, db)
+    total = sum(float(it["harga"]) * it["qty"] for it in order_items)
 
     order = Order(
         seller_id=seller_id,
@@ -212,6 +214,7 @@ async def _execute_create_order(
     )
     db.add(order)
     await db.flush()
+    mark_deals_fulfilled(deal_states, order.id)
     payment_url = f"{settings.FRONTEND_URL.rstrip('/')}/pay/{order.id}?token={order.payment_access_token}"
     await record_audit(
         db,

@@ -198,6 +198,14 @@ async def maybe_create_order_from_ai_response(
                 False,
             )
 
+        # JUALIN OS: hormati harga deal negosiasi yang sudah 'accepted' di percakapan ini
+        deal_states = []
+        try:
+            from services.agent_os.negotiation import apply_deal_prices
+            deal_states = await apply_deal_prices(seller.id, conversation.id, items, db)
+        except Exception as e:
+            logger.warning(f"apply_deal_prices skipped: {e}")
+
         from ai.tools import tool_buat_order
         order_result = await tool_buat_order(
             seller_id=seller.id,
@@ -215,6 +223,22 @@ async def maybe_create_order_from_ai_response(
                 + f"\n\nMaaf kak, order belum bisa dibuat otomatis: {order_result['error']}. Admin akan bantu cek ya 🙏",
                 False,
             )
+
+        # Tandai deal ditunaikan + catat di activity feed Negotiator
+        if deal_states:
+            try:
+                from services.agent_os.negotiation import mark_deals_fulfilled
+                from models.agent_os import AgentRun
+                mark_deals_fulfilled(deal_states, order_result["order_id"])
+                db.add(AgentRun(
+                    seller_id=seller.id, agent_role="negotiator", trigger="chat", status="done",
+                    summary=f"Deal nego ditunaikan di Order #{order_result['order_id']}",
+                    detail_json={"order_id": order_result["order_id"],
+                                 "items": [{"product_id": s.product_id, "deal": s.current_offer} for s in deal_states]},
+                    conversation_id=conversation.id, order_id=order_result["order_id"],
+                ))
+            except Exception as e:
+                logger.warning(f"mark_deals_fulfilled skipped: {e}")
 
         # 3. Update customer memory after order
         try:
@@ -345,6 +369,14 @@ async def send_message(
         memory_context = format_memory_context(memory, is_returning)
     except Exception as e:
         logger.warning(f"Memory lookup skipped: {e}")
+
+    # JUALIN OS: kalau sudah ada deal accepted, LLM wajib tahu harga deal (bukan katalog)
+    if settings.ENABLE_AGENT_OS:
+        try:
+            from services.agent_os.negotiation import get_deal_context
+            memory_context += await get_deal_context(seller.id, conversation.id, db)
+        except Exception as e:
+            logger.warning(f"deal context skipped: {e}")
     
     # Generate AI response (with memory context injected)
     intent = "general"
