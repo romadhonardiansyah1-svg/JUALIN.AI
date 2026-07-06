@@ -55,31 +55,17 @@ def check_guardrails(response: str, user_message: str) -> dict:
 
 def apply_guardrails(ai_response: str, catalog: list[dict]) -> str:
     """
-    Apply post-processing guardrails to AI response.
-    Ensures the AI doesn't hallucinate products, prices, or stock.
+    Post-processing minimal yang JUJUR:
+    - respons kosong -> fallback ramah
+    - batas panjang dinaikkan ke 1500 dan JANGAN memotong template order/link bayar
+      (truncation 800 char lama pernah memutus 'ORDER CONFIRMED' -> order gagal diam-diam).
+    Guardrail harga yang sesungguhnya hidup di services/agent_os/negotiation.py (engine + text firewall).
     """
-    # Rule: Remove any obviously hallucinated large discounts
-    suspicious_patterns = [
-        r'diskon\s+\d{2,3}\s*%',  # "diskon 90%"
-        r'gratis\s+ongkir\s+seluruh\s+indonesia',  # Fake free shipping
-        r'garansi\s+\d+\s+tahun',  # Fake warranty claims
-    ]
-    
-    for pattern in suspicious_patterns:
-        if re.search(pattern, ai_response, re.IGNORECASE):
-            # Flag but don't remove — prompt should prevent this
-            pass
-    
-    # Rule: Ensure response isn't too long (max ~600 chars for chat)
-    if len(ai_response) > 800:
-        sentences = ai_response[:800].split('.')
-        if len(sentences) > 1:
-            ai_response = '.'.join(sentences[:-1]) + '.'
-        else:
-            ai_response = ai_response[:800] + '...'
-    
-    # Rule: Ensure response isn't empty
     if not ai_response or not ai_response.strip():
-        ai_response = "Hai kak! Ada yang bisa kami bantu? 😊"
-    
-    return ai_response.strip()
+        return "Hai kak! Ada yang bisa kami bantu? 😊"
+
+    text = ai_response.strip()
+    if len(text) > 1500 and "ORDER CONFIRMED" not in text.upper() and "/pay/" not in text:
+        sentences = text[:1500].split('.')
+        text = '.'.join(sentences[:-1]) + '.' if len(sentences) > 1 else text[:1500] + '...'
+    return text

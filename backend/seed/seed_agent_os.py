@@ -37,6 +37,14 @@ async def run():
                 p.cost_price = round(float(p.harga) * 0.6)
                 updated += 1
 
+        # Demo seller -> tier BISNIS supaya kuota chat tidak memotong demo di venue
+        from models.user import User, UserTier
+        ru = await db.execute(select(User).where(User.email == "demo@jualin.ai"))
+        demo_user = ru.scalar_one_or_none()
+        if demo_user and demo_user.tier != UserTier.BISNIS:
+            demo_user.tier = UserTier.BISNIS
+            print("✅ demo@jualin.ai dinaikkan ke tier BISNIS (kuota demo aman)")
+
         # 2. AgentPolicy
         pol = (await db.execute(
             select(AgentPolicy).where(AgentPolicy.seller_id == seller.id)
