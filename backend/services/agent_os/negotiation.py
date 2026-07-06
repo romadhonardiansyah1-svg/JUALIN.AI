@@ -1,8 +1,8 @@
 """
 JUALIN OS — Mesin Negosiasi (Juru Tawar AI).
 
-PRINSIP UTAMA: ANGKA dikontrol fungsi deterministik (decide_offer), KATA dirangkai LLM.
-Harga penawaran DIJAMIN berada di rentang [floor_price, list_price] — tidak pernah jual rugi.
+PRINSIP: ANGKA dikontrol fungsi deterministik (decide_offer), KATA dirangkai LLM,
+lalu kalimat difirewall lagi (_text_price_safe). Dua lapis — tidak pernah jual rugi.
 """
 import re
 
@@ -23,8 +23,11 @@ logger = get_logger(__name__)
 _NEGO_PATTERNS = [
     r'\bboleh\s*kurang\b', r'\bbisa\s*kurang\b', r'\bnego\b', r'\bngenego\b',
     r'\bkurangin\b', r'\bmurahin\b', r'\bpotongan\b', r'\bdiskon\b', r'\btawar\b',
-    r'\bboleh\s*\d{2,}', r'\bkalau\s*\d{2,}', r'\b\d+\s*(rb|ribu|k)\b', r'\b\d+\s*aja\b',
-    r'\bgocengan\b', r'\bsadis\b',
+    r'\bboleh\s*\d{2,}', r'\bkalau\s*\d{2,}',
+    r'\b\d+[.,]?\d*\s*(rb|ribu|k|jt|juta)\b',
+    r'\b\d{2,}\s*aja\b',   # "100 aja" = nego; "2 aja" = kuantitas, bukan nego
+    r'\bgocengan\b', r'\bsadis\b', r'\bharga\s*pas\b', r'\bnet\s*berapa\b',
+    r'\bpaling\s*murah\b', r'\bbisa\s*goyang\b',
 ]
 
 
@@ -34,23 +37,35 @@ def is_negotiation(text: str) -> bool:
     return any(re.search(p, t) for p in _NEGO_PATTERNS)
 
 
+_QTY_SUFFIX = r'(pcs|pc|biji|buah|unit|porsi|lusin|pasang|x)'
+
+
 def parse_price_ask(text: str) -> float | None:
     """
-    Ekstrak harga yang diminta customer (dalam rupiah). None jika tidak ada.
-    Contoh: '150 ribu'/'150rb'/'150k' -> 150000 ; 'rp 150000' -> 150000 ;
-            'boleh 75?' -> 75000 (angka 2-3 digit dianggap ribuan).
+    Ekstrak harga yang diminta customer (rupiah). None jika tidak ada.
+    '150 ribu'/'150rb'/'150k' -> 150000 ; '1,5 juta'/'1.5jt' -> 1500000 ;
+    'rp 150000' -> 150000 ; 'boleh 75?' -> 75000 ; 'ambil 2 pcs' -> None (kuantitas).
     """
-    t = (text or "").lower().replace(".", "").replace(",", "")
+    raw = (text or "").lower()
+    # Nomor HP/rekening bukan harga: buang deret 8+ digit bila ada kata kunci kontak
+    if re.search(r'\b(hp|wa|whatsapp|telp|telepon|no|nomor|rek|rekening)\b', raw):
+        raw = re.sub(r'\+?\d{8,}', ' ', raw)
+    # 'juta' ditangani SEBELUM pemisah ribuan dibuang ("1,5 juta" ≠ "15 juta")
+    m = re.search(r'(\d+(?:[.,]\d{1,2})?)\s*(jt|juta)\b', raw)
+    if m:
+        return float(m.group(1).replace(",", ".")) * 1_000_000
+    t = raw.replace(".", "").replace(",", "")
     m = re.search(r'(\d+)\s*(rb|ribu|k)\b', t)
     if m:
         return float(m.group(1)) * 1000
     m = re.search(r'rp\s*(\d{3,9})', t)
     if m:
         return float(m.group(1))
-    m = re.search(r'\b(\d{4,9})\b', t)        # angka 4-9 digit = harga utuh
+    m = re.search(r'\b(\d{4,9})\b', t)          # angka 4-9 digit = harga utuh
     if m:
         return float(m.group(1))
-    m = re.search(r'\b(\d{2,3})\b', t)         # angka 2-3 digit di konteks nego = ribuan
+    # angka 2-3 digit = ribuan, KECUALI jelas kuantitas ("25 pcs")
+    m = re.search(r'\b(\d{2,3})\b(?!\s*' + _QTY_SUFFIX + r'\b)', t)
     if m:
         return float(m.group(1)) * 1000
     return None
@@ -74,7 +89,7 @@ def decide_offer(list_price: float, floor_price: float, customer_ask: float | No
     """
     Fungsi DETERMINISTIK. Mengembalikan penawaran yang DIJAMIN di [floor_price, list_price].
 
-    Concession ladder: ronde 0 -> beri 40% jalan dari list ke floor, ronde 1 -> 70%, ronde 2+ -> 100% (floor).
+    Concession ladder: ronde 0 -> 40% jalan dari list ke floor, ronde 1 -> 70%, ronde 2+ -> 100% (floor).
     """
     rounds_max = max(1, policy.nego_max_rounds)
     schedule = [0.40, 0.70, 1.00]
@@ -86,13 +101,10 @@ def decide_offer(list_price: float, floor_price: float, customer_ask: float | No
     elif customer_ask >= list_price:
         offer, decision = list_price, "accept"
     elif customer_ask >= concession_price:
-        # Permintaan customer di atas garis konsesi -> kabulkan (tetap >= floor)
         offer, decision = customer_ask, "accept"
     elif customer_ask >= floor_price:
-        # Di bawah konsesi ronde ini tapi masih di atas floor -> tawar di garis konsesi
         offer, decision = concession_price, "counter"
     else:
-        # Di bawah floor -> tawar harga terbaik ronde ini (tidak pernah di bawah floor)
         offer, decision = concession_price, "counter_floor"
 
     offer = round(max(floor_price, min(offer, list_price)))
@@ -111,9 +123,58 @@ def decide_offer(list_price: float, floor_price: float, customer_ask: float | No
     }
 
 
+# ── Firewall teks (lapis-2): kalimat TIDAK BOLEH memuat harga di bawah floor ──
+_PRICE_IN_TEXT = re.compile(r'(?:rp\s*)?(\d[\d.,]*)\s*(rb|ribu|k|jt|juta)?\b', re.IGNORECASE)
+
+
+def _extract_prices(text: str) -> list[float]:
+    """Semua angka bergaya harga dalam teks, dinormalkan ke rupiah."""
+    out = []
+    for m in _PRICE_IN_TEXT.finditer(text or ""):
+        try:
+            v = float(m.group(1).replace(".", "").replace(",", ""))
+        except ValueError:
+            continue
+        suf = (m.group(2) or "").lower()
+        if suf in ("rb", "ribu", "k"):
+            v *= 1000
+        elif suf in ("jt", "juta"):
+            v *= 1_000_000
+        out.append(v)
+    return out
+
+
+def _text_price_safe(text: str, floor_price: float, offer_price: float) -> bool:
+    """
+    True bila teks memuat angka penawaran engine DAN tidak memuat harga < floor.
+    ponytail: angka < 1000 dianggap bukan harga (qty/persen) — cukup untuk katalog rupiah UMKM.
+    """
+    prices = [p for p in _extract_prices(text) if p >= 1000]
+    if any(p < floor_price - 0.5 for p in prices):
+        return False
+    return any(abs(p - offer_price) <= 1 for p in prices)
+
+
 async def _resolve_focus_product(seller_id, conversation, history, message, db):
-    """Tebak produk yang sedang ditawar dari konteks percakapan (pgvector)."""
-    from ai.agent import search_products_semantic
+    """
+    Produk fokus nego: (1) kontinuitas — nego aktif di percakapan ini;
+    (2) pgvector DENGAN ambang jarak. Tanpa produk meyakinkan -> None
+    (lebih baik Sales bertanya "produk yang mana kak?" daripada menawar produk salah).
+    """
+    r = await db.execute(
+        select(NegotiationState)
+        .where(NegotiationState.conversation_id == conversation.id)
+        .where(NegotiationState.status == "active")
+        .order_by(NegotiationState.id.desc())
+        .limit(1)
+    )
+    st = r.scalar_one_or_none()
+    if st and st.product_id:
+        rp = await db.execute(select(Product).where(Product.id == st.product_id))
+        p = rp.scalar_one_or_none()
+        if p:
+            return p
+
     texts = []
     for m in (history or [])[-4:]:
         c = getattr(m, "content", None)
@@ -125,11 +186,28 @@ async def _resolve_focus_product(seller_id, conversation, history, message, db):
     query = " ".join(texts).strip()
     if not query:
         return None
-    results = await search_products_semantic(query, seller_id, db, limit=1)
-    if not results:
+    try:
+        from ai.embeddings import generate_embedding
+        emb = generate_embedding(query)
+        dist = Product.embedding.cosine_distance(emb)
+        r = await db.execute(
+            select(Product, dist.label("distance"))
+            .where(Product.seller_id == seller_id)
+            .where(Product.is_active == 1)
+            .order_by(dist)
+            .limit(1)
+        )
+        row = r.first()
+    except Exception as e:
+        logger.warning(f"focus product search failed: {e}")
         return None
-    r = await db.execute(select(Product).where(Product.id == results[0]["id"]))
-    return r.scalar_one_or_none()
+    if not row:
+        return None
+    product, distance = row[0], float(row[1] if row[1] is not None else 1.0)
+    if distance > settings.AGENT_OS_NEGO_MAX_DISTANCE:
+        # ponytail: ambang dikalibrasi via env AGENT_OS_NEGO_MAX_DISTANCE — uji dengan katalog asli
+        return None
+    return product
 
 
 async def _get_or_create_state(seller_id, conversation_id, product, policy, db) -> NegotiationState:
@@ -155,15 +233,17 @@ async def _get_or_create_state(seller_id, conversation_id, product, policy, db) 
 
 
 async def _phrase_offer(seller, product, decision, requires_approval: bool) -> str:
-    """LLM merangkai kalimat di sekitar angka engine. Fallback jika LLM gagal/menyimpang."""
-    from ai.agent import llm_client
+    """LLM merangkai kalimat di sekitar angka engine, lalu difirewall. Fallback selalu siap."""
     offer = decision["offer_price"]
     list_price = decision["list_price"]
 
     if requires_approval:
-        fallback = f"Boleh kak 🙏 sebentar ya aku cek dulu ke owner buat harga spesial {product.nama}."
-    elif decision["decision"] == "accept":
-        fallback = f"Siap kak! {product.nama} aku kasih Rp {offer:,.0f} ya 😊 Lanjut order?"
+        # JANGAN panggil LLM di sini: tidak boleh ada angka yang belum di-ACC owner terucap.
+        return f"Boleh kak 🙏 sebentar ya, aku cek dulu ke owner buat harga spesial {product.nama}."
+
+    if decision["decision"] == "accept":
+        fallback = (f"Deal ya kak! {product.nama} jadi Rp {offer:,.0f} 🤝 "
+                    f"Ketik Nama / Alamat / No HP, langsung aku buatkan ordernya.")
     elif decision["decision"] == "counter_floor":
         fallback = (f"Maaf kak belum bisa segitu 🙏 tapi {product.nama} aku kasih harga terbaik "
                     f"Rp {offer:,.0f} (normal Rp {list_price:,.0f}). Gimana kak?")
@@ -180,28 +260,84 @@ async def _phrase_offer(seller, product, decision, requires_approval: bool) -> s
         {"role": "user", "content": (
             f"Produk: {product.nama}. Harga normal Rp {int(list_price)}. "
             f"Keputusan: {decision['decision']}. Harga yang ditawarkan ke pembeli: Rp {int(offer)}. "
-            f"requires_approval={requires_approval}. Tulis balasannya."
+            f"Tulis balasannya."
         )},
     ]
     try:
+        from ai.agent import llm_client
         resp = await llm_client.chat.completions.create(
             model=settings.LLM_MODEL, messages=prompt, temperature=0.5, max_tokens=120,
         )
         text = (resp.choices[0].message.content or "").strip()
-        # Guard angka: kalimat harus memuat harga engine, kalau tidak -> fallback
-        flat = text.replace(".", "").replace(",", "")
-        if requires_approval or str(int(offer)) in flat:
-            return text or fallback
+        if text and _text_price_safe(text, decision["floor_price"], offer):
+            return text
         return fallback
     except Exception as e:
         logger.warning(f"_phrase_offer LLM failed: {e}")
         return fallback
 
 
+# ── Deal → Order: dipakai oleh KEDUA jalur pembuatan order ──
+
+async def apply_deal_prices(seller_id: int, conversation_id: int | None,
+                            items: list[dict], db: AsyncSession) -> list[NegotiationState]:
+    """
+    Hormati harga deal nego 'accepted' pada item yang cocok (mutasi items in-place).
+    Return: daftar state yang dipakai (tandai fulfilled setelah order berhasil).
+    ponytail: tanpa kedaluwarsa — deal terikat percakapan, cukup untuk skala demo/UMKM.
+    """
+    if not conversation_id or not items:
+        return []
+    r = await db.execute(
+        select(NegotiationState)
+        .where(NegotiationState.seller_id == seller_id)
+        .where(NegotiationState.conversation_id == conversation_id)
+        .where(NegotiationState.status == "accepted")
+    )
+    states = {s.product_id: s for s in r.scalars().all()}
+    used = []
+    for it in items:
+        s = states.get(it.get("product_id"))
+        if s and s.current_offer and 0 < float(s.current_offer) < float(it.get("harga") or 0):
+            it["harga_asli"] = it.get("harga")
+            it["harga"] = float(s.current_offer)
+            it["nego"] = True
+            used.append(s)
+    return used
+
+
+def mark_deals_fulfilled(states: list, order_id: int) -> None:
+    """Tandai deal sudah ditunaikan jadi order (panggil SETELAH order sukses dibuat)."""
+    for s in states or []:
+        s.status = "fulfilled"
+        h = list(s.history_json or [])
+        h.append({"order_id": order_id})
+        s.history_json = h[-10:]
+
+
+async def get_deal_context(seller_id: int, conversation_id: int, db: AsyncSession) -> str:
+    """Konteks system prompt: harga yang SUDAH deal di percakapan ini (agar LLM tidak sebut harga katalog)."""
+    r = await db.execute(
+        select(NegotiationState)
+        .where(NegotiationState.seller_id == seller_id)
+        .where(NegotiationState.conversation_id == conversation_id)
+        .where(NegotiationState.status == "accepted")
+    )
+    lines = []
+    for s in r.scalars().all():
+        rp = await db.execute(select(Product).where(Product.id == s.product_id))
+        p = rp.scalar_one_or_none()
+        if p and s.current_offer:
+            lines.append(f"- {p.nama}: SUDAH DEAL di Rp {float(s.current_offer):,.0f} (JANGAN pakai harga katalog)")
+    if not lines:
+        return ""
+    return "\n\n⚠️ DEAL NEGOSIASI AKTIF DI PERCAKAPAN INI:\n" + "\n".join(lines)
+
+
 async def run_negotiation_turn(*, seller, conversation, message, history, db) -> dict:
     """
     Tangani satu giliran negosiasi. Menambah ke sesi (flush) — pemanggil yang commit.
-    Return: {handled, reply, intent, stage, order_created, agent_run_id, approval_id}
+    Return: {handled, reply, intent, stage, order_created, agent_run_id, approval_id, nego}
     """
     policy = await get_or_create_policy(seller.id, db)
     if not policy.allow_auto_negotiation:
@@ -209,11 +345,19 @@ async def run_negotiation_turn(*, seller, conversation, message, history, db) ->
 
     product = await _resolve_focus_product(seller.id, conversation, history, message, db)
     if not product:
-        return {"handled": False}  # tanpa produk fokus, biar Sales lama yang jawab
+        return {"handled": False}  # tanpa produk fokus yang meyakinkan, biar Sales yang jawab
 
     state = await _get_or_create_state(seller.id, conversation.id, product, policy, db)
     customer_ask = parse_price_ask(message)
     decision = decide_offer(state.list_price, state.floor_price, customer_ask, state.rounds, policy)
+
+    # Tingkat otonomi menentukan kapan butuh ACC owner (sebelumnya kolom ini tidak pernah dibaca!)
+    requires_approval = decision["requires_approval"]
+    if policy.autonomy_level == "full_auto":
+        requires_approval = False
+    elif policy.autonomy_level == "assist":
+        requires_approval = True
+    decision["requires_approval"] = requires_approval
 
     # Update state
     state.rounds += 1
@@ -224,14 +368,12 @@ async def run_negotiation_turn(*, seller, conversation, message, history, db) ->
     hist.append({
         "round": state.rounds, "ask": customer_ask,
         "offer": decision["offer_price"], "decision": decision["decision"],
+        "requires_approval": requires_approval,
     })
     state.history_json = hist[-10:]
-    if decision["decision"] == "accept":
-        state.status = "accepted"
 
-    # HITL approval bila perlu
     approval_id = None
-    if decision["requires_approval"]:
+    if requires_approval:
         approval = AgentApproval(
             seller_id=seller.id, agent_role="negotiator", action_type="apply_discount",
             title=f"Diskon {decision['discount_pct']}% untuk {product.nama} (Rp {decision['offer_price']:,.0f})",
@@ -242,16 +384,19 @@ async def run_negotiation_turn(*, seller, conversation, message, history, db) ->
         await db.flush()
         approval_id = approval.id
         state.status = "escalated"
+    elif decision["decision"] == "accept":
+        state.status = "accepted"
 
-    reply = await _phrase_offer(seller, product, decision, decision["requires_approval"])
+    reply = await _phrase_offer(seller, product, decision, requires_approval)
 
     run = AgentRun(
         seller_id=seller.id, agent_role="negotiator", trigger="chat",
-        status="needs_approval" if decision["requires_approval"] else "done",
+        status="needs_approval" if requires_approval else "done",
         summary=(f"Nego {product.nama}: minta Rp {int(customer_ask):,} → tawar Rp {decision['offer_price']:,} "
                  f"({decision['discount_pct']}%)" if customer_ask
                  else f"Nego {product.nama}: tawar Rp {decision['offer_price']:,}"),
-        detail_json={"product": product.nama, **decision, "customer_ask": customer_ask},
+        detail_json={"product": product.nama, "product_id": product.id, **decision,
+                     "customer_ask": customer_ask},
         conversation_id=conversation.id,
     )
     db.add(run)
@@ -260,4 +405,13 @@ async def run_negotiation_turn(*, seller, conversation, message, history, db) ->
     return {
         "handled": True, "reply": reply, "intent": "order", "stage": "negotiation",
         "order_created": False, "agent_run_id": run.id, "approval_id": approval_id,
+        # Payload badge untuk UI PEMBELI — sengaja TANPA floor_price (rahasia dapur seller!)
+        "nego": {
+            "product": product.nama,
+            "decision": decision["decision"],
+            "offer_price": decision["offer_price"],
+            "discount_pct": decision["discount_pct"],
+            "round": decision["round"],
+            "requires_approval": requires_approval,
+        },
     }

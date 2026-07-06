@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     AGENT_OS_DEFAULT_MARGIN_FLOOR: float = 10.0      # margin minimum di atas modal (%) default
     AGENT_OS_APPROVAL_ABOVE_PERCENT: float = 10.0    # diskon di atas ini butuh persetujuan
     AGENT_OS_LOW_STOCK_THRESHOLD: int = 3            # stok <= ini dianggap menipis
+    AGENT_OS_NEGO_MAX_DISTANCE: float = 0.55         # ambang cosine distance produk fokus nego (kalibrasi!)
+    CHAT_RATE_LIMIT_PER_MIN: int = 60                # rate limit chat publik per IP (venue demo = 1 NAT IP)
 
     # Database
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/jualin_ai"
