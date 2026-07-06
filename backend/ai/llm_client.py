@@ -35,27 +35,10 @@ async def chat_completion(
     temperature: float = 0.7,
     max_tokens: int = 1024,
 ) -> str:
-    """
-    Send chat completion request to LLM.
-    Uses 9Router which handles multi-provider routing.
-    """
-    client = get_http_client()
-    
+    """Delegasi ke llm_router terpusat (admin-configurable). Signature lama dipertahankan."""
     try:
-        response = await client.post(
-            "/chat/completions",
-            json={
-                "model": model or settings.LLM_MODEL,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            },
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except httpx.TimeoutException:
-        return "Maaf kak, AI sedang sibuk. Coba lagi ya 🙏"
+        from services.llm_router import llm_chat
+        return await llm_chat(messages, temperature=temperature, max_tokens=max_tokens, model=model)
     except Exception as e:
         logger.error(f"LLM chat completion failed: {e}", exc_info=True)
         return "Maaf kak, terjadi gangguan. Coba kirim ulang ya 😊"

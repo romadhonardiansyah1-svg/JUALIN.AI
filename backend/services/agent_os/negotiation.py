@@ -266,11 +266,8 @@ async def _phrase_offer(seller, product, decision, requires_approval: bool) -> s
         )},
     ]
     try:
-        from ai.agent import llm_client
-        resp = await llm_client.chat.completions.create(
-            model=settings.LLM_MODEL, messages=prompt, temperature=0.5, max_tokens=120,
-        )
-        text = (resp.choices[0].message.content or "").strip()
+        from services.llm_router import llm_chat
+        text = (await llm_chat(prompt, purpose="light", temperature=0.5, max_tokens=120)).strip()
         if text and _text_price_safe(text, decision["floor_price"], offer):
             return text
         return fallback

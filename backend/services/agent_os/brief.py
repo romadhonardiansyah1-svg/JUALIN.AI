@@ -50,7 +50,7 @@ async def build_daily_brief(seller_id: int, db: AsyncSession) -> dict:
     # Narasi LLM (dengan fallback)
     narrative = _fallback_narrative(data)
     try:
-        from ai.agent import llm_client
+        from services.llm_router import llm_chat
         prompt = [
             {"role": "system", "content": (
                 "Kamu manajer toko AI. Tulis ringkasan harian SINGKAT (3-4 kalimat) untuk pemilik toko UMKM "
@@ -59,10 +59,7 @@ async def build_daily_brief(seller_id: int, db: AsyncSession) -> dict:
             )},
             {"role": "user", "content": str(data)},
         ]
-        resp = await llm_client.chat.completions.create(
-            model=settings.LLM_MODEL, messages=prompt, temperature=0.5, max_tokens=220,
-        )
-        text = (resp.choices[0].message.content or "").strip()
+        text = (await llm_chat(prompt, purpose="main", temperature=0.3, max_tokens=220)).strip()
         if text:
             narrative = text
     except Exception as e:

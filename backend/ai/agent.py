@@ -14,7 +14,6 @@ Features:
 import re
 import time
 from typing import AsyncGenerator
-from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -24,17 +23,10 @@ from models.conversation import Message, MessageRole
 from ai.prompts import get_system_prompt
 from ai.guardrails import apply_guardrails
 from core.logging_config import get_logger
+from services.llm_router import llm_chat, llm_chat_stream
 
 settings = get_settings()
 logger = get_logger(__name__)
-
-# LLM Client (connects to 9Router or direct API)
-llm_client = AsyncOpenAI(
-    base_url=settings.LLM_BASE_URL,
-    api_key=settings.LLM_API_KEY,
-    timeout=20.0,
-    max_retries=1,
-)
 
 # ── In-memory catalog cache ──
 _catalog_cache = {}  # seller_id -> {"data": [...], "timestamp": float}
@@ -425,13 +417,7 @@ async def get_ai_response(
     all_products = await get_all_products(seller_id, db)
 
     try:
-        response = await llm_client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=350,
-        )
-        ai_text = response.choices[0].message.content
+        ai_text = await llm_chat(messages, purpose="main", temperature=0.7, max_tokens=420)
     except Exception as e:
         logger.error(f"LLM Error: {e}", exc_info=True)
         ai_text = _get_fallback_response(intent, len(all_products))
@@ -491,23 +477,13 @@ async def get_ai_response_stream(
     full_response = ""
 
     try:
-        stream = await llm_client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            temperature=0.7,
-            max_tokens=350,
-            stream=True,
-        )
-
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                token = chunk.choices[0].delta.content
-                full_response += token
-                yield {
-                    "token": token,
-                    "done": False,
-                    "type": "token",
-                }
+        async for token in llm_chat_stream(messages, purpose="main", temperature=0.7, max_tokens=420):
+            full_response += token
+            yield {
+                "token": token,
+                "done": False,
+                "type": "token",
+            }
 
     except Exception as e:
         logger.error(f"LLM Stream Error: {e}", exc_info=True)
@@ -599,13 +575,7 @@ ONLY output JSON. No other text whatsoever.
         messages[0]["content"] += structured_instruction
 
     try:
-        response = await llm_client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            temperature=0.3,  # Lower for more deterministic JSON
-            max_tokens=500,
-        )
-        raw_text = response.choices[0].message.content
+        raw_text = await llm_chat(messages, purpose="main", temperature=0.3, max_tokens=500)
     except Exception as e:
         logger.error(f"LLM Error in structured response: {e}", exc_info=True)
         raise ValueError(f"LLM call failed: {e}")
