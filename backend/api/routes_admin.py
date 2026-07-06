@@ -717,3 +717,116 @@ async def create_impersonation_token(
         "duration_minutes": settings.IMPERSONATION_TOKEN_MINUTES,
         "message": f"Token impersonasi untuk {seller.nama_toko} berlaku {settings.IMPERSONATION_TOKEN_MINUTES} menit",
     }
+
+
+# ══════════════════════════════════════════════════
+# LLM Control Panel (owner/admin platform)
+# ══════════════════════════════════════════════════
+from pydantic import BaseModel as _BM
+
+
+def _mask_key(k: str) -> str:
+    if not k:
+        return ""
+    return (k[:5] + "…" + k[-4:]) if len(k) > 12 else ("…" + k[-3:])
+
+
+async def _get_or_create_llm_row(db: AsyncSession):
+    from models.llm_settings import LLMSettings
+    r = await db.execute(select(LLMSettings).where(LLMSettings.id == 1))
+    row = r.scalar_one_or_none()
+    if not row:
+        row = LLMSettings(id=1, api_keys_json=[])
+        db.add(row)
+        await db.flush()
+    return row
+
+
+@router.get("/llm-settings")
+async def get_llm_settings(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    row = await _get_or_create_llm_row(db)
+    await db.commit()
+    return {
+        "is_enabled": row.is_enabled,
+        "provider_label": row.provider_label,
+        "base_url": row.base_url,
+        "model": row.model,
+        "light_model": row.light_model,
+        "fallback_model": row.fallback_model,
+        "api_keys_masked": [_mask_key(k) for k in (row.api_keys_json or [])],
+        "env_fallback": {"base_url": settings.LLM_BASE_URL, "model": settings.LLM_MODEL},
+    }
+
+
+class LLMSettingsUpdate(_BM):
+    is_enabled: bool | None = None
+    provider_label: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    light_model: str | None = None
+    fallback_model: str | None = None
+
+
+@router.put("/llm-settings")
+async def update_llm_settings(body: LLMSettingsUpdate, admin: User = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    row = await _get_or_create_llm_row(db)
+    if body.base_url is not None:
+        b = body.base_url.strip()
+        if b and not b.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="base_url harus diawali http(s)://")
+        row.base_url = b
+    for f in ("provider_label", "model", "light_model", "fallback_model"):
+        v = getattr(body, f)
+        if v is not None:
+            setattr(row, f, v.strip())
+    if body.is_enabled is not None:
+        row.is_enabled = bool(body.is_enabled)
+    await db.commit()
+    from services.llm_router import invalidate_llm_cache
+    invalidate_llm_cache()
+    return {"success": True}
+
+
+class LLMKeyAdd(_BM):
+    key: str
+
+
+@router.post("/llm-settings/keys")
+async def add_llm_key(body: LLMKeyAdd, admin: User = Depends(require_admin),
+                      db: AsyncSession = Depends(get_db)):
+    key = (body.key or "").strip()
+    if len(key) < 8:
+        raise HTTPException(status_code=400, detail="API key terlalu pendek")
+    row = await _get_or_create_llm_row(db)
+    keys = list(row.api_keys_json or [])
+    if key in keys:
+        raise HTTPException(status_code=400, detail="Key sudah ada")
+    keys.append(key)
+    row.api_keys_json = keys
+    await db.commit()
+    from services.llm_router import invalidate_llm_cache
+    invalidate_llm_cache()
+    return {"success": True, "api_keys_masked": [_mask_key(k) for k in keys]}
+
+
+@router.delete("/llm-settings/keys/{index}")
+async def remove_llm_key(index: int, admin: User = Depends(require_admin),
+                         db: AsyncSession = Depends(get_db)):
+    row = await _get_or_create_llm_row(db)
+    keys = list(row.api_keys_json or [])
+    if index < 0 or index >= len(keys):
+        raise HTTPException(status_code=404, detail="Index key tidak ada")
+    keys.pop(index)
+    row.api_keys_json = keys
+    await db.commit()
+    from services.llm_router import invalidate_llm_cache
+    invalidate_llm_cache()
+    return {"success": True, "api_keys_masked": [_mask_key(k) for k in keys]}
+
+
+@router.post("/llm-settings/test")
+async def test_llm_settings(admin: User = Depends(require_admin)):
+    from services.llm_router import invalidate_llm_cache, llm_test
+    invalidate_llm_cache()          # pastikan test memakai settings terbaru
+    return await llm_test()
