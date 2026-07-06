@@ -12,6 +12,7 @@ from models.agent_os import AgentPolicy, AgentRun, AgentApproval, NegotiationSta
 from api.routes_auth import get_current_user
 from core.audit import record_audit
 from services.agent_os.policy import get_or_create_policy
+from models.conversation import Message, MessageRole
 from services.agent_os.finance import build_finance_snapshot
 from services.agent_os.brief import build_daily_brief
 
@@ -172,9 +173,51 @@ async def _decide_approval(approval_id: int, decision: str, current_user: User, 
     a.status = decision
     a.decided_by = current_user.id
     a.decided_at = datetime.now(timezone.utc)
+
+    # ── RESUME percakapan: kabari pembeli + update NegotiationState ──
+    followup_text = None
+    detail = a.detail_json or {}
+    offer = detail.get("offer_price")
+    pid = detail.get("product_id")
+    if a.action_type == "apply_discount" and a.conversation_id:
+        rs = await db.execute(
+            select(NegotiationState)
+            .where(NegotiationState.conversation_id == a.conversation_id)
+            .where(NegotiationState.product_id == pid)
+            .order_by(desc(NegotiationState.id))
+            .limit(1)
+        )
+        state = rs.scalar_one_or_none()
+        if decision == "approved" and offer:
+            if state:
+                state.status = "accepted"
+                state.current_offer = float(offer)
+            followup_text = (
+                f"Kabar baik kak, owner sudah ACC ✅ jadi Rp {float(offer):,.0f} ya! "
+                f"Ketik Nama / Alamat / No HP, langsung aku buatkan ordernya 🙌"
+            )
+        elif decision == "rejected":
+            policy = await get_or_create_policy(current_user.id, db)
+            safe = None
+            if state:
+                thr_price = float(state.list_price) * (1 - policy.require_approval_above_percent / 100.0)
+                safe = round(max(float(state.floor_price), thr_price))
+                state.status = "active"
+                state.current_offer = safe
+            if safe:
+                followup_text = (
+                    f"Maaf kak, untuk harga itu owner belum bisa 🙏 "
+                    f"Tapi aku masih bisa kasih Rp {safe:,.0f} — gimana kak?"
+                )
+            else:
+                followup_text = "Maaf kak, untuk harga itu owner belum bisa 🙏 Harga terbaik tetap penawaranku sebelumnya ya 😊"
+        if followup_text:
+            db.add(Message(conversation_id=a.conversation_id, role=MessageRole.AI, content=followup_text))
+
     db.add(AgentRun(
         seller_id=current_user.id, agent_role="negotiator", trigger="manual", status="done",
-        summary=f"Persetujuan {decision}: {a.title}", detail_json={"approval_id": a.id},
+        summary=f"Persetujuan {decision}: {a.title}",
+        detail_json={"approval_id": a.id, "followup_sent": bool(followup_text)},
         conversation_id=a.conversation_id,
     ))
     await record_audit(
@@ -183,7 +226,7 @@ async def _decide_approval(approval_id: int, decision: str, current_user: User, 
         after={"title": a.title},
     )
     await db.commit()
-    return {"success": True, "status": a.status}
+    return {"success": True, "status": a.status, "followup_sent": bool(followup_text)}
 
 
 @router.post("/approvals/{approval_id}/approve")
