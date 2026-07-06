@@ -80,25 +80,40 @@ async def tool_buat_order(
     db: AsyncSession,
 ) -> dict:
     """
-    Buat order baru dari percakapan.
-    Auto-kurangi stok produk.
+    Buat order baru dari percakapan. Auto-kurangi stok produk.
+    Validasi SEMUA item dulu (dengan row lock) — tidak ada mutasi sebelum semua valid,
+    supaya kegagalan item ke-N tidak meninggalkan stok item lain sudah terpotong.
     """
+    ids = [it["product_id"] for it in items if it.get("product_id")]
+    prods = {}
+    if ids:
+        result = await db.execute(
+            select(Product)
+            .where(Product.id.in_(ids))
+            .where(Product.seller_id == seller_id)
+            .with_for_update()
+        )
+        prods = {p.id: p for p in result.scalars().all()}
+
+    # 1. Validasi semua dulu — belum ada mutasi
+    for it in items:
+        pid = it.get("product_id")
+        if not pid:
+            continue
+        p = prods.get(pid)
+        if not p:
+            return {"error": f"Produk #{pid} tidak ditemukan"}
+        if p.stok < it.get("qty", 1):
+            return {"error": f"Stok {p.nama} tidak cukup (sisa {p.stok})"}
+
+    # 2. Baru mutasi stok
+    for it in items:
+        p = prods.get(it.get("product_id"))
+        if p:
+            p.stok -= it.get("qty", 1)
+
     total = sum(item.get("harga", 0) * item.get("qty", 1) for item in items)
-    
-    # Kurangi stok
-    for item in items:
-        if "product_id" in item:
-            result = await db.execute(
-                select(Product).where(Product.id == item["product_id"])
-            )
-            product = result.scalar_one_or_none()
-            if product:
-                qty = item.get("qty", 1)
-                if product.stok < qty:
-                    return {"error": f"Stok {product.nama} tidak cukup (sisa {product.stok})"}
-                product.stok -= qty
-    
-    # Buat order
+
     order = Order(
         seller_id=seller_id,
         conversation_id=conversation_id,
@@ -110,11 +125,11 @@ async def tool_buat_order(
         status=OrderStatus.PENDING,
         payment_access_token=secrets.token_urlsafe(32),
     )
-    
+
     db.add(order)
     await db.commit()
     await db.refresh(order)
-    
+
     return {
         "order_id": order.id,
         "total": total,
