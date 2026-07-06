@@ -97,9 +97,10 @@ cmd_setup() {
         JWT_SECRET=$(openssl rand -hex 32)
         DB_PASS=$(openssl rand -hex 16)
 
-        sed -i "s/ganti-dengan-random-string-panjang-32-karakter/$SECRET_KEY/" $APP_DIR/.env
-        sed -i "s/ganti-dengan-jwt-secret-panjang-32-karakter/$JWT_SECRET/" $APP_DIR/.env
-        sed -i "s/jualin_secure_2026/$DB_PASS/" $APP_DIR/.env
+        # Key-anchored: tahan walau teks placeholder di .env.example berubah
+        sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$SECRET_KEY|" $APP_DIR/.env
+        sed -i "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=$JWT_SECRET|" $APP_DIR/.env
+        sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASS|" $APP_DIR/.env
 
         echo -e "${GREEN}✅ .env created with auto-generated secrets${NC}"
     else
@@ -116,10 +117,18 @@ cmd_setup() {
     echo "Waiting for database to be ready..."
     sleep 15
 
-    # Seed data
+    # Seed data (produk demo + akun) LALU data JUALIN OS (cost_price, tier demo, policy)
     echo -e "${YELLOW}Seeding demo data...${NC}"
+    # Tunggu backend benar-benar siap (unduh model embedding bisa lama saat pertama)
+    for i in $(seq 1 40); do
+        curl -sf http://localhost:8000/health >/dev/null 2>&1 && break
+        sleep 3
+    done
     docker compose exec -T backend python -m seed.seed_data 2>/dev/null || {
-        echo -e "${YELLOW}⚠️ Seed will run on first startup${NC}"
+        echo -e "${YELLOW}⚠️ seed_data gagal — jalankan ulang: jualin seed${NC}"
+    }
+    docker compose exec -T backend python -m seed.seed_agent_os 2>/dev/null || {
+        echo -e "${YELLOW}⚠️ seed_agent_os gagal — jalankan ulang: jualin seed${NC}"
     }
     echo -e "${GREEN}✅ All containers running${NC}"
 
@@ -370,8 +379,16 @@ cmd_update() {
     echo -e "${YELLOW}📥 Updating JUALIN.AI...${NC}"
     cd $APP_DIR
     git pull origin main
+    # Segarkan CLI 'jualin' itu sendiri (aman: proses yang berjalan sudah di memori)
+    sudo cp "$APP_DIR/jualin" /usr/local/bin/jualin 2>/dev/null && sudo chmod +x /usr/local/bin/jualin 2>/dev/null || true
     docker compose build
     docker compose up -d
+    # Pastikan data JUALIN OS ada setelah update (idempotent: hanya isi yang kosong)
+    for i in $(seq 1 40); do
+        curl -sf http://localhost:8000/health >/dev/null 2>&1 && break
+        sleep 3
+    done
+    docker compose exec -T backend python -m seed.seed_agent_os 2>/dev/null || true
     echo -e "${GREEN}✅ Updated & restarted${NC}"
     cmd_status
 }
@@ -384,7 +401,8 @@ cmd_seed() {
     echo -e "${YELLOW}🌱 Seeding demo data...${NC}"
     cd $APP_DIR
     docker compose exec backend python -m seed.seed_data
-    echo -e "${GREEN}✅ Demo data seeded (15 produk + demo accounts)${NC}"
+    docker compose exec backend python -m seed.seed_agent_os
+    echo -e "${GREEN}✅ Demo data seeded (produk + akun + JUALIN OS: cost_price/tier/policy)${NC}"
 }
 
 # ══════════════════════════════════════
