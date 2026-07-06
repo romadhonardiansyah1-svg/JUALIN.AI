@@ -16,7 +16,7 @@ Protocol:
 import json
 import time
 import uuid
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -74,6 +74,7 @@ async def _sse_event(data: dict) -> str:
 @router.post("/stream")
 async def stream_chat(
     req: StreamChatRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -82,6 +83,14 @@ async def stream_chat(
     Public endpoint (no auth needed).
     """
     start_time = time.monotonic()
+
+    # Rate limit (endpoint publik!)
+    from core.rate_limit import check_rate_limit
+    client_ip = request.client.host if request.client else "unknown"
+    rl = await check_rate_limit(f"chat:{client_ip}",
+                                max_requests=settings.CHAT_RATE_LIMIT_PER_MIN, window_seconds=60)
+    if not rl["allowed"]:
+        raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Coba lagi nanti.")
 
     # Find seller
     result = await db.execute(select(User).where(User.slug == req.seller_slug))
@@ -163,6 +172,71 @@ async def stream_chat(
         memory_context = format_memory_context(memory, is_returning)
     except Exception as e:
         logger.warning(f"Memory lookup skipped in stream: {e}")
+
+    # ── JUALIN OS: konteks deal + Negotiator ambil alih giliran nego (JALUR DEMO UTAMA) ──
+    if settings.ENABLE_AGENT_OS:
+        try:
+            from services.agent_os.negotiation import get_deal_context
+            memory_context += await get_deal_context(seller.id, conversation.id, db)
+        except Exception as e:
+            logger.warning(f"deal context skipped in stream: {e}")
+
+        os_result = {"handled": False}
+        try:
+            from services.agent_os.orchestrator import agent_os_handle_turn
+            os_result = await agent_os_handle_turn(
+                seller=seller, conversation=conversation, message=req.message,
+                history=history, db=db, memory_context=memory_context,
+            )
+        except Exception as e:
+            logger.warning(f"Agent OS stream turn skipped: {e}")
+
+        if os_result.get("handled"):
+            reply_text = os_result["reply"]
+            nego_meta = os_result.get("nego") or {}
+            conv_id_nego = conversation.id
+            seller_id_nego = seller.id
+
+            async def nego_stream():
+                yield await _sse_event({
+                    "type": "metadata",
+                    "intent": os_result.get("intent", "order"),
+                    "stage": os_result.get("stage", "negotiation"),
+                })
+                # pecah per kata biar terasa live — tanpa LLM, deterministik
+                for w in reply_text.split(" "):
+                    yield await _sse_event({"type": "token", "token": w + " "})
+                yield await _sse_event({"type": "nego", **nego_meta})
+                yield await _sse_event({
+                    "type": "done", "done": True, "full_response": reply_text,
+                    "intent": os_result.get("intent", "order"),
+                    "stage": os_result.get("stage", "negotiation"),
+                    "session_id": session_id,
+                })
+                try:
+                    db.add(Message(conversation_id=conv_id_nego, role=MessageRole.AI, content=reply_text))
+                    db.add(ChatAnalytics(
+                        conversation_id=conv_id_nego, seller_id=seller_id_nego,
+                        intent=os_result.get("intent", "order"),
+                        sales_stage=os_result.get("stage", "negotiation"),
+                        response_time_ms=round((time.monotonic() - start_time) * 1000),
+                        user_message_length=len(req.message),
+                        ai_response_length=len(reply_text),
+                        converted_to_order=False,
+                    ))
+                    await db.commit()
+                except Exception as e:
+                    logger.error(f"Failed to save nego stream response: {e}", exc_info=True)
+
+            return StreamingResponse(
+                nego_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
     # Build streaming response
     from ai.agent import get_ai_response_stream

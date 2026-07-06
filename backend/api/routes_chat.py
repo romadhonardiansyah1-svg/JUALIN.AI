@@ -291,7 +291,7 @@ async def send_message(
     # ── Rate limit ──
     from core.rate_limit import check_rate_limit
     client_ip = request.client.host if request.client else "unknown"
-    rl = await check_rate_limit(f"chat:{client_ip}", max_requests=30, window_seconds=60)
+    rl = await check_rate_limit(f"chat:{client_ip}", max_requests=settings.CHAT_RATE_LIMIT_PER_MIN, window_seconds=60)
     if not rl["allowed"]:
         raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Coba lagi nanti.")
     # Find seller by slug
