@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select
 from models.database import async_session, init_db
-from models.user import User
+from models.user import User, UserTier
 from models.product import Product
 from models.agent_os import AgentPolicy
 
@@ -38,7 +38,6 @@ async def run():
                 updated += 1
 
         # Demo seller -> tier BISNIS supaya kuota chat tidak memotong demo di venue
-        from models.user import User, UserTier
         ru = await db.execute(select(User).where(User.email == "demo@jualin.ai"))
         demo_user = ru.scalar_one_or_none()
         if demo_user and demo_user.tier != UserTier.BISNIS:
