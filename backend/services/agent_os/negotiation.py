@@ -80,8 +80,8 @@ def compute_floor_price(list_price: float, cost_price: float, policy) -> float:
     by_discount = list_price * (1 - policy.max_discount_percent / 100.0)
     if cost_price and cost_price > 0:
         by_margin = cost_price * (1 + policy.margin_floor_percent / 100.0)
-        return max(by_discount, by_margin)
-    return by_discount
+        return round(max(by_discount, by_margin))
+    return round(by_discount)
 
 
 def decide_offer(list_price: float, floor_price: float, customer_ask: float | None,
@@ -128,18 +128,20 @@ _PRICE_IN_TEXT = re.compile(r'(?:rp\s*)?(\d[\d.,]*)\s*(rb|ribu|k|jt|juta)?\b', r
 
 
 def _extract_prices(text: str) -> list[float]:
-    """Semua angka bergaya harga dalam teks, dinormalkan ke rupiah."""
+    """Semua angka bergaya harga dalam teks, dinormalkan ke rupiah.
+    'jt/juta' pakai desimal (1.5jt = 1,5 juta); selain itu titik/koma = pemisah ribuan."""
     out = []
     for m in _PRICE_IN_TEXT.finditer(text or ""):
+        num, suf = m.group(1), (m.group(2) or "").lower()
         try:
-            v = float(m.group(1).replace(".", "").replace(",", ""))
+            if suf in ("jt", "juta"):
+                v = float(num.replace(",", ".")) * 1_000_000
+            else:
+                v = float(num.replace(".", "").replace(",", ""))
+                if suf in ("rb", "ribu", "k"):
+                    v *= 1000
         except ValueError:
             continue
-        suf = (m.group(2) or "").lower()
-        if suf in ("rb", "ribu", "k"):
-            v *= 1000
-        elif suf in ("jt", "juta"):
-            v *= 1_000_000
         out.append(v)
     return out
 
