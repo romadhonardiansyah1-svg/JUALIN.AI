@@ -395,6 +395,17 @@ export const api = {
     fetchAPI(`/api/agent-os/approvals/${id}/reject`, { method: "POST" }),
   agentOsNegotiations: () => fetchAPI("/api/agent-os/negotiations"),
   agentOsImpact: () => fetchAPI("/api/agent-os/impact"),
+
+  // ── Admin: LLM Control Panel ──
+  adminLlmGet: () => fetchAPI("/api/admin/llm-settings"),
+  adminLlmUpdate: (body) =>
+    fetchAPI("/api/admin/llm-settings", { method: "PUT", body: JSON.stringify(body) }),
+  adminLlmAddKey: (key) =>
+    fetchAPI("/api/admin/llm-settings/keys", { method: "POST", body: JSON.stringify({ key }) }),
+  adminLlmRemoveKey: (index) =>
+    fetchAPI(`/api/admin/llm-settings/keys/${index}`, { method: "DELETE" }),
+  adminLlmTest: () =>
+    fetchAPI("/api/admin/llm-settings/test", { method: "POST", body: JSON.stringify({}) }),
 };
 
 

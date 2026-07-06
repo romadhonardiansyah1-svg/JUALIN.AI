@@ -88,6 +88,9 @@ export default function AdminDashboard() {
           <Link href="/dashboard/admin/system" className="btn btn-outline">
             🖥️ System
           </Link>
+          <Link href="/dashboard/admin/llm" className="btn btn-outline">
+            🧠 LLM Router
+          </Link>
         </div>
       </div>
 
