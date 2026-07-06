@@ -48,6 +48,7 @@ from models.concierge_checklist import ConciergeChecklist
 
 # JUALIN OS models
 from models.agent_os import AgentPolicy, AgentRun, AgentApproval, NegotiationState
+from models.llm_settings import LLMSettings  # noqa: F401
 
 __all__ = [
     "Base",
