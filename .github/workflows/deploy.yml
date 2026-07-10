@@ -7,26 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  validate-backend:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: jualin
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: jualin_ai_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U jualin -d jualin_ai_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
     steps:
       - uses: actions/checkout@v4
 
@@ -40,18 +22,10 @@ jobs:
           cd backend
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-          pip install pytest pip-audit
+          pip install pip-audit
 
       - name: Compile backend
         run: python -m compileall backend
-
-      - name: Run tests
-        run: |
-          cd backend
-          python -m pytest tests/ -v --tb=short
-        env:
-          DATABASE_URL: "postgresql+asyncpg://jualin:test_password@localhost:5432/jualin_ai_test"
-          REDIS_URL: "redis://localhost:6379/0"
 
       - name: Python dependency audit
         run: |

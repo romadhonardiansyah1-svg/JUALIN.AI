@@ -1,6 +1,0 @@
-Catatan finalisasi submission JUALIN.AI
-1. Isi nama ketua, anggota, NIM, dan program studi pada cover DOCX/PDF.
-2. Jalankan GForm dengan pertanyaan pada Template_Kuesioner_Validasi_JUALIN_AI.xlsx. Gunakan jawaban asli, bukan data dummy.
-3. Setelah respons masuk, salin ke sheet Respon_Asli dan update bagian Lampiran/Ringkasan jika ingin mencantumkan hasil.
-4. Jalankan uji similaritas; lampirkan hasil maksimal 20% sesuai guidebook.
-5. File PDF utama untuk upload: SoftwareDevelopment_Digiboom.pdf.
