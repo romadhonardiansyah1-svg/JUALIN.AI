@@ -15,6 +15,7 @@ NOTE: These are PUBLIC endpoints (no auth) — they are called by payment provid
 """
 from datetime import datetime, timezone
 import json
+import secrets
 from fastapi import APIRouter, Request, Response, Query
 from sqlalchemy import select
 
@@ -113,7 +114,12 @@ async def whatsapp_cloud_verify(
     hub_challenge: str = Query("", alias="hub.challenge"),
 ):
     """WhatsApp Cloud webhook verification endpoint."""
-    if hub_mode == "subscribe" and hub_verify_token == settings.WHATSAPP_VERIFY_TOKEN:
+    if not settings.WHATSAPP_VERIFY_TOKEN:
+        return Response(status_code=503, content="WhatsApp verification is not configured")
+    if hub_mode == "subscribe" and secrets.compare_digest(
+        hub_verify_token.encode("utf-8"),
+        settings.WHATSAPP_VERIFY_TOKEN.encode("utf-8"),
+    ):
         return Response(status_code=200, content=hub_challenge)
     return Response(status_code=403, content="Forbidden")
 

@@ -15,22 +15,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.11.15"
 
       - name: Install backend deps
         run: |
           cd backend
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install pip-audit
 
       - name: Compile backend
         run: python -m compileall backend
 
+      - name: Run focused backend tests
+        run: |
+          cd backend
+          python -m unittest discover -s tests -v
+
       - name: Python dependency audit
         run: |
           cd backend
-          python -m pip_audit -r requirements.txt --ignore-vuln CVE-2025-3000
+          python -m pip_audit -r requirements.txt
 
       - name: Docker Compose config validation
         run: docker compose config --quiet

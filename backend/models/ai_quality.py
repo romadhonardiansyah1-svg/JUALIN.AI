@@ -1,7 +1,7 @@
 """
 Internal AI quality, tracing, and evaluation models.
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Float, Index
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -28,6 +28,10 @@ class AITrace(Base):
     metadata_json = Column(JSON, default=dict)
     prompt_version = Column(String(50), default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_ai_traces_seller_status", "seller_id", "status"),
+    )
 
 
 class AIToolCall(Base):

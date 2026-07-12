@@ -1,7 +1,7 @@
 """
 WhatsApp-first inbox models.
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Index
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -67,6 +67,7 @@ class InboxThread(Base):
 
     __table_args__ = (
         UniqueConstraint("seller_id", "channel_id", "contact_id", name="uq_inbox_thread_contact"),
+        Index("ix_inbox_threads_seller_lastmsg", "seller_id", "last_message_at"),
     )
 
 
@@ -84,3 +85,7 @@ class InboxMessage(Base):
     status = Column(String(20), default="received")
     raw_payload = Column(JSON, default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_inbox_messages_thread_created", "thread_id", "created_at"),
+    )

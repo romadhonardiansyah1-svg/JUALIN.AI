@@ -40,6 +40,25 @@ services:
       timeout: 3s
       retries: 5
 
+  # Apply versioned schema migrations before application services start.
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jualin-migrate
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://jualin:${DB_PASSWORD:-jualin_secure_2026}@db:5432/jualin_ai
+      AUTO_CREATE_TABLES: "false"
+    working_dir: /workspace
+    command: ["python", "-m", "alembic", "-c", "alembic.ini", "upgrade", "head"]
+    volumes:
+      - ./alembic.ini:/workspace/alembic.ini:ro
+      - ./backend:/workspace/backend:ro
+
   # ── Backend (FastAPI) ──
   backend:
     build:
@@ -52,6 +71,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+asyncpg://jualin:${DB_PASSWORD:-jualin_secure_2026}@db:5432/jualin_ai
       REDIS_URL: redis://redis:6379/0
@@ -104,6 +125,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql+asyncpg://jualin:${DB_PASSWORD:-jualin_secure_2026}@db:5432/jualin_ai
       REDIS_URL: redis://redis:6379/0
@@ -144,6 +167,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        INTERNAL_API_URL: http://backend:8000
     container_name: jualin-frontend
     restart: always
     depends_on:

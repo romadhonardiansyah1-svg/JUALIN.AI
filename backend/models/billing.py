@@ -1,7 +1,7 @@
 """
 Billing and usage quota models.
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, UniqueConstraint, Index
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -48,6 +48,7 @@ class UsageCounter(Base):
 
     __table_args__ = (
         UniqueConstraint("seller_id", "metric", "period", name="uq_usage_counter_period"),
+        Index("ix_usage_counters_seller_metric_period", "seller_id", "metric", "period"),
     )
 
 

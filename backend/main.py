@@ -304,6 +304,7 @@ async def readiness():
     """
     from cache import get_redis
     from sqlalchemy import text
+    from starlette.responses import JSONResponse
 
     errors = []
 
@@ -311,18 +312,26 @@ async def readiness():
     try:
         async with async_session() as db:
             await db.execute(text("SELECT 1"))
-    except Exception as e:
-        errors.append(f"database: {e}")
+    except Exception:
+        logger.warning("Database readiness check failed", exc_info=True)
+        errors.append("database")
 
-    # Redis should be ready (non-critical but preferred)
+    # Redis must be ready
     try:
         r = await get_redis()
-        if r:
+        if r is None:
+            logger.warning("Redis readiness check failed: client unavailable")
+            errors.append("redis")
+        else:
             await r.ping()
-    except Exception as e:
-        errors.append(f"redis: {e}")
+    except Exception:
+        logger.warning("Redis readiness check failed", exc_info=True)
+        errors.append("redis")
 
     if errors:
-        return {"ready": False, "errors": errors}
+        return JSONResponse(
+            status_code=503,
+            content={"ready": False, "errors": errors},
+        )
 
     return {"ready": True}

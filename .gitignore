@@ -23,6 +23,7 @@ build/
 # IDE
 .vscode/
 .idea/
+.serena/
 *.swp
 
 # OS

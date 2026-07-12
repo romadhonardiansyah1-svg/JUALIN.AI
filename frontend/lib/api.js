@@ -262,7 +262,6 @@ export const api = {
     fetchAPI("/api/marketplace/products/import", { method: "POST", body: JSON.stringify(body) }),
 
   // Admin extra
-  getProviderHealth: () => fetchAPI("/api/admin/provider-health"),
   adminChangePlan: (sellerId, body) =>
     fetchAPI(`/api/billing/admin/sellers/${sellerId}/plan`, { method: "POST", body: JSON.stringify(body) }),
   adminOverrideQuota: (sellerId, body) =>

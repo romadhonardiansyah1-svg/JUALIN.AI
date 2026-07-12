@@ -5,7 +5,7 @@ const internalApiUrl =
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Rewrite /api/* to backend during development (proxy)
+  // Rewrites are compiled at build time; Dockerfile supplies the container URL.
   async rewrites() {
     return [
       {

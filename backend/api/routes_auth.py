@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
 from passlib.context import CryptContext
-from jose import jwt, JWTError
+import jwt
+from jwt import InvalidTokenError
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import re
 import asyncio
@@ -162,7 +163,7 @@ async def get_current_user(
         user_id = int(payload.get("sub"))
     except HTTPException:
         raise
-    except (JWTError, ValueError, TypeError):
+    except (InvalidTokenError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token tidak valid")
     
     result = await db.execute(select(User).where(User.id == user_id))

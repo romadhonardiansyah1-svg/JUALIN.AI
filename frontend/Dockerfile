@@ -10,7 +10,9 @@ RUN npm ci --ignore-scripts
 # Copy source
 COPY . .
 
-# Set API URL for build
+# Rewrites are compiled during `next build`, so the internal URL must be set here.
+ARG INTERNAL_API_URL=http://backend:8000
+ENV INTERNAL_API_URL=${INTERNAL_API_URL}
 ENV NEXT_PUBLIC_API_URL=""
 
 # Build

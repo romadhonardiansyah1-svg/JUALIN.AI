@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "jualin-ai-secret-key-change-in-production"
     SCHEDULER_ENABLED: bool = True
-    AUTO_CREATE_TABLES: bool = True
+    AUTO_CREATE_TABLES: bool = False
     ARQ_MAX_JOBS: int = 2
 
     # Scale-up feature flags
@@ -155,5 +155,16 @@ def validate_production_security(settings: Settings) -> list[str]:
         host = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or host in {"localhost", "127.0.0.1", "::1"}:
             errors.append(f"{url_name} production wajib memakai HTTPS domain publik")
+
+    if settings.ENABLE_WHATSAPP:
+        for key_name in (
+            "WHATSAPP_VERIFY_TOKEN",
+            "WHATSAPP_ACCESS_TOKEN",
+            "WHATSAPP_PHONE_NUMBER_ID",
+            "WHATSAPP_APP_SECRET",
+        ):
+            value = getattr(settings, key_name, "")
+            if not value.strip():
+                errors.append(f"{key_name} wajib diisi saat ENABLE_WHATSAPP=true")
 
     return errors

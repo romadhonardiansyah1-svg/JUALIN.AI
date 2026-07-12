@@ -1,7 +1,7 @@
 """
 Core production tables for scale-up modules.
 """
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Boolean, Index
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -65,6 +65,10 @@ class BackgroundJob(Base):
     finished_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_jobs_status_next_run", "status", "next_run_at"),
+    )
 
 
 class AuditLog(Base):

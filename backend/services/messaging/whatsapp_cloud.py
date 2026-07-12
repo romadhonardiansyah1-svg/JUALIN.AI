@@ -53,7 +53,7 @@ class WhatsAppCloudProvider(MessagingProvider):
 
     def verify_webhook(self, payload: dict | bytes, headers: dict | None = None) -> bool:
         if not self.app_secret:
-            return True
+            return False
         signature = (headers or {}).get("x-hub-signature-256", "")
         if not signature.startswith("sha256="):
             return False
@@ -63,7 +63,10 @@ class WhatsAppCloudProvider(MessagingProvider):
             raw_payload,
             hashlib.sha256,
         ).hexdigest()
-        return hmac.compare_digest(signature, f"sha256={expected}")
+        return hmac.compare_digest(
+            signature.encode("utf-8"),
+            f"sha256={expected}".encode("ascii"),
+        )
 
     def parse_webhook(self, payload: dict, headers: dict | None = None) -> list[ParsedInboundMessage]:
         parsed: list[ParsedInboundMessage] = []

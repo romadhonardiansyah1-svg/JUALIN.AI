@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 .env
 venv/
+tests/
 .git/
 .gitignore
 *.md
