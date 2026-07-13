@@ -8,7 +8,7 @@ Tabel:
 - negotiation_states : state tawar-menawar per percakapan
 """
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, JSON, Float, Boolean, UniqueConstraint,
+    Column, Integer, String, DateTime, ForeignKey, JSON, Float, Boolean, UniqueConstraint, Time,
 )
 from sqlalchemy.sql import func
 
@@ -27,9 +27,9 @@ class AgentPolicy(Base):
     # Tingkat otonomi: assist | auto_with_approval | full_auto
     autonomy_level = Column(String(30), default="auto_with_approval", nullable=False)
 
-    # Sakelar per-agen
+    # Sakelar per-agen — P0.1 safe default false per blueprint
     allow_auto_negotiation = Column(Boolean, default=True, nullable=False)
-    allow_auto_followup = Column(Boolean, default=True, nullable=False)
+    allow_auto_followup = Column(Boolean, default=False, nullable=False, server_default="false")
     allow_low_stock_alert = Column(Boolean, default=True, nullable=False)
     daily_brief_enabled = Column(Boolean, default=True, nullable=False)
 
@@ -41,6 +41,17 @@ class AgentPolicy(Base):
 
     # Inventory
     low_stock_threshold = Column(Integer, default=3, nullable=False)
+
+    # ── P1.1 safety foundation — recovery policy fields ──
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    payment_recovery_mode = Column(String(30), nullable=False, default="observe", server_default="observe")
+    payment_recovery_paused = Column(Boolean, nullable=False, default=True, server_default="true")
+    timezone = Column(String(50), nullable=False, default="Asia/Jakarta", server_default="Asia/Jakarta")
+    quiet_hours_start = Column(Time, nullable=True)
+    quiet_hours_end = Column(Time, nullable=True)
+    daily_recipient_cap = Column(Integer, nullable=False, default=1, server_default="1")
+    order_cycle_cap = Column(Integer, nullable=False, default=1, server_default="1")
+    cooldown_minutes = Column(Integer, nullable=False, default=1440, server_default="1440")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

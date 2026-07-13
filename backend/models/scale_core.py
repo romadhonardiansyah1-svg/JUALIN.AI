@@ -1,7 +1,9 @@
 """
 Core production tables for scale-up modules.
 """
+import uuid
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Boolean, Index
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -42,6 +44,11 @@ class WebhookEvent(Base):
     processed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    # P1.1: tenant and account mapping for durable inbox
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    provider_account_id = Column(String(255), nullable=True, index=True)
+    channel_id = Column(Integer, ForeignKey("channels.id"), nullable=True, index=True)
+
 
 class BackgroundJob(Base):
     __tablename__ = "background_jobs"
@@ -54,7 +61,8 @@ class BackgroundJob(Base):
     payload = Column(JSON, default=dict)
     attempts = Column(Integer, default=0)
     max_attempts = Column(Integer, default=3)
-    retryable = Column(Boolean, default=True, nullable=False)
+    # P1.1: retryable default false for safety (was true)
+    retryable = Column(Boolean, default=False, nullable=False, server_default="false")
     error_message = Column(Text, default="")
     last_error_code = Column(String(50), default="")
     scheduled_at = Column(DateTime(timezone=True), nullable=True)
@@ -66,8 +74,18 @@ class BackgroundJob(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # ── P1.1 safety foundation — lease/fencing fields ──
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    claim_token = Column(UUID(as_uuid=True), nullable=True)
+    lock_version = Column(Integer, nullable=False, default=0, server_default="0")
+    execution_stage = Column(String(30), nullable=False, default="unknown", server_default="unknown")
+    side_effect_started_at = Column(DateTime(timezone=True), nullable=True)
+    payload_digest = Column(String(64), nullable=True)
+    handler_contract_version = Column(Integer, nullable=True)
+
     __table_args__ = (
         Index("ix_jobs_status_next_run", "status", "next_run_at"),
+        Index("ix_jobs_processable", "status", "execution_stage", "next_run_at", "lease_expires_at"),
     )
 
 

@@ -50,6 +50,9 @@ from models.concierge_checklist import ConciergeChecklist
 from models.agent_os import AgentPolicy, AgentRun, AgentApproval, NegotiationState
 from models.llm_settings import LLMSettings  # noqa: F401
 
+# Payment recovery safety foundation
+from models.payment_recovery import PaymentAttempt
+
 __all__ = [
     "Base",
     "User", "UserTier", "UserRole",
@@ -85,5 +88,6 @@ __all__ = [
     "QAReviewItem",
     "Experiment", "ExperimentVariant", "ExperimentAssignment", "ExperimentEvent",
     "AgentPolicy", "AgentRun", "AgentApproval", "NegotiationState",
+    "PaymentAttempt",
 ]
 
