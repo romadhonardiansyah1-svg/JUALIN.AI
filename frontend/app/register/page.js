@@ -2,7 +2,7 @@
 import { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, clearAuthStateAndCache } from "@/lib/api";
 import styles from "../login/auth.module.css";
 
 function RegisterForm() {
@@ -22,6 +22,7 @@ function RegisterForm() {
     setError("");
     setLoading(true);
     try {
+      clearAuthStateAndCache();
       const data = await api.register(form);
       localStorage.setItem("jualin_token", data.access_token);
       localStorage.setItem("jualin_user", JSON.stringify(data.user));

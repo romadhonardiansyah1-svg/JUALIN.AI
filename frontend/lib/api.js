@@ -1,6 +1,8 @@
 /**
  * JUALIN.AI — API Helper
- * Centralized fetch wrapper with auth header injection + simple caching
+ * Centralized fetch wrapper with auth header injection + tenant-isolated caching (P0.3b containment)
+ *
+ * Security fix BUG-025: cross-tenant cache isolation + service-worker purge
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
@@ -14,9 +16,24 @@ export function debounce(fn, delay = 300) {
   };
 }
 
-// ── Simple in-memory cache ──
+// ── Tenant-isolated in-memory cache with session epoch ──
+// Immediate containment: seller-sensitive cache disabled until proper principal/session epoch
 const _cache = {};
-const CACHE_TTL = 60000; // 1 minute
+const CACHE_TTL = 60000; // 1 minute default, but sensitive endpoints bypass cache
+let _sessionEpoch = 0;
+const ENABLE_AUTH_CACHE = false; // P0.3b containment: disable seller-sensitive caching
+
+export class ApiError extends Error {
+  constructor({ status, code, message, detail, requestId, retryAfter }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+    this.requestId = requestId;
+    this.retryAfter = retryAfter;
+  }
+}
 
 function getErrorMessage(data, fallback) {
   if (!data) return fallback;
@@ -27,9 +44,35 @@ function getErrorMessage(data, fallback) {
   return fallback;
 }
 
+function parseRetryAfter(header) {
+  if (!header) return null;
+  const secs = parseInt(header, 10);
+  if (!isNaN(secs)) return secs;
+  // Try date
+  const date = Date.parse(header);
+  if (!isNaN(date)) {
+    return Math.max(0, Math.ceil((date - Date.now()) / 1000));
+  }
+  return null;
+}
+
+function isSensitiveEndpoint(endpoint) {
+  // Any endpoint that returns seller-scoped data must be considered sensitive
+  // Until proper session/principal epoch is available, we treat all /api as sensitive
+  if (!endpoint) return true;
+  if (endpoint.includes("/api/system/capabilities")) return true; // must be no-store per spec
+  if (endpoint.startsWith("/api/")) return true;
+  return false;
+}
+
 function getCached(key) {
   const entry = _cache[key];
   if (!entry) return null;
+  // Epoch check: if epoch changed after cache write, entry is stale for new principal
+  if (entry.epoch !== _sessionEpoch) {
+    delete _cache[key];
+    return null;
+  }
   if (Date.now() - entry.timestamp > entry.ttl) {
     delete _cache[key];
     return null;
@@ -38,7 +81,9 @@ function getCached(key) {
 }
 
 function setCache(key, data, ttl = CACHE_TTL) {
-  _cache[key] = { data, timestamp: Date.now(), ttl };
+  // Do not cache if epoch containment disabled for sensitive data
+  if (!ENABLE_AUTH_CACHE) return;
+  _cache[key] = { data, timestamp: Date.now(), ttl, epoch: _sessionEpoch };
 }
 
 function clearCache(prefix) {
@@ -47,8 +92,40 @@ function clearCache(prefix) {
   });
 }
 
-// ── Fetch wrapper ──
+// Exported: clears both in-memory cache and browser auth state, increments epoch
+export function clearAuthStateAndCache() {
+  _sessionEpoch++;
+  Object.keys(_cache).forEach((k) => delete _cache[k]);
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.removeItem("jualin_token");
+      localStorage.removeItem("jualin_user");
+    } catch {}
+    // Purge Cache Storage for dashboard/shell that might contain A data
+    try {
+      if (window.caches) {
+        window.caches.keys().then((keys) => {
+          keys.forEach((k) => {
+            // Purge any jualin cache that could contain sensitive HTML/RSC
+            if (k.toLowerCase().includes("jualin")) {
+              window.caches.delete(k);
+            }
+          });
+        });
+      }
+    } catch {}
+    // Notify service worker to purge auth-sensitive caches
+    try {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: "PURGE_AUTH_CACHE" });
+      }
+    } catch {}
+  }
+}
+
+// ── Fetch wrapper with epoch-aware inflight guard + typed errors (P0.4) ──
 async function fetchAPI(endpoint, options = {}) {
+  const requestEpoch = _sessionEpoch;
   const token =
     typeof window !== "undefined" ? localStorage.getItem("jualin_token") : null;
 
@@ -58,24 +135,120 @@ async function fetchAPI(endpoint, options = {}) {
     ...options.headers,
   };
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers,
-  });
+  // Timeout handling via AbortController (30s default, overridable via options.timeout)
+  const timeoutMs = options.timeout ?? 30000;
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), timeoutMs);
+  const signal = options.signal || ctrl.signal;
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers,
+      signal,
+    });
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e.name === "AbortError") {
+      throw new ApiError({
+        status: 0,
+        code: "timeout",
+        message: "Request timeout",
+        detail: null,
+        requestId: null,
+        retryAfter: null,
+      });
+    }
+    // Network failure — do not treat as auth failure, allow caller to handle retry
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  // Epoch changed during request? Old principal's response must not be applied to new principal
+  if (requestEpoch !== _sessionEpoch) {
+    throw new ApiError({
+      status: 0,
+      code: "session_changed",
+      message: "Session changed during request",
+      detail: null,
+      requestId: null,
+      retryAfter: null,
+    });
+  }
+
+  // Extract request ID and retry-after headers for typed error
+  const requestId = res.headers.get("X-Request-ID") || res.headers.get("x-request-id") || null;
+  const retryAfter = parseRetryAfter(res.headers.get("Retry-After"));
 
   if (res.status === 401) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("jualin_token");
-      localStorage.removeItem("jualin_user");
+      clearAuthStateAndCache();
       window.location.href = "/login";
     }
-    throw new Error("Session expired");
+    throw new ApiError({
+      status: 401,
+      code: "authentication_required",
+      message: "Session expired",
+      detail: null,
+      requestId,
+      retryAfter,
+    });
   }
 
-  const data = await res.json();
+  // 204 No Content — do not try to parse JSON
+  if (res.status === 204) {
+    if (requestEpoch !== _sessionEpoch) {
+      throw new ApiError({
+        status: 0,
+        code: "session_changed",
+        message: "Session changed during request",
+        detail: null,
+        requestId,
+        retryAfter,
+      });
+    }
+    return null;
+  }
+
+  // Try to parse JSON, but handle non-JSON gracefully (text/html error pages)
+  let data;
+  const contentType = res.headers.get("Content-Type") || "";
+  if (contentType.includes("application/json")) {
+    data = await res.json().catch(() => null);
+  } else {
+    // For non-JSON, try json first, fallback to text
+    const text = await res.text().catch(() => "");
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = text ? { message: text.slice(0, 500) } : null;
+    }
+  }
 
   if (!res.ok) {
-    throw new Error(getErrorMessage(data, "Something went wrong"));
+    const message = getErrorMessage(data, `Request failed with ${res.status}`);
+    const code = (data && (data.error || data.code)) || `http_${res.status}`;
+    throw new ApiError({
+      status: res.status,
+      code,
+      message,
+      detail: data?.detail ?? data ?? null,
+      requestId,
+      retryAfter,
+    });
+  }
+
+  if (requestEpoch !== _sessionEpoch) {
+    throw new ApiError({
+      status: 0,
+      code: "session_changed",
+      message: "Session changed during request",
+      detail: null,
+      requestId,
+      retryAfter,
+    });
   }
 
   return data;
@@ -84,13 +257,21 @@ async function fetchAPI(endpoint, options = {}) {
 const apiFetch = fetchAPI;
 
 // ── Cached fetch (for data that rarely changes) ──
+// P0.3b: disabled for sensitive endpoints to prevent A->B leakage
 async function fetchCached(endpoint, options = {}, ttl = CACHE_TTL) {
-  const cacheKey = `api:${endpoint}`;
+  // Sensitive endpoints bypass cache entirely (containment)
+  if (isSensitiveEndpoint(endpoint) || !ENABLE_AUTH_CACHE) {
+    return fetchAPI(endpoint, options);
+  }
+  const cacheKey = `api:${endpoint}:epoch:${_sessionEpoch}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
   const data = await fetchAPI(endpoint, options);
-  setCache(cacheKey, data, ttl);
+  // Only cache if epoch still same after fetch
+  if (_sessionEpoch === (getCached(cacheKey)?.epoch ?? _sessionEpoch)) {
+    setCache(cacheKey, data, ttl);
+  }
   return data;
 }
 
@@ -116,14 +297,13 @@ async function uploadFile(endpoint, file, extraData = {}) {
 
   if (res.status === 401) {
     if (typeof window !== "undefined") {
-      localStorage.removeItem("jualin_token");
-      localStorage.removeItem("jualin_user");
+      clearAuthStateAndCache();
       window.location.href = "/login";
     }
     throw new Error("Session expired");
   }
 
-  const data = await res.json();
+  const data = await res.json().catch(() => null);
 
   if (!res.ok) {
     throw new Error(getErrorMessage(data, "Upload gagal"));
@@ -132,13 +312,17 @@ async function uploadFile(endpoint, file, extraData = {}) {
   return data;
 }
 
-// Auth
+// Auth — boundary methods should clear cache on principal change
 export const api = {
-  // Auth
-  register: (body) =>
-    fetchAPI("/api/auth/register", { method: "POST", body: JSON.stringify(body) }),
-  login: (body) =>
-    fetchAPI("/api/auth/login", { method: "POST", body: JSON.stringify(body) }),
+  // Auth — clear cache on principal change boundaries
+  register: (body) => {
+    clearAuthStateAndCache();
+    return fetchAPI("/api/auth/register", { method: "POST", body: JSON.stringify(body) });
+  },
+  login: (body) => {
+    clearAuthStateAndCache();
+    return fetchAPI("/api/auth/login", { method: "POST", body: JSON.stringify(body) });
+  },
   getMe: () => fetchAPI("/api/auth/me"),
   updateSettings: (body) =>
     fetchAPI("/api/auth/settings", { method: "PATCH", body: JSON.stringify(body) }),

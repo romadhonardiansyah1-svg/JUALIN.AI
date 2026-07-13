@@ -252,13 +252,11 @@ async def cron_heartbeat(ctx):
 _redis_url = urlparse(settings.REDIS_URL)
 
 
-class WorkerSettings:
-    functions = [process_recorded_job]
-    cron_jobs = [
+def _build_cron_jobs():
+    """Build cron list with legacy followup gated by flag (P0.1 containment)."""
+    jobs = [
         # Execute DB-recorded jobs every minute
         cron(cron_process_queued_jobs, minute=None, unique=True),
-        # Follow-up every 15 minutes
-        cron(cron_followup_scheduler, minute={0, 15, 30, 45}, unique=True),
         # Workflow tick every 5 minutes
         cron(cron_workflow_tick, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}, unique=True),
         # Heartbeat every minute
@@ -266,6 +264,20 @@ class WorkerSettings:
         # JUALIN OS proaktif setiap 10 menit
         cron(cron_agent_os_tick, minute={0, 10, 20, 30, 40, 50}, unique=True),
     ]
+    # Legacy followup only if explicitly enabled — disabled by default
+    if getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False):
+        jobs.append(
+            cron(cron_followup_scheduler, minute={0, 15, 30, 45}, unique=True)
+        )
+        logger.info("Worker: legacy followup cron enabled via ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=true")
+    else:
+        logger.info("Worker: legacy followup cron disabled — ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=false")
+    return jobs
+
+
+class WorkerSettings:
+    functions = [process_recorded_job]
+    cron_jobs = _build_cron_jobs()
     max_jobs = settings.ARQ_MAX_JOBS
     redis_settings = RedisSettings(
         host=_redis_url.hostname or "localhost",

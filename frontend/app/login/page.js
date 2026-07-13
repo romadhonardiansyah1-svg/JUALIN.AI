@@ -2,7 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, clearAuthStateAndCache } from "@/lib/api";
 import styles from "./auth.module.css";
 
 export default function LoginPage() {
@@ -17,6 +17,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
+      clearAuthStateAndCache();
       const data = await api.login(form);
       localStorage.setItem("jualin_token", data.access_token);
       localStorage.setItem("jualin_user", JSON.stringify(data.user));

@@ -139,17 +139,17 @@ async def run_eval_placeholder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    cases = await db.execute(select(AIEvalCase).where(AIEvalCase.is_active == 1))
-    case_list = cases.scalars().all()
-    run = AIEvalRun(
-        seller_id=current_user.id,
-        status="queued",
-        total_cases=len(case_list),
-        result_json={"run_id": uuid4().hex, "message": "Eval worker belum dijalankan"},
+    # P0.5 containment: eval not implemented, must not create orphan queued job
+    # Return 501 + capability disabled per blueprint
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "error": "not_implemented",
+            "message": "AI evaluation belum tersedia — capability disabled",
+            "capability": "ai_quality_eval",
+            "available": False,
+        },
     )
-    db.add(run)
-    await db.commit()
-    return {"message": "Eval run queued", "id": run.id, "total_cases": run.total_cases}
 
 
 @router.get("/evals/runs/{run_id}")

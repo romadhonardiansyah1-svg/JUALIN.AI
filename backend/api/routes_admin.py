@@ -213,10 +213,10 @@ async def get_system_health(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get system health information."""
+    """Get system health information — per-owner scheduler truth (P0.1)."""
     import platform
     import sys
-    
+
     database_status = "disconnected"
     try:
         await db.execute(text("SELECT 1"))
@@ -234,13 +234,53 @@ async def get_system_health(
             redis_status = "connected"
     except Exception:
         pass
-    
+
+    # Per-owner scheduler status — truthful, not single boolean
+    legacy_main_enabled = bool(
+        getattr(settings, "SCHEDULER_ENABLED", False)
+        and getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False)
+    )
+    legacy_main_scheduler = "running" if legacy_main_enabled else "disabled"
+
+    # Worker cron registration check (import here to avoid circular at module load)
+    try:
+        from worker import WorkerSettings
+
+        def _is_followup_cron(c):
+            func = getattr(c, "func", None)
+            name = getattr(func, "__name__", "") if func else ""
+            return name == "cron_followup_scheduler" or "followup" in str(c).lower()
+
+        worker_has_followup = any(_is_followup_cron(c) for c in WorkerSettings.cron_jobs)
+    except Exception:
+        worker_has_followup = False
+
+    legacy_worker_cron = "registered" if worker_has_followup else "not_registered"
+
+    # Recovery scheduler — disabled until flag enabled (future phase)
+    recovery_enabled = bool(getattr(settings, "ENABLE_PAYMENT_RECOVERY", False))
+    recovery_scheduler = "enabled" if recovery_enabled else "disabled"
+
+    # Deprecated single field kept for backward compatibility, but always reflects legacy main
     return {
         "backend": "online",
         "database": database_status,
         "redis": redis_status,
         "ai_engine": "ready",
-        "followup_scheduler": "running" if settings.SCHEDULER_ENABLED else "disabled",
+        "followup_scheduler": legacy_main_scheduler,  # deprecated alias
+        "schedulers": {
+            "legacy_main": legacy_main_scheduler,
+            "legacy_worker_cron": legacy_worker_cron,
+            "recovery": recovery_scheduler,
+        },
+        "flags": {
+            "scheduler_enabled": bool(getattr(settings, "SCHEDULER_ENABLED", False)),
+            "enable_legacy_pending_payment_followup": bool(
+                getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False)
+            ),
+            "enable_payment_recovery": recovery_enabled,
+            "payment_recovery_mode": getattr(settings, "PAYMENT_RECOVERY_MODE", "observe"),
+        },
         "version": settings.APP_VERSION,
         "python_version": sys.version.split()[0],
         "platform": platform.system(),

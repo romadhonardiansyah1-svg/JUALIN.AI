@@ -13,7 +13,11 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     SECRET_KEY: str = "jualin-ai-secret-key-change-in-production"
-    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_ENABLED: bool = False
+    ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP: bool = False
+    ENABLE_PAYMENT_RECOVERY: bool = False
+    PAYMENT_RECOVERY_MODE: str = "observe"
+    ENABLE_DEMO_PROOF_MODE: bool = False
     AUTO_CREATE_TABLES: bool = False
     ARQ_MAX_JOBS: int = 2
 

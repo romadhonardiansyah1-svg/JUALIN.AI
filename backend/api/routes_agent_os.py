@@ -18,6 +18,22 @@ from services.agent_os.brief import build_daily_brief
 
 router = APIRouter()
 
+# P0.6 — reserved recovery action types that legacy endpoint must not decide
+RESERVED_RECOVERY_ACTION_TYPES = {"payment_recovery", "payment_reminder", "payment_recovery_reminder"}
+
+
+def _is_recovery_approval(approval) -> bool:
+    """Check if approval row is recovery-type and must be blocked from legacy endpoint."""
+    # P0: block by reserved action_type
+    action_type = getattr(approval, "action_type", "") or ""
+    if action_type in RESERVED_RECOVERY_ACTION_TYPES:
+        return True
+    # Post-P2.1: also block when opportunity_id column exists and is non-null
+    opp_id = getattr(approval, "opportunity_id", None)
+    if opp_id is not None:
+        return True
+    return False
+
 
 def _run_dict(r: AgentRun) -> dict:
     return {
@@ -148,8 +164,17 @@ async def list_approvals(status: str = "pending", current_user: User = Depends(g
     q = select(AgentApproval).where(AgentApproval.seller_id == current_user.id)
     if status:
         q = q.where(AgentApproval.status == status)
+    # P0.6: exclude recovery approvals from legacy list
+    # Filter reserved action types out; post-P2.1 also filter opportunity_id column if exists
+    q = q.where(AgentApproval.action_type.notin_(RESERVED_RECOVERY_ACTION_TYPES))
+    # If column opportunity_id exists (added in P2.1), also exclude non-null
+    if hasattr(AgentApproval, "opportunity_id"):
+        q = q.where(AgentApproval.opportunity_id.is_(None))
     q = q.order_by(desc(AgentApproval.id)).limit(50)
     r = await db.execute(q)
+    rows = r.scalars().all()
+    # Extra Python-level guard for any malformed action_type or opportunity_id
+    filtered = [a for a in rows if not _is_recovery_approval(a)]
     return [
         {
             "id": a.id, "agent_role": a.agent_role, "action_type": a.action_type,
@@ -157,7 +182,7 @@ async def list_approvals(status: str = "pending", current_user: User = Depends(g
             "conversation_id": a.conversation_id,
             "created_at": a.created_at.isoformat() if a.created_at else "",
         }
-        for a in r.scalars().all()
+        for a in filtered
     ]
 
 
@@ -168,6 +193,13 @@ async def _decide_approval(approval_id: int, decision: str, current_user: User, 
     )
     a = r.scalar_one_or_none()
     if not a:
+        raise HTTPException(status_code=404, detail="Approval tidak ditemukan")
+    # P0.6: legacy endpoint must not decide recovery approvals
+    if _is_recovery_approval(a):
+        # Return typed denial, zero dispatch/job, 404 masking for tenant safety
+        from core.exceptions import JualinError
+
+        # Use 404 for recovery row to avoid leaking existence via legacy route
         raise HTTPException(status_code=404, detail="Approval tidak ditemukan")
     if a.status != "pending":
         return {"success": True, "already": a.status}

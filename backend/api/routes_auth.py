@@ -187,10 +187,19 @@ async def get_current_user(
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Register seller baru + auto-create toko."""
-    # Rate limit
+    # Rate limit — fail closed 503 on dependency unavailable
     from core.rate_limit import check_rate_limit
+
     client_ip = get_client_ip(request)
     rl = await check_rate_limit(f"auth:register:{client_ip}", max_requests=5, window_seconds=60)
+    if rl.get("status") == "dependency_unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "security_dependency_unavailable",
+                "message": "Keputusan belum dapat diproses dengan aman. Coba lagi nanti.",
+            },
+        )
     if not rl["allowed"]:
         raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi nanti.")
 
@@ -250,12 +259,21 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Login seller dengan email + password."""
-    # Rate limit
+    # Rate limit — fail closed on dependency unavailable
     from core.rate_limit import check_rate_limit
+
     client_ip = get_client_ip(request)
     email = str(req.email).lower().strip()
     ip_rl = await check_rate_limit(f"auth:login:ip:{client_ip}", max_requests=8, window_seconds=60)
     email_rl = await check_rate_limit(_email_rate_key(email), max_requests=5, window_seconds=60)
+    if ip_rl.get("status") == "dependency_unavailable" or email_rl.get("status") == "dependency_unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "security_dependency_unavailable",
+                "message": "Keputusan belum dapat diproses dengan aman. Coba lagi nanti.",
+            },
+        )
     if not ip_rl["allowed"] or not email_rl["allowed"]:
         raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi nanti.")
 

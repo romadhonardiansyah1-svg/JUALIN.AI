@@ -13,12 +13,20 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from cache import check_rate_limit, get_rate_limit_info
+from cache import check_rate_limit_typed, get_rate_limit_info
 from core.logging_config import get_logger, request_id_var, request_path_var
 from config import get_settings
 
 logger = get_logger("middleware")
 settings = get_settings()
+
+# Paths that must fail closed 503 when rate limiter dependency unavailable
+FAIL_CLOSED_PREFIXES = (
+    "/api/auth",
+    "/api/agent-os/approvals",
+    "/api/recovery",
+    "/api/admin/llm-settings",  # sensitive
+)
 
 
 def get_client_ip(request: Request) -> str:
@@ -238,10 +246,35 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             route_key = path_parts[0] if path_parts else "root"
         identifier = f"{client_ip}:{route_key}"
 
-        # Check rate limit (gracefully degrades if Redis unavailable)
-        allowed = await check_rate_limit(identifier, max_req, window)
+        # Check rate limit with typed result — fail-closed for auth/approval
+        typed_result = await check_rate_limit_typed(identifier, max_req, window)
 
-        if not allowed:
+        if typed_result.status == "dependency_unavailable":
+            # Fail-closed for high-risk endpoints
+            is_fail_closed_path = any(path.startswith(p) for p in FAIL_CLOSED_PREFIXES)
+            if is_fail_closed_path:
+                logger.warning(
+                    f"Rate limiter dependency unavailable — fail closed 503: {client_ip} on {path}",
+                    extra={"identifier": identifier, "path": path},
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "security_dependency_unavailable",
+                        "message": "Keputusan belum dapat diproses dengan aman. Coba lagi nanti.",
+                        "detail": {"retry_after": typed_result.retry_after},
+                    },
+                    headers={"Retry-After": str(typed_result.retry_after)},
+                )
+            else:
+                # Safe read: degraded allow with metric
+                logger.warning(
+                    f"Rate limiter dependency unavailable — degraded allow: {client_ip} on {path}",
+                    extra={"identifier": identifier, "path": path},
+                )
+                # Continue to allow request
+
+        if not typed_result.allowed and typed_result.status == "denied":
             info = await get_rate_limit_info(identifier, max_req, window)
             logger.warning(
                 f"Rate limit exceeded: {client_ip} on {path}",
@@ -253,6 +286,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "error": "rate_limited",
                     "message": "Terlalu banyak request. Coba lagi nanti.",
                     "retry_after": info["reset"],
+                    "detail": {"retry_after": info["reset"]},
                 },
                 headers={
                     "Retry-After": str(info["reset"]),

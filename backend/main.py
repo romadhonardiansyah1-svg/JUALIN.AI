@@ -111,13 +111,21 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✅ Database initialized with pgvector extension")
 
-    # 3. Start follow-up scheduler
+    # 3. Start follow-up scheduler — legacy, disabled by default for safety (P0.1 containment)
     task = None
-    if settings.SCHEDULER_ENABLED:
+    legacy_enabled = getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False)
+    if legacy_enabled and settings.SCHEDULER_ENABLED:
         task = asyncio.create_task(followup_scheduler())
-        logger.info("⏰ Follow-up scheduler started (every 15 min)")
+        logger.info("⏰ Legacy follow-up scheduler started (every 15 min) — ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=true")
     else:
-        logger.info("Follow-up scheduler disabled by SCHEDULER_ENABLED=false")
+        # Existence of this log is part of P0.1 verification
+        logger.info(
+            "legacy scheduler disabled — ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=false or SCHEDULER_ENABLED=false",
+            extra={
+                "scheduler_enabled": settings.SCHEDULER_ENABLED,
+                "legacy_followup_enabled": legacy_enabled,
+            },
+        )
 
     # 4. Log startup metrics
     startup_ms = round((time.monotonic() - start_time) * 1000)

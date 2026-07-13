@@ -9,7 +9,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint app components lib next.config.mjs eslint.config.mjs"
+    "lint": "eslint app components lib next.config.mjs eslint.config.mjs",
+    "test": "vitest --run"
   },
   "dependencies": {
     "next": "16.2.7",
@@ -20,7 +21,11 @@
     "postcss": "8.5.15"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "eslint": "^9",
-    "eslint-config-next": "16.2.7"
+    "eslint-config-next": "16.2.7",
+    "jsdom": "^26.1.0",
+    "vitest": "^3.2.7"
   }
 }

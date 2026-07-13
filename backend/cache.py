@@ -90,50 +90,71 @@ async def cache_invalidate_orders(seller_id: int):
     await cache_delete(f"analytics:{seller_id}:*")
 
 
-# ── Rate Limiting ──
+# ── Rate Limiting — consolidated typed result (P0.7) ──
+
+async def check_rate_limit_typed(identifier: str, max_requests: int = 30, window: int = 60):
+    """
+    Typed rate limit check with explicit failure mode.
+    Returns RateLimitResult-like object: allowed, status, remaining, retry_after.
+    On Redis unavailable => status=dependency_unavailable.
+    """
+    from core.rate_limit import check_rate_limit_typed as core_typed
+
+    # Core implementation uses key prefix rate_limit:, we reuse same for consistency
+    # but keep cache key namespace separate for backward compat? Delegate to core.
+    return await core_typed(identifier, max_requests, window)
+
 
 async def check_rate_limit(identifier: str, max_requests: int = 30, window: int = 60) -> bool:
     """
-    Token bucket rate limiter.
-    Returns True if request is allowed, False if rate limited.
+    Backward-compatible bool return.
+    FAIL-OPEN for safe reads: returns True when Redis unavailable, but logs metric.
+    Auth paths should use typed version and fail closed.
+
+    Deprecated: use check_rate_limit_typed for new code.
     """
-    r = await get_redis()
-    if r is None:
-        return True  # No Redis = no rate limiting
-    
-    try:
-        key = f"rate:{identifier}"
-        current = await r.get(key)
-        
-        if current is None:
-            await r.set(key, 1, ex=window)
-            return True
-        
-        count = int(current)
-        if count >= max_requests:
-            return False
-        
-        await r.incr(key)
+    result = await check_rate_limit_typed(identifier, max_requests, window)
+    if result.status == "dependency_unavailable":
+        # Degraded allow with metric for safe reads — auth middleware must handle typed result
+        try:
+            from core.logging_config import get_logger
+
+            get_logger(__name__).warning(
+                "rate_limiter_dependency_unavailable_degraded_allow",
+                extra={"identifier": identifier, "limit": max_requests},
+            )
+        except Exception:
+            pass
         return True
-    except Exception:
-        return True
+    return result.allowed
 
 
 async def get_rate_limit_info(identifier: str, max_requests: int = 30, window: int = 60) -> dict:
-    """Get rate limit info for an identifier."""
+    """Get rate limit info for an identifier — backward compatible."""
     r = await get_redis()
     if r is None:
-        return {"remaining": max_requests, "limit": max_requests, "reset": 0}
-    
+        return {"remaining": max_requests, "limit": max_requests, "reset": 0, "status": "dependency_unavailable"}
+
     try:
         key = f"rate:{identifier}"
-        current = int(await r.get(key) or 0)
-        ttl = await r.ttl(key)
-        
+        # Try both namespaces: rate: and rate_limit:
+        current = await r.get(key)
+        if current is None:
+            # Try core namespace
+            core_key = f"rate_limit:{identifier}"
+            current = await r.get(core_key)
+            key_for_ttl = core_key if current is not None else key
+        else:
+            key_for_ttl = key
+
+        current_int = int(current or 0)
+        ttl = await r.ttl(key_for_ttl)
+
         return {
-            "remaining": max(0, max_requests - current),
+            "remaining": max(0, max_requests - current_int),
             "limit": max_requests,
             "reset": max(0, ttl),
+            "status": "allowed" if current_int < max_requests else "denied",
         }
     except Exception:
-        return {"remaining": max_requests, "limit": max_requests, "reset": 0}
+        return {"remaining": max_requests, "limit": max_requests, "reset": 0, "status": "dependency_unavailable"}

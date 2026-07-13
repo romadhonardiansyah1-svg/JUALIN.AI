@@ -255,8 +255,11 @@ async def handle_inbox_ai_reply(db: AsyncSession, job: BackgroundJob) -> dict:
 
 async def handle_pending_payment_followup(db: AsyncSession, job: BackgroundJob) -> dict:
     """
-    Process a payment follow-up for a single order.
-    Payload: {"order_id": int, "followup_number": int}
+    Process a payment follow-up for a single order — fail-closed, tenant-scoped (P0.2).
+
+    - Lookup order by id AND seller_id to prevent cross-tenant mutation
+    - Only provider accepted result may mark followup sent; log mode is not success
+    - Provider failure/exception => failure, no mark
     """
     from ai.followup import FOLLOWUP_MESSAGES, mark_followup_sent
 
@@ -264,11 +267,19 @@ async def handle_pending_payment_followup(db: AsyncSession, job: BackgroundJob) 
     if not order_id:
         return {"success": False, "error": "missing order_id"}
 
-    result = await db.execute(select(Order).where(Order.id == order_id))
+    # Tenant-scoped lookup per INV-01 / BUG-002
+    result = await db.execute(
+        select(Order).where(Order.id == order_id, Order.seller_id == job.seller_id)
+    )
     order = result.scalar_one_or_none()
 
     if not order:
-        return {"success": False, "error": "order not found"}
+        # Do not reveal whether order exists for other seller — treat as terminal not found
+        logger.warning(
+            "Followup job order not found or tenant mismatch",
+            extra={"job_id": getattr(job, "id", None), "order_id": order_id, "job_seller_id": job.seller_id},
+        )
+        return {"success": False, "error": "order not found", "reason": "cross_tenant_or_missing"}
 
     if order.status != OrderStatus.PENDING:
         return {"success": True, "skipped": True, "reason": "order no longer pending"}
@@ -278,42 +289,58 @@ async def handle_pending_payment_followup(db: AsyncSession, job: BackgroundJob) 
     items_text = order.items if isinstance(order.items, str) else str(order.items)
     message += f"\n\n📋 Detail order:\n{items_text}\n💰 Total: Rp {order.total:,.0f}"
 
-    # Try to send via WhatsApp if channel exists for seller
-    sent_via = "log"
-    if order.customer_phone:
-        channel_result = await db.execute(
-            select(Channel)
-            .where(Channel.seller_id == order.seller_id)
-            .where(Channel.type == "whatsapp")
-            .where(Channel.status == "active")
-            .limit(1)
-        )
-        channel = channel_result.scalar_one_or_none()
-        if channel:
-            config = decrypt_config(channel.config_encrypted)
-            provider = WhatsAppCloudProvider(
-                access_token=config.get("access_token", ""),
-                phone_number_id=config.get("phone_number_id", channel.external_id),
-                app_secret=config.get("app_secret", ""),
-            )
-            if provider.access_token and provider.phone_number_id:
-                try:
-                    send_result = await provider.send_message(order.customer_phone, message)
-                    if send_result.success:
-                        sent_via = "whatsapp"
-                    else:
-                        logger.warning(f"WhatsApp followup failed: {send_result.error_message}")
-                except Exception as e:
-                    logger.warning(f"WhatsApp followup error: {e}")
+    # Try to send via WhatsApp if channel exists for seller — must succeed to count
+    if not order.customer_phone:
+        return {"success": False, "error": "recipient_missing", "reason": "no phone", "permanent": True}
 
-    if sent_via == "log":
+    channel_result = await db.execute(
+        select(Channel)
+        .where(Channel.seller_id == order.seller_id)
+        .where(Channel.type == "whatsapp")
+        .where(Channel.status == "active")
+        .limit(1)
+    )
+    channel = channel_result.scalar_one_or_none()
+    if not channel:
         logger.info(
-            f"Follow-up #{order.followup_count + 1} → {order.customer_name} (logged, no channel)",
+            f"Follow-up #{order.followup_count + 1} → {order.customer_name} (no channel, suppressed)",
             extra={"order_id": order.id, "seller_id": order.seller_id},
         )
+        return {"success": False, "error": "no channel", "reason": "simulated_not_sent", "permanent": True}
 
+    config = decrypt_config(channel.config_encrypted)
+    provider = WhatsAppCloudProvider(
+        access_token=config.get("access_token", ""),
+        phone_number_id=config.get("phone_number_id", channel.external_id),
+        app_secret=config.get("app_secret", ""),
+    )
+    if not provider.access_token or not provider.phone_number_id:
+        logger.info(
+            f"Follow-up #{order.followup_count + 1} → {order.customer_name} (channel not configured, suppressed)",
+            extra={"order_id": order.id, "seller_id": order.seller_id},
+        )
+        return {"success": False, "error": "channel not configured", "reason": "simulated_not_sent", "permanent": True}
+
+    try:
+        send_result = await provider.send_message(order.customer_phone, message)
+    except Exception as e:
+        logger.warning(f"WhatsApp followup error: {e}", extra={"order_id": order.id})
+        return {"success": False, "error": f"provider exception: {e}", "reason": "provider_unavailable"}
+
+    if not send_result.success:
+        logger.warning(
+            f"WhatsApp followup failed: {send_result.error_message}",
+            extra={"order_id": order.id, "seller_id": order.seller_id},
+        )
+        return {
+            "success": False,
+            "error": send_result.error_message or "provider rejected",
+            "reason": "provider_rejected",
+        }
+
+    # Only provider accepted counts as sent — then mark
     await mark_followup_sent(order.id, db)
-    return {"success": True, "order_id": order.id, "sent_via": sent_via}
+    return {"success": True, "order_id": order.id, "sent_via": "whatsapp"}
 
 
 # ════════════════════════════════════════════════

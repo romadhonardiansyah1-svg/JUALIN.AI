@@ -51,8 +51,8 @@ export default function LandingPage() {
 
   const faqs = [
     { q: "Apakah benar-benar gratis?", a: "Ya! Plan Free memberikan 50 chat AI per bulan tanpa biaya, selamanya. Tidak perlu kartu kredit untuk mendaftar." },
-    { q: "Bagaimana AI bisa paham produk saya?", a: "Cukup tambahkan produk ke katalog, AI akan otomatis memahami nama, deskripsi, harga, dan stok menggunakan teknologi semantic search." },
-    { q: "Apakah AI bisa salah jawab?", a: "AI hanya menjawab berdasarkan data katalog yang kamu masukkan. Jika pertanyaan di luar konteks, AI akan meminta customer menghubungi langsung." },
+    { q: "Bagaimana AI bisa paham produk saya?", a: "Cukup tambahkan produk ke katalog, AI akan diarahkan menggunakan data katalog dan tetap dapat keliru. Selalu periksa respons sebelum dipublikasikan." },
+    { q: "Apakah AI bisa salah jawab?", a: "AI diarahkan menggunakan data katalog dan tetap dapat keliru. Jika pertanyaan di luar konteks, AI diinstruksikan meminta customer menghubungi langsung, tetapi kesalahan tetap mungkin." },
     { q: "Bagaimana customer mengakses chat?", a: "Setiap toko mendapat link unik (contoh: jualin.ai/chat/nama-toko). Tinggal share ke customer atau pasang di bio Instagram/WhatsApp." },
     { q: "Bagaimana cara pembayaran?", a: "Kami mendukung QRIS (semua e-wallet & mobile banking) dan Virtual Account (BCA, BNI, BRI, Mandiri) melalui Midtrans dan Cashi.id." },
   ];
@@ -115,7 +115,7 @@ export default function LandingPage() {
               <div className={styles.trustBadges}>
                 <span>✓ Gratis selamanya</span>
                 <span>✓ Tanpa kartu kredit</span>
-                <span>✓ Setup 5 menit</span>
+                <span>✓ Setup terpandu</span>
               </div>
             </div>
             <div className={styles.heroVisual}>
@@ -146,25 +146,25 @@ export default function LandingPage() {
                   <span className={styles.sendIcon}>➤</span>
                 </div>
               </div>
-              <div className={styles.floatingBadge1}>⚡ 300× Lebih Cepat</div>
+              <div className={styles.floatingBadge1}>⚡ Respons Cepat</div>
               <div className={styles.floatingBadge2}>🛒 Auto Order</div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ── Social Proof Stats ── */}
+      {/* ── Social Proof Stats — truthful, no unverified claims ── */}
       <section className={styles.stats}>
         <div className="container">
           <div className={styles.statsGrid}>
             <div className={styles.statItem}>
-              <span className={styles.statNumber}>300×</span>
-              <span className={styles.statLabel}>Lebih Cepat Respons</span>
+              <span className={styles.statNumber}>Cepat</span>
+              <span className={styles.statLabel}>Respons Chat Terarah</span>
             </div>
             <div className={styles.statDivider}></div>
             <div className={styles.statItem}>
-              <span className={styles.statNumber}>100%</span>
-              <span className={styles.statLabel}>Chat Terbalas 24/7</span>
+              <span className={styles.statNumber}>Siaga</span>
+              <span className={styles.statLabel}>Dapat Membantu di Luar Jam Operasional</span>
             </div>
             <div className={styles.statDivider}></div>
             <div className={styles.statItem}>
@@ -173,8 +173,8 @@ export default function LandingPage() {
             </div>
             <div className={styles.statDivider}></div>
             <div className={styles.statItem}>
-              <span className={styles.statNumber}>5 mnt</span>
-              <span className={styles.statLabel}>Setup Pertama</span>
+              <span className={styles.statNumber}>Panduan</span>
+              <span className={styles.statLabel}>Setup Terpandu</span>
             </div>
           </div>
         </div>
@@ -310,7 +310,7 @@ export default function LandingPage() {
               Daftar Gratis →
             </Link>
           </div>
-          <p className={styles.ctaNote}>Dipercaya oleh UMKM di seluruh Indonesia 🇮🇩</p>
+          <p className={styles.ctaNote}>Dirancang untuk UMKM Indonesia 🇮🇩</p>
         </div>
       </section>
 

@@ -23,11 +23,9 @@ export default function DashboardOverview() {
         setSummary(s);
         setQuota(q);
       } catch (e) {
-        setSummary({
-          chat_today: 0, orders_today: 0, revenue_today: 0,
-          products_active: 0, orders_pending: 0, messages_today: 0, avg_response_time: 0,
-        });
-        setQuota({ used: 0, limit: 0, remaining: 0, percentage: 0 });
+        // P0.5: failure must not appear as valid zero data
+        setSummary(null);
+        setQuota(null);
       }
 
       try {
@@ -75,13 +73,13 @@ export default function DashboardOverview() {
         { label: "AI Bantu Closing", value: `Rp ${((moneyData.ai_assisted_revenue || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "green", icon: "🤖" },
         { label: "Order Dibantu AI", value: moneyData.ai_assisted_orders || 0, change: "", up: true, type: "blue", icon: "🛒" },
         { label: "Payment Pending", value: `Rp ${((moneyData.pending_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: false, type: "orange", icon: "⏳" },
-        { label: "Revenue Recovered", value: `Rp ${((moneyData.recovered_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "purple", icon: "💰" },
+        { label: "Pembayaran teramati", value: `Rp ${((moneyData.recovered_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "purple", icon: "💰" },
       ]
     : [
-        { label: "Chat Hari Ini", value: summary?.chat_today || 0, change: "+12%", up: true, type: "green", icon: "💬" },
-        { label: "Order Hari Ini", value: summary?.orders_today || 0, change: "+8%", up: true, type: "blue", icon: "🛒" },
-        { label: "Revenue", value: `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)}Jt`, change: "+15%", up: true, type: "purple", icon: "💰" },
-        { label: "Avg Respons", value: `${summary?.avg_response_time || 3} dtk`, change: "", up: true, type: "orange", icon: "⚡" },
+        { label: "Chat Hari Ini", value: summary?.chat_today ?? "—", change: "", up: true, type: "green", icon: "💬" },
+        { label: "Order Hari Ini", value: summary?.orders_today ?? "—", change: "", up: true, type: "blue", icon: "🛒" },
+        { label: "Revenue", value: summary ? `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)}Jt` : "—", change: "", up: true, type: "purple", icon: "💰" },
+        { label: "Avg Respons", value: summary ? `${summary?.avg_response_time || 3} dtk` : "—", change: "", up: true, type: "orange", icon: "⚡" },
       ];
 
   const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -103,14 +101,20 @@ export default function DashboardOverview() {
         </Link>
       </div>
 
-      {/* Alert Banner */}
+      {/* Alert Banner — truthful, no claim of AI active without capability */}
       {summary?.orders_pending > 0 && (
         <div className={styles.alertBanner}>
           <span className={styles.alertIcon}>⚠️</span>
           <span>
-            <strong>{summary.orders_pending} customer belum bayar</strong> — follow-up AI aktif
+            <strong>{summary.orders_pending} customer belum bayar</strong> — periksa pesanan menunggu pembayaran
           </span>
           <Link href="/dashboard/orders" className={styles.alertLink}>Lihat Order →</Link>
+        </div>
+      )}
+      {summary === null && (
+        <div className={styles.alertBanner}>
+          <span className={styles.alertIcon}>ℹ️</span>
+          <span>Bagian ringkasan belum dapat dimuat. Data lain tetap aman.</span>
         </div>
       )}
 

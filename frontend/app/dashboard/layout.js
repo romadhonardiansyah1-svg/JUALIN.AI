@@ -128,9 +128,19 @@ export default function DashboardLayout({ children }) {
   }, [pathname, isAdmin]);
 
   const handleLogout = () => {
-    localStorage.removeItem("jualin_token");
-    localStorage.removeItem("jualin_user");
-    router.push("/login");
+    // P0.3b: clear tenant-isolated cache and epoch on logout
+    import("@/lib/api").then(({ clearAuthStateAndCache }) => {
+      try {
+        clearAuthStateAndCache();
+      } catch {}
+      router.push("/login");
+    }).catch(() => {
+      try {
+        localStorage.removeItem("jualin_token");
+        localStorage.removeItem("jualin_user");
+      } catch {}
+      router.push("/login");
+    });
   };
 
   if (!user) return null;
