@@ -94,6 +94,34 @@ Untuk menjalankan seluruh stack baru:
 
     docker compose up --build -d
 
+## Runbook containment scheduler legacy
+
+Sampai scheduler legacy dihapus, setiap deployment harus mempertahankan kedua
+flag berikut pada process backend dan worker:
+
+    SCHEDULER_ENABLED=false
+    ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=false
+
+Compose mengunci kedua service pada nilai `false`. Sebelum cutover, validasi
+Compose tanpa mencetak environment, lalu periksa hanya deklarasi flag versioned.
+Jangan mencetak hasil render penuh karena dapat memuat secret:
+
+    docker compose config --quiet
+    git grep -n -E "SCHEDULER_ENABLED|ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP" -- docker-compose.yml
+
+Recreate backend dan worker agar process lama menerima graceful stop dan tidak
+tetap menjalankan registry dari image/config sebelumnya:
+
+    docker compose up -d --build --force-recreate backend worker
+    docker compose ps -a
+    docker compose logs --since 5m backend worker | grep -E "legacy scheduler disabled|legacy followup cron disabled"
+
+Gate deployment gagal bila masih ada process backend/worker lama, log startup
+tidak memuat `legacy scheduler disabled` dan `legacy followup cron disabled`,
+atau status admin melaporkan legacy worker terdaftar. Rollback harus tetap
+mempertahankan kedua flag di atas; jangan menghidupkan legacy follow-up atau
+auto-cancel sebagai rollback.
+
 Kode `create_all` dan patch compatibility di backend/models/database.py hanya dipertahankan untuk recovery deployment legacy yang telah diaudit. Jangan mengaktifkan `AUTO_CREATE_TABLES` pada instalasi normal.
 
 Jangan langsung menjalankan Alembic pada database lama yang dibuat dengan create_all tetapi belum memiliki alembic_version. Database tersebut harus diaudit dan diberi baseline atau stamp yang benar lebih dahulu. Untuk database test yang benar-benar baru, validasi upgrade hingga head sebelum mengubah jalur deployment production.

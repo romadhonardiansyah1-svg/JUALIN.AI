@@ -10,6 +10,7 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 
 from config import get_settings
+from core.logging_config import get_logger
 from models.database import get_db
 from models.user import User, UserRole, UserTier
 from models.product import Product
@@ -19,6 +20,38 @@ from api.routes_auth import get_current_user, create_access_token
 
 router = APIRouter()
 settings = get_settings()
+logger = get_logger("api.admin")
+
+
+def _worker_cron_names() -> frozenset[str] | None:
+    """Return the ARQ worker registry, or None when it cannot be inspected."""
+    try:
+        from worker import WorkerSettings
+
+        names = []
+        for cron_job in WorkerSettings.cron_jobs:
+            name = getattr(getattr(cron_job, "coroutine", None), "__name__", "")
+            if not name:
+                raise RuntimeError("ARQ cron registry entry has no coroutine name")
+            names.append(name)
+        return frozenset(names)
+    except Exception:
+        logger.warning("Worker cron registry unavailable; reporting scheduler status as unknown")
+        return None
+
+
+def _registered_scheduler_status(
+    cron_names: frozenset[str] | None,
+    cron_name: str,
+    configured: bool,
+    registered_while_disabled: str = "registered_disabled",
+) -> str:
+    """Combine feature configuration with the registry without inferring runtime health."""
+    if cron_names is None:
+        return "unknown"
+    if cron_name in cron_names:
+        return "registered_enabled" if configured else registered_while_disabled
+    return "missing_enabled" if configured else "not_registered"
 
 
 # ── Auth Guard ──
@@ -240,34 +273,31 @@ async def get_system_health(
         getattr(settings, "SCHEDULER_ENABLED", False)
         and getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False)
     )
-    legacy_main_scheduler = "running" if legacy_main_enabled else "disabled"
+    legacy_main_scheduler = "enabled" if legacy_main_enabled else "disabled"
 
-    # Worker cron registration check (import here to avoid circular at module load)
-    try:
-        from worker import WorkerSettings
+    cron_names = _worker_cron_names()
+    legacy_worker_cron = _registered_scheduler_status(
+        cron_names,
+        "cron_followup_scheduler",
+        bool(getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False)),
+        registered_while_disabled="registered_config_disabled_unsafe",
+    )
 
-        def _is_followup_cron(c):
-            func = getattr(c, "func", None)
-            name = getattr(func, "__name__", "") if func else ""
-            return name == "cron_followup_scheduler" or "followup" in str(c).lower()
-
-        worker_has_followup = any(_is_followup_cron(c) for c in WorkerSettings.cron_jobs)
-    except Exception:
-        worker_has_followup = False
-
-    legacy_worker_cron = "registered" if worker_has_followup else "not_registered"
-
-    # Recovery scheduler — disabled until flag enabled (future phase)
     recovery_enabled = bool(getattr(settings, "ENABLE_PAYMENT_RECOVERY", False))
-    recovery_scheduler = "enabled" if recovery_enabled else "disabled"
+    recovery_scheduler = _registered_scheduler_status(
+        cron_names,
+        "cron_recovery_detector",
+        recovery_enabled,
+    )
 
-    # Deprecated single field kept for backward compatibility, but always reflects legacy main
+    # Deprecated value contract retained for the existing frontend consumer.
+    legacy_main_compat = "running" if legacy_main_enabled else "disabled"
     return {
         "backend": "online",
         "database": database_status,
         "redis": redis_status,
         "ai_engine": "ready",
-        "followup_scheduler": legacy_main_scheduler,  # deprecated alias
+        "followup_scheduler": legacy_main_compat,
         "schedulers": {
             "legacy_main": legacy_main_scheduler,
             "legacy_worker_cron": legacy_worker_cron,

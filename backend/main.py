@@ -67,7 +67,7 @@ async def followup_scheduler():
                 for fu in followups:
                     # In production, send via WhatsApp/SMS API
                     logger.info(
-                        f"Follow-up #{fu['followup_number']} → {fu['customer_name']}",
+                        "Legacy follow-up candidate processed",
                         extra={
                             "order_id": fu["order_id"],
                             "seller_id": fu["seller_id"],

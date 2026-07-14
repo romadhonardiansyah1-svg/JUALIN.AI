@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import Link from "next/link";
 import styles from "./admin.module.css";
+import { buildSystemHealthRows } from "./system-health";
 
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
@@ -68,10 +69,17 @@ export default function AdminDashboard() {
   };
 
   const healthIcon = (status) => {
-    if (status === "online" || status === "connected" || status === "ready" || status === "running") 
-      return <span className="badge badge-success">●&nbsp;{status}</span>;
-    return <span className="badge badge-danger">●&nbsp;{status}</span>;
+    const healthy = ["online", "connected", "ready", "running"].includes(status);
+    const safelyInactive = ["disabled", "not_registered", "registered_disabled"].includes(status);
+    const badgeClass = healthy
+      ? "badge-success"
+      : safelyInactive
+        ? "badge-neutral"
+        : "badge-danger";
+    return <span className={`badge ${badgeClass}`}>●&nbsp;{status}</span>;
   };
+
+  const systemHealthRows = buildSystemHealthRows(systemHealth);
 
   return (
     <div className={styles.adminPage}>
@@ -164,10 +172,10 @@ export default function AdminDashboard() {
           <div className="card">
             <h3 className={styles.cardTitle}>🖥️ System Health</h3>
             <div className={styles.sysInfo}>
-              {systemHealth && Object.entries(systemHealth).filter(([k]) => k !== "version" && k !== "python_version" && k !== "platform" && k !== "llm_model" && k !== "embedding_model").map(([key, val]) => (
+              {systemHealthRows.map(({ key, label, value }) => (
                 <div key={key} className={styles.sysRow}>
-                  <span className={styles.sysLabel}>{key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</span>
-                  {healthIcon(val)}
+                  <span className={styles.sysLabel}>{label}</span>
+                  {healthIcon(value)}
                 </div>
               ))}
               <div className={styles.sysRow}>
