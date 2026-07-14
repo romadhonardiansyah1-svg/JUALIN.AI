@@ -42,6 +42,7 @@ from api.routes_trust import router as trust_router
 from api.routes_growth_links import router as growth_links_router
 from api.routes_wa_templates import router as wa_templates_router
 from api.routes_agent_os import router as agent_os_router
+from api.routes_system import router as system_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -229,6 +230,9 @@ app.include_router(wa_templates_router, prefix="/api/whatsapp", tags=["WhatsApp 
 
 # JUALIN OS router
 app.include_router(agent_os_router, prefix="/api/agent-os", tags=["Agent OS"])
+
+# System capabilities (P2.3)
+app.include_router(system_router, prefix="/api/system", tags=["System"])
 
 # ── Static Files (uploads) ──
 import os
