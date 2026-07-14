@@ -48,10 +48,12 @@ export default function ImportPage() {
 
   async function downloadCsv(endpoint, filename) {
     try {
-      const token = localStorage.getItem("jualin_token");
       const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+      const csrfCookie = (typeof document !== "undefined" ? document.cookie.split("; ").find(c => c.startsWith("jualin_csrf=") || c.startsWith("__Host-jualin_csrf=")) : null);
+      const csrfValue = csrfCookie ? decodeURIComponent(csrfCookie.split("=")[1]) : "";
       const res = await fetch(`${apiBase}${endpoint}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+        headers: { ...(csrfValue ? { "X-CSRF-Token": csrfValue } : {}) },
       });
       if (!res.ok) throw new Error("Export gagal");
       const blob = await res.blob();

@@ -47,11 +47,13 @@ export default function OrdersPage() {
 
   const handleExportCSV = async () => {
     try {
-      const token = localStorage.getItem("jualin_token");
       const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
       const url = `${apiBase}/api/orders/export/csv${filter ? `?status=${filter}` : ""}`;
+      const csrfCookie = (typeof document !== "undefined" ? document.cookie.split("; ").find(c => c.startsWith("jualin_csrf=") || c.startsWith("__Host-jualin_csrf=")) : null);
+      const csrfValue = csrfCookie ? decodeURIComponent(csrfCookie.split("=")[1]) : "";
       const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+        headers: { ...(csrfValue ? { "X-CSRF-Token": csrfValue } : {}) },
       });
       if (!res.ok) throw new Error("Gagal export");
       const blob = await res.blob();

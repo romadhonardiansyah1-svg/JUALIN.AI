@@ -123,15 +123,12 @@ export function clearAuthStateAndCache() {
   }
 }
 
-// ── Fetch wrapper with epoch-aware inflight guard + typed errors (P0.4) ──
+// ── Fetch wrapper with epoch-aware inflight guard + typed errors (P0.4) + P3.5 no Bearer ──
 async function fetchAPI(endpoint, options = {}) {
   const requestEpoch = _sessionEpoch;
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("jualin_token") : null;
 
   const headers = {
     "Content-Type": "application/json",
-    ...(token && { Authorization: `Bearer ${token}` }),
     ...options.headers,
   };
 
@@ -294,21 +291,32 @@ async function fetchCached(endpoint, options = {}, ttl = CACHE_TTL) {
   return data;
 }
 
-// ── File upload helper ──
+// ── File upload helper — P3.5: no Bearer, use HttpOnly cookies + CSRF ──
 async function uploadFile(endpoint, file, extraData = {}) {
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("jualin_token") : null;
-
   const formData = new FormData();
   formData.append("file", file);
   Object.entries(extraData).forEach(([key, val]) =>
     formData.append(key, val)
   );
 
+  // CSRF header for cookie-auth
+  const csrfHeaders = {};
+  if (typeof document !== "undefined") {
+    try {
+      const csrfCookie = document.cookie
+        .split("; ")
+        .find((c) => c.startsWith("jualin_csrf=") || c.startsWith("__Host-jualin_csrf="));
+      if (csrfCookie) {
+        csrfHeaders["X-CSRF-Token"] = decodeURIComponent(csrfCookie.split("=")[1]);
+      }
+    } catch {}
+  }
+
   const res = await fetch(`${API_BASE}${endpoint}`, {
     method: "POST",
+    credentials: "include",
     headers: {
-      ...(token && { Authorization: `Bearer ${token}` }),
+      ...csrfHeaders,
       // Don't set Content-Type — browser sets it with boundary for FormData
     },
     body: formData,
