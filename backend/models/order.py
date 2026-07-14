@@ -111,7 +111,10 @@ class Order(Base):
     payment_method = Column(String(50), nullable=True)   # "qris", "va_bca", "gopay", "snap"
     payment_provider = Column(String(20), nullable=True)  # "midtrans", "cashi"
     payment_invoice_id = Column(String(100), nullable=True, index=True)  # Provider order/invoice id
-    payment_access_token = Column(String(100), nullable=True, index=True)  # Public payment page token
+    payment_access_token = Column(String(100), nullable=True, index=True)  # Legacy plaintext token (to be sunset)
+    payment_access_token_hmac = Column(String(64), nullable=True, index=True)  # HMAC of token, P2.4
+    payment_access_token_key_version = Column(Integer, nullable=True)
+    payment_access_token_expires_at = Column(DateTime(timezone=True), nullable=True)
     payment_url = Column(String(500), nullable=True)      # URL or QR data
     payment_qr_data = Column(Text, nullable=True)
     payment_va_number = Column(String(100), nullable=True)

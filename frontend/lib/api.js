@@ -473,6 +473,36 @@ export const api = {
   createPublicPayment: (body) =>
     fetchAPI("/api/payments/public/create", { method: "POST", body: JSON.stringify(body) }),
 
+  // ── P2.4 — Public capability session flow (fragment -> HttpOnly cookie) ──
+  exchangePublicCapability: (orderId, bootstrapToken) =>
+    fetchAPI(`/api/public/payments/${orderId}/exchange`, {
+      method: "POST",
+      body: JSON.stringify({ bootstrap_token: bootstrapToken }),
+      credentials: "include",
+    }),
+  getPublicPaymentStatusViaSession: (orderId) =>
+    fetchAPI(`/api/public/payments/${orderId}/status`, {
+      method: "GET",
+      credentials: "include",
+    }),
+  getPublicPaymentMethodsViaSession: (orderId) =>
+    fetchAPI(`/api/public/payments/${orderId}/methods`, {
+      method: "GET",
+      credentials: "include",
+    }),
+  createPublicPaymentViaSession: (body) =>
+    fetchAPI(`/api/public/payments/${body.order_id}/create-via-session`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      credentials: "include",
+    }),
+  grantReminderConsent: (orderId, granted, copyVersion) =>
+    fetchAPI(`/api/public/payments/${orderId}/reminder-consent`, {
+      method: "POST",
+      body: JSON.stringify({ granted, copy_version: copyVersion }),
+      credentials: "include",
+    }),
+
   // Utility
   clearCache: () => clearCache(),
 

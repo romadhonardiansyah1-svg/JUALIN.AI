@@ -109,10 +109,26 @@ class Settings(BaseSettings):
     WHATSAPP_GRAPH_VERSION: str = "v20.0"
     WHATSAPP_APP_SECRET: str = ""
 
+    # ── Payment recovery & contact HMAC/encryption keys (P2.4) ──
+    # Separate from auth secrets per INV-14
+    PAYMENT_CAPABILITY_HMAC_KEY: str = "payment-capability-hmac-key-dev-min-32-characters-long"
+    PAYMENT_CAPABILITY_HMAC_KEY_VERSION: int = 1
+    PAYMENT_REFERENCE_HMAC_KEY: str = "payment-reference-hmac-key-dev-min-32-chars"
+    PAYMENT_REFERENCE_HMAC_KEY_VERSION: int = 1
+    CONTACT_HMAC_KEY: str = "contact-hmac-key-dev-min-32-characters-long-1234"
+    CONTACT_HMAC_KEY_VERSION: int = 1
+    CONTACT_ENCRYPTION_KEY: str = "contact-encryption-key-dev-32-bytes-long!!"
+    CONTACT_ENCRYPTION_KEY_VERSION: int = 1
+
     # Security controls
     MAX_JSON_BODY_BYTES: int = 2 * 1024 * 1024
     MAX_MULTIPART_BODY_BYTES: int = 8 * 1024 * 1024
     MIN_PASSWORD_LENGTH: int = 10
+
+    # Public payment capability settings
+    PAYMENT_CAPABILITY_TOKEN_TTL_HOURS: int = 24
+    PAYMENT_CAPABILITY_SESSION_TTL_MINUTES: int = 30
+    PUBLIC_ORIGIN_ALLOWLIST: list[str] = ["http://localhost:3000", "https://app.example.com"]
     
     class Config:
         env_file = ".env"

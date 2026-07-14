@@ -281,3 +281,45 @@ class RecipientContactWindow(Base):
     __table_args__ = (
         Index("ix_contact_window_seller_subject_purpose", "seller_id", "contact_subject_id", "purpose"),
     )
+
+
+class PaymentCapability(Base):
+    """HMAC-stored public payment capability token, not plaintext."""
+    __tablename__ = "payment_capabilities"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    payment_attempt_id = Column(UUID(as_uuid=True), ForeignKey("payment_attempts.id"), nullable=False, index=True)
+    token_hmac = Column(String(64), nullable=False, unique=True, index=True)
+    key_version = Column(Integer, nullable=False, default=1, server_default="1")
+    audience = Column(String(50), nullable=False, default="public_payment")
+    purpose = Column(String(50), nullable=False, default="payment_status")
+    issued_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revocation_epoch = Column(Integer, nullable=False, default=0, server_default="0")
+    is_legacy_query_token = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PaymentCapabilitySession(Base):
+    """Short-lived HttpOnly session from fragment exchange."""
+    __tablename__ = "payment_capability_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    capability_id = Column(UUID(as_uuid=True), ForeignKey("payment_capabilities.id"), nullable=True)
+    seller_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    payment_attempt_id = Column(UUID(as_uuid=True), ForeignKey("payment_attempts.id"), nullable=False, index=True)
+    session_token_hmac = Column(String(64), nullable=False, unique=True, index=True)
+    key_version = Column(Integer, nullable=False, default=1, server_default="1")
+    audience = Column(String(50), nullable=False, default="public_payment_session")
+    purpose = Column(String(50), nullable=False, default="payment_status")
+    issued_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

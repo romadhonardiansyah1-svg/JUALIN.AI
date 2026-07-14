@@ -78,6 +78,86 @@ def get_payment_gateway(provider: str = None) -> PaymentGateway:
         )
 
 
+async def _get_or_create_payment_attempt_and_capability(
+    db: AsyncSession,
+    order,
+    provider: str,
+    invoice_id: str,
+    amount: int,
+):
+    """P2.4 — Create PaymentAttempt and HMAC capability for public payment."""
+    from models.payment_recovery import PaymentAttempt
+    from sqlalchemy import select, func
+    from decimal import Decimal
+    import uuid
+    from datetime import timedelta
+
+    # Get current max attempt_version for order
+    max_ver_q = await db.execute(
+        select(func.coalesce(func.max(PaymentAttempt.attempt_version), 0)).where(
+            PaymentAttempt.order_id == order.id, PaymentAttempt.seller_id == order.seller_id
+        )
+    )
+    max_ver = max_ver_q.scalar() or 0
+    new_version = max_ver + 1
+
+    # Expire time from gateway result? For now, 24h
+    expires_at = None
+    try:
+        # Try to get from result? We'll set 24h from now
+        from datetime import datetime, timezone
+
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    except Exception:
+        expires_at = None
+
+    attempt = PaymentAttempt(
+        seller_id=order.seller_id,
+        order_id=order.id,
+        provider=provider,
+        provider_account_id=None,
+        external_attempt_id=invoice_id,
+        attempt_version=new_version,
+        is_current=True,
+        status="pending",
+        amount=Decimal(str(amount)),
+        currency="IDR",
+        payment_expires_at=expires_at,
+        trusted_link_reference=None,
+    )
+    # Mark previous attempts as not current
+    await db.execute(
+        select(PaymentAttempt).where(PaymentAttempt.order_id == order.id)
+    )  # dummy to ensure table exists
+    from sqlalchemy import text
+
+    await db.execute(
+        text(
+            "UPDATE payment_attempts SET is_current=false WHERE seller_id=:seller_id AND order_id=:order_id AND is_current=true"
+        ),
+        {"seller_id": order.seller_id, "order_id": order.id},
+    )
+
+    db.add(attempt)
+    await db.flush()
+
+    # Create capability for this attempt
+    from services.payment_capability import create_capability
+
+    cap, raw_token = await create_capability(
+        db,
+        seller_id=order.seller_id,
+        order_id=order.id,
+        payment_attempt_id=attempt.id,
+        audience="public_payment",
+        purpose="payment_status",
+        ttl_hours=settings.PAYMENT_CAPABILITY_TOKEN_TTL_HOURS,
+    )
+    await db.flush()
+
+    return attempt, cap, raw_token
+
+
 async def create_payment_for_order(
     order,
     method: str = "qris",
@@ -105,19 +185,20 @@ async def create_payment_for_order(
             provider = settings.DEFAULT_PAYMENT_PROVIDER
 
     gateway = get_payment_gateway(provider)
-    if not order.payment_access_token:
-        order.payment_access_token = secrets.token_urlsafe(32)
+    # P2.4: stop minting plaintext payment_access_token for new writes
+    # Use a temporary token for gateway if needed, but don't store as plaintext long-term
+    gateway_token = secrets.token_urlsafe(16)  # short-lived for gateway only, not stored as public capability
 
     # Create payment via gateway
     result = await gateway.create_payment(
         order_id=order.id,
         amount=int(order.total),
         customer_name=order.customer_name,
-        customer_email="",  # Not collected in chat flow
+        customer_email="",
         customer_phone=order.customer_phone or "",
         items=order.items if isinstance(order.items, list) else [],
         method=method,
-        payment_token=order.payment_access_token,
+        payment_token=gateway_token,
     )
 
     if not result.success:
@@ -134,7 +215,10 @@ async def create_payment_for_order(
             provider=provider,
         )
 
-    # Update order with payment info
+    # Update order with payment info + create PaymentAttempt + capability (P2.4)
+    capability_token = None
+    capability = None
+    attempt = None
     if db:
         order.payment_method = result.method
         order.payment_provider = result.provider
@@ -144,8 +228,22 @@ async def create_payment_for_order(
         order.payment_va_number = result.token if result.method.startswith("va_") else None
         order.payment_expires_at = result.expires_at
 
+        # Create PaymentAttempt + capability for secure public link (fragment, not query)
+        try:
+            attempt, capability, capability_token = await _get_or_create_payment_attempt_and_capability(
+                db, order, provider, result.order_id, int(order.total)
+            )
+            # Store HMAC in order for transition (dual-read)
+            order.payment_access_token_hmac = capability.token_hmac
+            order.payment_access_token_key_version = capability.key_version
+            order.payment_access_token_expires_at = capability.expires_at
+            # Do NOT set plaintext payment_access_token for new writes
+        except Exception as e:
+            logger.warning(f"Failed to create payment attempt/capability: {e}")
+
         # Record status change
         from models.order_status_history import OrderStatusHistory
+
         history = OrderStatusHistory(
             order_id=order.id,
             from_status=order.status.value if hasattr(order.status, 'value') else str(order.status),
@@ -156,21 +254,30 @@ async def create_payment_for_order(
         db.add(history)
         await db.commit()
 
+    # Build public URL with fragment (not query) per P2.4
+    public_fragment_url = None
+    if capability_token:
+        # Fragment bootstrap: /pay/{order_id}#token=xxx
+        public_fragment_url = f"/pay/{order.id}#token={capability_token}"
+
     return {
         "success": True,
         "order_id": order.id,
-        "status": order.status.value if hasattr(order.status, "value") else str(order.status),
+        "status": order.status.value if hasattr(order.status, 'value') else str(order.status),
         "invoice_id": result.order_id,
         "provider": result.provider,
         "method": result.method,
         "amount": result.amount,
         "payment_url": result.payment_url,
         "qr_data": result.qr_data,
-        "snap_token": result.token,       # For Midtrans Snap.js
+        "snap_token": result.token,
         "va_number": result.token if method.startswith("va_") else None,
         "expires_at": result.expires_at,
         "payment_created": True,
-        "public_token": order.payment_access_token,
+        "public_token": None,  # No longer mint plaintext
+        "capability_token": capability_token,  # Raw token only returned once, for fragment link
+        "capability_link": public_fragment_url,
+        "payment_attempt_id": str(attempt.id) if attempt else None,
     }
 
 

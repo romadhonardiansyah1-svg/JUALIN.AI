@@ -63,6 +63,8 @@ from models.payment_recovery import (
     OutcomeEvent,
     AttributionAssessment,
     RecipientContactWindow,
+    PaymentCapability,
+    PaymentCapabilitySession,
 )
 
 __all__ = [
@@ -155,5 +157,7 @@ __all__ = [
     "OutcomeEvent",
     "AttributionAssessment",
     "RecipientContactWindow",
+    "PaymentCapability",
+    "PaymentCapabilitySession",
 ]
 
