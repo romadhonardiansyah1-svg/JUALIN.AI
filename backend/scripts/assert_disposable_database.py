@@ -97,6 +97,7 @@ ALLOWED_USER_PREFIXES = (
     "test_",
     "postgres",  # common local superuser allowed for dev
     "test",
+    "jualin",  # Docker superuser for disposable test DBs
 )
 
 # Sentinel tables to try in order

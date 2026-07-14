@@ -4,7 +4,7 @@ Payment recovery domain — P2.1 foundation for consent, opportunity, dispatch, 
 import uuid
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, Boolean, Numeric,
-    UniqueConstraint, Index, CheckConstraint, Text, JSON, LargeBinary,
+    UniqueConstraint, Index, CheckConstraint, JSON, LargeBinary, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -123,7 +123,7 @@ class ContactPermission(Base):
             "uq_contact_permission_active",
             "seller_id", "channel", "contact_subject_id", "purpose", "scope_type", "payment_attempt_id",
             unique=True,
-            postgresql_where=Text("status='active'"),
+            postgresql_where=text("status='active'"),
         ),
     )
 
@@ -149,7 +149,7 @@ class ContactSuppression(Base):
             "uq_contact_suppression_active",
             "seller_id", "channel", "contact_subject_id", "purpose",
             unique=True,
-            postgresql_where=Text("status='active'"),
+            postgresql_where=text("status='active'"),
         ),
     )
 
