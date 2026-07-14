@@ -2,11 +2,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { api, clearAuthStateAndCache } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 import styles from "./auth.module.css";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -17,10 +18,7 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      clearAuthStateAndCache();
-      const data = await api.login(form);
-      localStorage.setItem("jualin_token", data.access_token);
-      localStorage.setItem("jualin_user", JSON.stringify(data.user));
+      await login(form);
       router.push("/dashboard");
     } catch (err) {
       setError(err.message || "Login gagal. Periksa email dan password Anda.");

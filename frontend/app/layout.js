@@ -1,4 +1,5 @@
 import "./globals.css";
+import AuthProvider from "@/components/AuthProvider";
 
 export const metadata = {
   title: "JUALIN.AI — AI Sales Assistant untuk UMKM",
@@ -11,8 +12,6 @@ export const metadata = {
 export const viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: "no",
   themeColor: "#6366f1",
 };
 
@@ -26,7 +25,7 @@ export default function RootLayout({ children }) {
         <link rel="manifest" href="/manifest.json" />
       </head>
       <body>
-        {children}
+        <AuthProvider>{children}</AuthProvider>
         <script
           dangerouslySetInnerHTML={{
             __html: `

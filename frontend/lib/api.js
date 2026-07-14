@@ -135,6 +135,24 @@ async function fetchAPI(endpoint, options = {}) {
     ...options.headers,
   };
 
+  // CSRF for cookie-auth mutating requests — read csrf cookie and add header
+  if (typeof document !== "undefined") {
+    const method = (options.method || "GET").toUpperCase();
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+      try {
+        const csrfCookie = document.cookie
+          .split("; ")
+          .find((c) => c.startsWith("jualin_csrf=") || c.startsWith("__Host-jualin_csrf="));
+        if (csrfCookie) {
+          const csrfValue = csrfCookie.split("=")[1];
+          if (csrfValue && !headers["X-CSRF-Token"]) {
+            headers["X-CSRF-Token"] = decodeURIComponent(csrfValue);
+          }
+        }
+      } catch {}
+    }
+  }
+
   // Timeout handling via AbortController (30s default, overridable via options.timeout)
   const timeoutMs = options.timeout ?? 30000;
   const ctrl = new AbortController();
@@ -144,6 +162,7 @@ async function fetchAPI(endpoint, options = {}) {
   let res;
   try {
     res = await fetch(`${API_BASE}${endpoint}`, {
+      credentials: "include",
       ...options,
       headers,
       signal,
@@ -323,6 +342,8 @@ export const api = {
     clearAuthStateAndCache();
     return fetchAPI("/api/auth/login", { method: "POST", body: JSON.stringify(body) });
   },
+  refreshAuth: () => fetchAPI("/api/auth/refresh", { method: "POST" }),
+  logout: () => fetchAPI("/api/auth/logout", { method: "POST" }),
   getMe: () => fetchAPI("/api/auth/me"),
   updateSettings: (body) =>
     fetchAPI("/api/auth/settings", { method: "PATCH", body: JSON.stringify(body) }),

@@ -189,10 +189,15 @@ app.add_middleware(RequestLoggingMiddleware)
 # 2. Rate limiting
 app.add_middleware(RateLimitMiddleware)
 
-# 3. CORS (innermost before route handlers)
+# 3. CSRF / Origin enforcement (P3.3)
+from middleware import CSRFMiddleware
+
+app.add_middleware(CSRFMiddleware)
+
+# 4. CORS (innermost before route handlers) — no wildcard credentialed per P3.3
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS if not settings.DEBUG else ["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

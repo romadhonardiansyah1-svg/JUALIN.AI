@@ -2,11 +2,13 @@
 import { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { api, clearAuthStateAndCache } from "@/lib/api";
+import { api } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 import styles from "../login/auth.module.css";
 
 function RegisterForm() {
   const router = useRouter();
+  const { login } = useAuth();
   const searchParams = useSearchParams();
   const [form, setForm] = useState({
     email: searchParams.get("email") || "",
@@ -22,10 +24,9 @@ function RegisterForm() {
     setError("");
     setLoading(true);
     try {
-      clearAuthStateAndCache();
-      const data = await api.register(form);
-      localStorage.setItem("jualin_token", data.access_token);
-      localStorage.setItem("jualin_user", JSON.stringify(data.user));
+      await api.register(form);
+      // Auto-login via AuthProvider (sets HttpOnly cookies, no localStorage)
+      await login({ email: form.email, password: form.password });
       router.push("/dashboard");
     } catch (err) {
       setError(err.message || "Registrasi gagal");

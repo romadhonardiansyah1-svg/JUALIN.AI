@@ -3,6 +3,7 @@ import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useAuth } from "@/components/AuthProvider";
 import styles from "./dashboard.module.css";
 
 // Seller navigation
@@ -47,6 +48,7 @@ const adminNavItems = [
   { href: "/dashboard/agent-os", icon: "🤖", label: "AI Crew" },
   { href: "/dashboard/products", icon: "📦", label: "Produk" },
   { href: "/dashboard/orders", icon: "🛒", label: "Order" },
+  { href: "/dashboard/recovery", icon: "💰", label: "Jualin Santai" },
   { href: "/dashboard/inbox", icon: "IN", label: "Inbox" },
   { href: "/dashboard/customers", icon: "C", label: "Customers" },
   { href: "/dashboard/chat", icon: "💬", label: "Chat AI" },
@@ -76,38 +78,15 @@ const adminNavItems = [
 export default function DashboardLayout({ children }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [user, setUser] = useState(null);
+  const { user, state, logout, error } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("jualin_token");
-    const userData = localStorage.getItem("jualin_user");
-    if (!token) {
+    if (state === "unauthenticated") {
       router.push("/login");
-      return;
     }
-    if (userData) {
-      try {
-        setUser(JSON.parse(userData));
-      } catch (e) {
-        localStorage.removeItem("jualin_user");
-        router.push("/login");
-        return;
-      }
-    }
-    
-    // Refresh user data from API in background
-    import("@/lib/api").then(({ api }) => {
-      api.getMe().then(freshUser => {
-        if (freshUser && freshUser.email) {
-          localStorage.setItem("jualin_user", JSON.stringify(freshUser));
-          setUser(freshUser);
-        }
-      }).catch(() => { /* ignore */ });
-    });
-  }, [router]);
+  }, [state, router]);
 
-  // Close sidebar on navigation (mobile)
   useEffect(() => {
     setSidebarOpen(false);
   }, [pathname]);
@@ -129,31 +108,43 @@ export default function DashboardLayout({ children }) {
   }, [pathname, isAdmin]);
 
   const handleLogout = () => {
-    // P0.3b: clear tenant-isolated cache and epoch on logout
-    import("@/lib/api").then(({ clearAuthStateAndCache }) => {
-      try {
-        clearAuthStateAndCache();
-      } catch {}
-      router.push("/login");
-    }).catch(() => {
-      try {
-        localStorage.removeItem("jualin_token");
-        localStorage.removeItem("jualin_user");
-      } catch {}
-      router.push("/login");
-    });
+    logout();
   };
 
-  if (!user) return null;
+  if (state === "checking" || state === "refreshing") {
+    return (
+      <div className={styles.dashboardLayout}>
+        <div style={{ padding: 20 }}>Memeriksa sesi Anda…</div>
+      </div>
+    );
+  }
+
+  if (state === "recoverable_error") {
+    return (
+      <div className={styles.dashboardLayout}>
+        <div style={{ padding: 20 }}>
+          <h3>Sesi belum dapat diperiksa karena layanan sedang bermasalah. Coba lagi.</h3>
+          <p>{error}</p>
+          <button onClick={() => window.location.reload()} style={{ marginTop: 12, padding: "8px 16px" }}>Coba lagi</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === "unauthenticated" || !user) {
+    return (
+      <div className={styles.dashboardLayout}>
+        <div style={{ padding: 20 }}>Mengalihkan ke login…</div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.dashboardLayout}>
-      {/* Mobile Overlay */}
       {sidebarOpen && (
         <div className={styles.overlay} onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar */}
       <aside className={`${styles.sidebar} ${isAdmin ? styles.sidebarAdmin : ""} ${sidebarOpen ? styles.sidebarOpen : ""}`}>
         <div className={styles.sidebarHeader}>
           <Link href="/" className={styles.logo}>
@@ -209,7 +200,6 @@ export default function DashboardLayout({ children }) {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className={styles.mainContent}>
         <header className={styles.topBar}>
           <div className={styles.topBarLeft}>

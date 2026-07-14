@@ -3,7 +3,7 @@ JUALIN.AI — Auth API Routes
 Register, Login, JWT token management
 """
 from datetime import datetime, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel, EmailStr
@@ -20,11 +20,70 @@ from config import get_settings
 from models.database import get_db
 from models.user import User, UserTier, UserRole
 from middleware import get_client_ip
+from services.auth_session_service import create_session_family
 
 router = APIRouter()
 settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
+
+
+def _get_cookie_names():
+    """Return cookie names based on DEBUG / production."""
+    if settings.DEBUG:
+        return {
+            "access": "jualin_access",
+            "refresh": "jualin_refresh",
+            "csrf": "jualin_csrf",
+        }
+    else:
+        return {
+            "access": "__Host-jualin_access",
+            "refresh": "__Host-jualin_refresh",
+            "csrf": "jualin_csrf",
+        }
+
+
+def _set_auth_cookies(response, access_token: str, refresh_token: str, csrf_token: str):
+    """Set Secure HttpOnly cookies per P3.2 contract."""
+    names = _get_cookie_names()
+    is_secure = not settings.DEBUG
+    # Access: 15 min
+    response.set_cookie(
+        key=names["access"],
+        value=access_token,
+        max_age=15 * 60,
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        path="/",
+    )
+    # Refresh: 30 days
+    response.set_cookie(
+        key=names["refresh"],
+        value=refresh_token,
+        max_age=30 * 24 * 3600,
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        path="/",
+    )
+    # CSRF: not HttpOnly
+    response.set_cookie(
+        key=names["csrf"],
+        value=csrf_token,
+        max_age=30 * 24 * 3600,
+        httponly=False,
+        secure=is_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_auth_cookies(response):
+    names = _get_cookie_names()
+    for key in [names["access"], names["refresh"], names["csrf"]]:
+        response.delete_cookie(key=key, path="/")
 
 
 # ── Pydantic Schemas ──
@@ -149,43 +208,119 @@ async def _record_auth_audit(
     )
 
 
+async def _decode_access_token(token: str) -> dict:
+    payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    if payload.get("token_type") != "access":
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+    return payload
+
+
 async def get_current_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """Dependency: extract and validate JWT, return current user."""
-    token = credentials.credentials
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        if payload.get("token_type") != "access":
+    """
+    Dependency: extract and validate JWT from Bearer OR HttpOnly cookie,
+    with ambiguous_credentials check if both present and different principal.
+
+    Transitional: accepts both cookie and Bearer, but rejects if they differ.
+    """
+    bearer_token = credentials.credentials if credentials else None
+
+    # Try cookie
+    cookie_names = _get_cookie_names()
+    cookie_token = None
+    cookies = getattr(request, "cookies", {}) or {}
+    for name in [cookie_names["access"], "__Host-jualin_access", "jualin_access"]:
+        if name in cookies:
+            cookie_token = cookies.get(name)
+            break
+
+    # If both present, resolve both and reject if different principal
+    bearer_payload = None
+    cookie_payload = None
+
+    if bearer_token:
+        try:
+            payload = jwt.decode(bearer_token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+            if payload.get("token_type") == "access":
+                bearer_payload = payload
+        except Exception:
+            bearer_payload = None
+
+    if cookie_token:
+        try:
+            payload = jwt.decode(cookie_token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+            if payload.get("token_type") == "access":
+                cookie_payload = payload
+        except Exception:
+            cookie_payload = None
+
+    if bearer_token and cookie_token:
+        # Both present — check if same principal
+        b_sub = bearer_payload.get("sub") if bearer_payload else None
+        c_sub = cookie_payload.get("sub") if cookie_payload else None
+        b_jti = bearer_payload.get("jti") if bearer_payload else None
+        c_jti = cookie_payload.get("jti") if cookie_payload else None
+        if b_sub != c_sub or b_jti != c_jti:
+            # Ambiguous credentials — audit and reject
+            try:
+                from core.audit import record_audit
+
+                await record_audit(
+                    db,
+                    action="auth.ambiguous_credentials",
+                    entity_type="auth",
+                    entity_id="ambiguous",
+                    actor_type="anonymous",
+                    metadata={"bearer_sub": b_sub, "cookie_sub": c_sub},
+                )
+                await db.commit()
+            except Exception:
+                pass
+            raise HTTPException(status_code=401, detail={"error": "ambiguous_credentials", "message": "Kredensial ambigu"})
+
+    # Choose token: prefer cookie if valid, else bearer
+    token_payload = None
+    token = None
+    if cookie_payload:
+        token_payload = cookie_payload
+        token = cookie_token
+    elif bearer_payload:
+        token_payload = bearer_payload
+        token = bearer_token
+    else:
+        # No valid token found — try bearer raw if present but invalid, else 401
+        if bearer_token or cookie_token:
             raise HTTPException(status_code=401, detail="Token tidak valid")
-        user_id = int(payload.get("sub"))
-    except HTTPException:
-        raise
-    except (InvalidTokenError, ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token tidak valid")
-    
+
+    try:
+        user_id = int(token_payload.get("sub"))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Token tidak valid")
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if user is None:
         raise HTTPException(status_code=401, detail="User tidak ditemukan")
 
     request.state.auth_context = {
-        "jti": payload.get("jti", ""),
-        "impersonation": bool(payload.get("impersonation", False)),
-        "impersonated_by": payload.get("impersonated_by"),
-        "target_seller_id": payload.get("target_seller_id"),
+        "jti": token_payload.get("jti", ""),
+        "impersonation": bool(token_payload.get("impersonation", False)),
+        "impersonated_by": token_payload.get("impersonated_by"),
+        "target_seller_id": token_payload.get("target_seller_id"),
     }
-    
+
     return user
 
 
 # ── Endpoints ──
 
 @router.post("/register", response_model=TokenResponse)
-async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(req: RegisterRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """Register seller baru + auto-create toko."""
     # Rate limit — fail closed 503 on dependency unavailable
     from core.rate_limit import check_rate_limit
@@ -247,9 +382,22 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
     await _record_auth_audit(db, "auth.register.success", request, user=user, email=email, success=True)
     await db.commit()
     
-    # Generate token
+    # Generate token + session family (P3.2)
     token = create_access_token(user.id)
-    
+    try:
+        session, raw_refresh, raw_csrf = await create_session_family(
+            db,
+            user_id=user.id,
+            seller_id=user.id if user.role == UserRole.SELLER else None,
+            actor_user_id=user.id,
+            effective_seller_id=user.id,
+        )
+        await db.commit()
+        _set_auth_cookies(response, token, raw_refresh, raw_csrf)
+    except Exception:
+        # If session creation fails, still return token for transitional Bearer path
+        pass
+
     return TokenResponse(
         access_token=token,
         user=build_user_response(user, request),
@@ -257,7 +405,7 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(req: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """Login seller dengan email + password."""
     # Rate limit — fail closed on dependency unavailable
     from core.rate_limit import check_rate_limit
@@ -287,13 +435,110 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
         raise HTTPException(status_code=401, detail="Email atau password salah")
     
     await _record_auth_audit(db, "auth.login.success", request, user=user, email=email, success=True)
-    await db.commit()
+
+    # Create session family and set HttpOnly cookies (P3.2)
     token = create_access_token(user.id)
-    
+    try:
+        session, raw_refresh, raw_csrf = await create_session_family(
+            db,
+            user_id=user.id,
+            seller_id=user.id if user.role == UserRole.SELLER else None,
+            actor_user_id=user.id,
+            effective_seller_id=user.id,
+        )
+        await db.commit()
+        _set_auth_cookies(response, token, raw_refresh, raw_csrf)
+    except Exception as e:
+        await db.rollback()
+        # Still return Bearer token for transitional path
+        await db.commit()
+
     return TokenResponse(
         access_token=token,
         user=build_user_response(user, request),
     )
+
+
+@router.post("/refresh")
+async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """
+    P3.2 — Refresh rotates refresh token transactionally, old token replay revokes family.
+    Uses HttpOnly refresh cookie.
+    """
+    from services.auth_session_service import rotate_refresh_token
+
+    cookie_names = _get_cookie_names()
+    raw_refresh = None
+    for name in [cookie_names["refresh"], "__Host-jualin_refresh", "jualin_refresh"]:
+        if name in request.cookies:
+            raw_refresh = request.cookies.get(name)
+            break
+
+    if not raw_refresh:
+        raise HTTPException(status_code=401, detail="Refresh token missing")
+
+    try:
+        new_session, new_raw_refresh, new_raw_csrf = await rotate_refresh_token(db, old_refresh_token=raw_refresh)
+        if not new_session:
+            # Reuse detected or invalid — revoke family and clear cookies
+            _clear_auth_cookies(response)
+            raise HTTPException(status_code=401, detail={"error": "reuse_detected", "message": "Sesi telah dicabut, silakan login kembali"})
+
+        # Create new access token
+        new_access = create_access_token(new_session.user_id)
+        await db.commit()
+
+        _set_auth_cookies(response, new_access, new_raw_refresh, new_raw_csrf)
+
+        # Return user
+        result = await db.execute(select(User).where(User.id == new_session.user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=401, detail="User tidak ditemukan")
+
+        return TokenResponse(access_token=new_access, user=build_user_response(user, request))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=401, detail="Refresh gagal")
+
+
+@router.post("/logout")
+async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    P3.2 — Logout revokes current session and clears exact cookie attributes.
+    """
+    from services.auth_session_service import revoke_session
+    import uuid as uuid_module
+
+    # Try to find session by refresh token hash
+    cookie_names = _get_cookie_names()
+    raw_refresh = None
+    for name in [cookie_names["refresh"], "__Host-jualin_refresh", "jualin_refresh"]:
+        if name in request.cookies:
+            raw_refresh = request.cookies.get(name)
+            break
+
+    if raw_refresh:
+        try:
+            from services.auth_session_service import _hash_token
+
+            refresh_hash = _hash_token(raw_refresh)
+            from models.auth_session import AuthSession
+
+            q = await db.execute(select(AuthSession).where(AuthSession.refresh_token_hash == refresh_hash))
+            sess = q.scalar_one_or_none()
+            if sess:
+                await revoke_session(db, sess.id)
+                await db.commit()
+        except Exception:
+            await db.rollback()
+
+    _clear_auth_cookies(response)
+
+    return {"message": "Logout berhasil"}
 
 
 @router.get("/me", response_model=UserResponse)
