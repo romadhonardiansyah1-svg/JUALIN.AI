@@ -21,7 +21,7 @@ class LegacyApprovalBypassTests(unittest.IsolatedAsyncioTestCase):
         normal.status = "pending"
         normal.conversation_id = None
         normal.created_at = None
-        # No opportunity_id yet
+        normal.opportunity_id = None
 
         recovery = MagicMock(spec=AgentApproval)
         recovery.id = 2
@@ -33,6 +33,7 @@ class LegacyApprovalBypassTests(unittest.IsolatedAsyncioTestCase):
         recovery.status = "pending"
         recovery.conversation_id = None
         recovery.created_at = None
+        recovery.opportunity_id = None
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
@@ -56,6 +57,7 @@ class LegacyApprovalBypassTests(unittest.IsolatedAsyncioTestCase):
         recovery.id = 99
         recovery.seller_id = 10
         recovery.action_type = "payment_recovery"
+        recovery.opportunity_id = None
         recovery.status = "pending"
 
         mock_db = AsyncMock()

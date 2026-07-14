@@ -10,6 +10,7 @@ Tabel:
 from sqlalchemy import (
     Column, Integer, String, DateTime, ForeignKey, JSON, Float, Boolean, UniqueConstraint, Time,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from models.database import Base
@@ -97,6 +98,21 @@ class AgentApproval(Base):
     order_id = Column(Integer, nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    # ── P2.1 extension for recovery approvals (nullable for legacy compatibility) ──
+    opportunity_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    action_digest = Column(String(64), nullable=True)
+    action_revision = Column(Integer, nullable=True)
+    policy_version = Column(Integer, nullable=True)
+    expected_state_version = Column(Integer, nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    decided_via = Column(String(50), nullable=True)
+    decision_idempotency_key = Column(String(255), nullable=True)
+    decision_request_hash = Column(String(64), nullable=True)
+    decision_scope = Column(String(100), nullable=True)
+    decision_response_json = Column(JSON, nullable=True)
+    approval_token_hash = Column(String(64), nullable=True)
 
 
 class NegotiationState(Base):
