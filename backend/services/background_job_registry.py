@@ -43,8 +43,18 @@ ENABLED_JOB_HANDLERS: Dict[str, JobHandlerSpec] = {
         retryable=False,
         description="Workflow automation run",
     ),
-    # Future recovery jobs will be added here with new contract versions
-    # e.g. "payment_recovery_dispatch" contract_version 1 etc.
+    "payment_recovery_dispatch": JobHandlerSpec(
+        job_type="payment_recovery_dispatch",
+        contract_version=1,
+        retryable=False,
+        description="Payment recovery WA dispatch with revalidation",
+    ),
+    "payment_reconciliation": JobHandlerSpec(
+        job_type="payment_reconciliation",
+        contract_version=1,
+        retryable=False,
+        description="Payment status reconciliation from provider",
+    ),
 }
 
 # For quick lookup by (job_type, contract_version)

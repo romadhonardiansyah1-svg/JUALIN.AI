@@ -146,6 +146,8 @@ async def process_recorded_job(ctx, job_id: int):
                 handle_pending_payment_followup,
                 handle_campaign_send_message,
                 handle_workflow_run,
+                handle_payment_recovery_dispatch,
+                handle_payment_reconciliation,
             )
 
             handler_map = {
@@ -153,6 +155,8 @@ async def process_recorded_job(ctx, job_id: int):
                 "pending_payment_followup": handle_pending_payment_followup,
                 "campaign_send_message": handle_campaign_send_message,
                 "workflow_run": handle_workflow_run,
+                "payment_recovery_dispatch": handle_payment_recovery_dispatch,
+                "payment_reconciliation": handle_payment_reconciliation,
             }
 
             handler = handler_map.get(job.job_type)

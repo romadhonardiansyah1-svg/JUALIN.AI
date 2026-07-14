@@ -450,3 +450,75 @@ async def handle_workflow_run(db: AsyncSession, job: BackgroundJob) -> dict:
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ════════════════════════════════════════════════
+# Handler: payment_recovery_dispatch (P4.2)
+# ════════════════════════════════════════════════
+
+async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob) -> dict:
+    """Dispatch approved payment recovery reminder with revalidation."""
+    from services.payment_recovery.dispatch import handle_payment_recovery_dispatch as dispatch_handler
+
+    return await dispatch_handler(db, job)
+
+
+# ════════════════════════════════════════════════
+# Handler: payment_reconciliation (P1.4/P4.2)
+# ════════════════════════════════════════════════
+
+async def handle_payment_reconciliation(db: AsyncSession, job: BackgroundJob) -> dict:
+    """
+    Reconcile payment status from provider — durable job for refresh.
+    For MVP, just calls _sync_payment_status logic.
+    """
+    order_id = job.payload.get("order_id")
+    if not order_id:
+        return {"success": False, "error": "missing order_id", "permanent": True}
+
+    from models.order import Order
+    from sqlalchemy import select
+    from api.routes_payments import _sync_payment_status as sync_fn
+
+    # Need to handle _sync_payment_status which is async and expects order and db
+    # For MVP, we load order and call sync
+    result = await db.execute(select(Order).where(Order.id == order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        return {"success": False, "error": "order not found", "permanent": True}
+
+    try:
+        # Use the same logic as _sync_payment_status but we need to import inside to avoid circular
+        # For now, just call the factory's check_status via gateway
+        from services.payments.factory import get_payment_gateway
+
+        if not order.payment_provider or not order.payment_invoice_id:
+            return {"success": False, "error": "no payment", "permanent": True}
+
+        gateway = get_payment_gateway(order.payment_provider)
+        status_result = await gateway.check_status(order.payment_invoice_id)
+
+        # Map status to order as in _sync_payment_status (simplified)
+        from models.order import OrderStatus
+        from datetime import datetime, timezone
+
+        old_status = order.status.value if hasattr(order.status, "value") else str(order.status)
+        new_status = old_status
+
+        if old_status in {"paid", "shipped", "done"} and status_result.status.value in ("pending", "expired", "cancelled", "failed"):
+            new_status = old_status
+        elif str(status_result.status.value) == "paid":
+            order.status = OrderStatus.PAID
+            order.paid_at = datetime.now(timezone.utc)
+            new_status = "paid"
+
+        if new_status != old_status:
+            from models.order_status_history import OrderStatusHistory
+
+            db.add(OrderStatusHistory(order_id=order.id, from_status=old_status, to_status=new_status, changed_by="reconciliation"))
+            await db.commit()
+
+        return {"success": True, "order_id": order_id, "old_status": old_status, "new_status": new_status}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}

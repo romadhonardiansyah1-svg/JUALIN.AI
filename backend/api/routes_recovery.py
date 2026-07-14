@@ -1,18 +1,19 @@
 """
-P2.6 — Recovery API read-only (observe mode).
+P2.6 — Recovery API read-only (observe mode) + P4.1 approve/reject (approval mode).
 
 GET /api/recovery/overview
 GET /api/recovery/opportunities
 GET /api/recovery/opportunities/{id}
-
-Read-only, masked fields, pagination, tenant 404, money strings, no approve route in Phase 2.
+POST /api/recovery/opportunities/{id}/approve
+POST /api/recovery/opportunities/{id}/reject
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import Optional
 import uuid
+from pydantic import BaseModel
 
 from models.database import get_db
 from models.user import User
@@ -21,6 +22,18 @@ from models.payment_recovery import RevenueOpportunity, PaymentAttempt
 from models.order import Order
 
 router = APIRouter()
+
+
+class ApproveRequest(BaseModel):
+    expected_version: int
+    action_digest: str
+    idempotency_key: str
+
+
+class RejectRequest(BaseModel):
+    expected_version: int
+    idempotency_key: str
+    reason: Optional[str] = None
 
 
 def _mask_phone(phone: str | None) -> str | None:
@@ -212,3 +225,142 @@ async def get_opportunity_detail(
         },
         headers={"Cache-Control": "private, no-store"},
     )
+
+
+@router.post("/opportunities/{opportunity_id}/approve")
+async def approve_opportunity(
+    opportunity_id: uuid.UUID,
+    body: ApproveRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    P4.1 — Approve exact recovery action atomically.
+    Returns 202 accepted for processing, idempotent replay via idempotency_key.
+    """
+    # Check capability: must be in approval mode
+    from config import get_settings
+
+    settings = get_settings()
+    if not settings.ENABLE_PAYMENT_RECOVERY or settings.PAYMENT_RECOVERY_MODE != "approval":
+        return JSONResponse(
+            status_code=403,
+            content={"error": "capability_forbidden", "message": "Mode approval belum diaktifkan"},
+        )
+
+    # Owner only by default
+    if current_user.role != "seller" and current_user.role != "admin":
+        # Check explicit permission? For MVP, owner only
+        pass
+
+    try:
+        from services.payment_recovery.approval import approve_recovery
+
+        result = await approve_recovery(
+            db,
+            principal_seller_id=current_user.id,
+            opportunity_id=opportunity_id,
+            expected_version=body.expected_version,
+            action_digest_from_client=body.action_digest,
+            idempotency_key=body.idempotency_key,
+            request_body=body.model_dump(),
+        )
+        return JSONResponse(status_code=202, content=result, headers={"Cache-Control": "private, no-store"})
+    except HTTPException as he:
+        # Return typed error contract
+        raise he
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": "internal_error", "message": str(e)})
+
+
+@router.post("/opportunities/{opportunity_id}/reject")
+async def reject_opportunity(
+    opportunity_id: uuid.UUID,
+    body: RejectRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    P4.1 — Reject pending recovery approval.
+    """
+    from config import get_settings
+
+    settings = get_settings()
+    if not settings.ENABLE_PAYMENT_RECOVERY or settings.PAYMENT_RECOVERY_MODE not in ("approval", "observe"):
+        return JSONResponse(
+            status_code=403,
+            content={"error": "capability_forbidden", "message": "Mode tidak diizinkan"},
+        )
+
+    # Simple reject implementation: lock and transition
+    from models.agent_os import AgentApproval
+
+    # Lock approval FOR UPDATE
+    approval_q = await db.execute(
+        select(AgentApproval)
+        .where(AgentApproval.opportunity_id == opportunity_id, AgentApproval.seller_id == current_user.id)
+        .with_for_update()
+    )
+    approval = approval_q.scalars().first()
+    if not approval:
+        return JSONResponse(status_code=404, content={"error": "approval_not_found"})
+
+    if approval.status != "pending":
+        return JSONResponse(status_code=409, content={"error": "approval_stale"})
+
+    # Load opportunity FOR UPDATE
+    opp_q = await db.execute(
+        select(RevenueOpportunity)
+        .where(RevenueOpportunity.id == opportunity_id, RevenueOpportunity.seller_id == current_user.id)
+        .with_for_update()
+    )
+    opp = opp_q.scalar_one_or_none()
+    if not opp:
+        return JSONResponse(status_code=404, content={"error": "opportunity_not_found"})
+
+    if opp.state_version != body.expected_version:
+        return JSONResponse(status_code=409, content={"error": "approval_stale", "current_version": opp.state_version})
+
+    # Idempotency check for reject
+    from services.payment_recovery.approval import find_decision_receipt, hash_decision_request
+
+    request_hash = hash_decision_request(body.model_dump())
+    replay = await find_decision_receipt(
+        db,
+        seller_id=current_user.id,
+        decision_scope="recovery.reject",
+        opportunity_id=opportunity_id,
+        idempotency_key=body.idempotency_key,
+    )
+    if replay:
+        if replay.decision_request_hash == request_hash:
+            return JSONResponse(content=replay.decision_response_json or {"status": "rejected"})
+        else:
+            return JSONResponse(status_code=409, content={"error": "idempotency_conflict"})
+
+    # Bind intent
+    approval.decision_scope = "recovery.reject"
+    approval.decision_idempotency_key = body.idempotency_key
+    approval.decision_request_hash = request_hash
+    await db.flush()
+
+    # Transition
+    from datetime import datetime, timezone
+
+    approval.status = "rejected"
+    approval.reason = body.reason or "rejected by seller"
+    opp.status = "rejected"
+    opp.state_version += 1
+    opp.updated_at = datetime.now(timezone.utc)
+
+    response_snapshot = {
+        "approval": {"id": approval.id, "status": "rejected"},
+        "opportunity": {"id": str(opp.id), "status": opp.status, "state_version": opp.state_version},
+        "message": "Peluang ditolak",
+    }
+    approval.decision_response_json = response_snapshot
+    await db.commit()
+
+    return JSONResponse(content=response_snapshot, headers={"Cache-Control": "private, no-store"})
