@@ -99,6 +99,30 @@ class WhatsAppCloudProvider(MessagingProvider):
                     ))
         return parsed
 
+    def parse_statuses(self, payload: dict) -> list[dict]:
+        """
+        P1.3 — Parse delivery statuses (not discarded).
+        Returns list of normalized status facts with composite identity.
+        """
+        statuses = []
+        for entry in payload.get("entry", []) or []:
+            for change in entry.get("changes", []) or []:
+                value = change.get("value", {}) or {}
+                phone_number_id = (value.get("metadata") or {}).get("phone_number_id", "")
+                for st in value.get("statuses", []) or []:
+                    # Normalize allowlisted fields
+                    normalized = {
+                        "provider": self.provider_name,
+                        "provider_account_id": phone_number_id,
+                        "message_id": st.get("id", ""),
+                        "status": st.get("status", ""),
+                        "timestamp": st.get("timestamp", ""),
+                        "recipient_id": st.get("recipient_id", ""),
+                    }
+                    # Keep minimal raw for audit but not full payload with PII
+                    statuses.append(normalized)
+        return statuses
+
     async def health_check(self) -> dict:
         return {
             "provider": self.provider_name,

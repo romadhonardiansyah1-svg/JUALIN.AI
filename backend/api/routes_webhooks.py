@@ -144,10 +144,25 @@ async def whatsapp_cloud_webhook(request: Request):
         return Response(status_code=400, content="Invalid JSON")
 
     messages = provider.parse_webhook(payload, headers)
-    if not messages:
+    statuses = provider.parse_statuses(payload) if hasattr(provider, "parse_statuses") else []
+
+    if not messages and not statuses:
         return Response(status_code=200, content="OK")
 
     async with async_session() as db:
+        # Handle delivery statuses first — persist as typed normalized fact, monotonic, idempotent
+        for st in statuses:
+            # Composite identity: provider + account + message_id + status + timestamp
+            composite_id = f"{st.get('message_id')}:{st.get('status')}:{st.get('timestamp')}"
+            await get_or_create_webhook_event(
+                db,
+                provider="whatsapp_cloud",
+                payload=st,  # normalized, not raw
+                event_type=f"delivery_{st.get('status')}",
+                external_event_id=composite_id,
+                provider_account_id=str(payload.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("metadata", {}).get("phone_number_id", "")),
+            )
+
         for msg in messages:
             event, is_new = await get_or_create_webhook_event(
                 db,
@@ -155,6 +170,7 @@ async def whatsapp_cloud_webhook(request: Request):
                 payload=payload,
                 event_type="message",
                 external_event_id=msg.external_message_id,
+                provider_account_id=msg.channel_external_id,
             )
             if not is_new or event.status == "processed":
                 continue

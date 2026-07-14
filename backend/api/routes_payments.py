@@ -303,8 +303,8 @@ async def get_payment_status(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Check real-time payment status from the payment provider.
-    Also syncs the status back to our database.
+    P1.4 — Read-only persisted snapshot, zero provider/network call and zero DB mutation.
+    Reconciliation moved to POST /status/{order_id}/refresh
     """
     result = await db.execute(
         select(Order)
@@ -316,7 +316,55 @@ async def get_payment_status(
     if not order:
         raise NotFoundError("Order", order_id)
 
-    return await _sync_payment_status(order, db)
+    # Read-only: no provider sync, no mutation
+    return _payment_payload(order, payment_created=bool(order.payment_url))
+
+
+@router.post("/status/{order_id}/refresh")
+async def refresh_payment_status(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    P1.4 — Seller-auth explicit refresh: durable deduplicated reconciliation job.
+    Returns 202 refreshing, does not claim paid before verified provider fact.
+    """
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .where(Order.seller_id == current_user.id)
+    )
+    order = result.scalar_one_or_none()
+
+    if not order:
+        raise NotFoundError("Order", order_id)
+
+    if not order.payment_provider or not order.payment_invoice_id:
+        return {"status": "no_payment", "message": "Belum ada pembayaran yang dibuat", "order_id": order_id}
+
+    # Enqueue durable reconciliation job (idempotent)
+    from core.idempotency import enqueue_job_record
+
+    idem_key = f"payment_refresh:{order.seller_id}:{order.id}:{order.payment_invoice_id}"
+    job, is_new = await enqueue_job_record(
+        db,
+        job_type="payment_reconciliation",
+        payload={"order_id": order.id, "invoice_id": order.payment_invoice_id, "provider": order.payment_provider},
+        seller_id=order.seller_id,
+        idempotency_key=idem_key,
+        handler_contract_version=1,
+        retryable=False,
+    )
+    await db.commit()
+
+    return {
+        "status": "refreshing",
+        "message": "Status pembayaran sedang diperbarui",
+        "order_id": order_id,
+        "job_id": job.id,
+        "is_new": is_new,
+    }
 
 
 
@@ -326,7 +374,7 @@ async def get_public_payment_status(
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Check payment status from a public payment link."""
+    """P1.4 — Public read-only snapshot, zero provider call, no mutation, no-store."""
     result = await db.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
 
@@ -334,7 +382,32 @@ async def get_public_payment_status(
         raise NotFoundError("Order", order_id)
 
     _verify_public_token(order, token)
-    return await _sync_payment_status(order, db)
+    # Read-only, no sync
+    return _payment_payload(order, payment_created=bool(order.payment_url))
+
+
+@router.post("/public/status/{order_id}/refresh")
+async def refresh_public_payment_status(
+    order_id: int,
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    P1.4 — Public refresh: capability session + Origin/CSRF + rate limit,
+    durable deduplicated job, 202, zero inline provider sync.
+    Until capability session implemented (P2.4), fail-closed with 501.
+    """
+    # Until P2.4 capability exchange exists, this endpoint is absent/fail-closed
+    # Return 501 to indicate not yet implemented, zero sync
+    from fastapi import HTTPException
+
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "error": "not_implemented",
+            "message": "Public payment refresh belum tersedia — menunggu capability session (P2.4)",
+        },
+    )
 
 
 @router.get("/public/methods/{order_id}")

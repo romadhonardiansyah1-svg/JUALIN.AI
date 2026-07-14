@@ -27,24 +27,117 @@ logger = get_logger(__name__)
 # Main Dispatcher
 # ══════════════════════════════════════════════════
 
+import uuid as uuid_module
+from sqlalchemy import text
+
+async def atomic_claim_job(db, worker_id: str, job_type: str, contract_version: int):
+    """
+    P1.2 atomic claim with lease/fencing token.
+    Returns claimed BackgroundJob or None.
+    """
+    claim_token = uuid_module.uuid4()
+    # Use CTE with FOR UPDATE SKIP LOCKED
+    claim_sql = text(
+        """
+        WITH candidate AS (
+          SELECT id FROM background_jobs
+          WHERE (
+              (
+                status = 'queued'
+                AND execution_stage = 'pre_side_effect'
+                AND attempts < max_attempts
+              )
+              OR (
+                status = 'failed'
+                AND retryable = true
+                AND execution_stage = 'pre_side_effect'
+                AND attempts < max_attempts
+              )
+            )
+            AND job_type = :job_type
+            AND handler_contract_version = :contract_version
+            AND payload_digest IS NOT NULL
+            AND (next_run_at IS NULL OR next_run_at <= now())
+            AND (lease_expires_at IS NULL OR lease_expires_at < now())
+          ORDER BY next_run_at NULLS FIRST, id
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1
+        )
+        UPDATE background_jobs j
+        SET status='running', claim_token=:claim_token,
+            lease_expires_at=now() + interval '2 minutes',
+            lock_version=lock_version + 1, locked_by=:worker_id, locked_at=now(),
+            attempts=attempts + 1, started_at=now()
+        FROM candidate
+        WHERE j.id=candidate.id
+        RETURNING j.id
+        """
+    )
+    result = await db.execute(
+        claim_sql,
+        {"job_type": job_type, "contract_version": contract_version, "claim_token": claim_token, "worker_id": worker_id},
+    )
+    row = result.fetchone()
+    if not row:
+        return None, None
+    job_id = row[0]
+    # Fetch full job
+    job_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
+    job = job_q.scalar_one()
+    return job, claim_token
+
+
 async def process_recorded_job(ctx, job_id: int):
-    """Dispatch a recorded background job to the appropriate handler."""
+    """Dispatch a recorded background job to the appropriate handler — P1.2 fenced."""
     worker_id = f"worker:{__import__('os').getpid()}"
     async with async_session() as db:
-        result = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
-        job = result.scalar_one_or_none()
-        if not job:
-            return {"success": False, "error": "job not found"}
-        if job.status in ("done", "dead_letter", "skipped"):
-            return {"success": True, "skipped": True}
-        if job.status == "running":
-            return {"success": True, "status": "already running"}
+        # Try atomic claim by id + token check for direct dispatch path (legacy direct id)
+        # If job_id provided, we attempt to claim it specifically with fencing
+        claim_token = uuid_module.uuid4()
+        # First, attempt to claim this specific job if it is still claimable
+        # We use a conditional update that ensures only one worker wins
+        claim_specific_sql = text(
+            """
+            UPDATE background_jobs
+            SET status='running', claim_token=:claim_token,
+                lease_expires_at=now() + interval '2 minutes',
+                lock_version=lock_version + 1, locked_by=:worker_id, locked_at=now(),
+                attempts=attempts + 1, started_at=now()
+            WHERE id=:job_id
+              AND status IN ('queued', 'failed')
+              AND execution_stage = 'pre_side_effect'
+              AND attempts < max_attempts
+              AND payload_digest IS NOT NULL
+              AND (lease_expires_at IS NULL OR lease_expires_at < now())
+            RETURNING id
+            """
+        )
+        result = await db.execute(
+            claim_specific_sql,
+            {"job_id": job_id, "claim_token": claim_token, "worker_id": worker_id},
+        )
+        claimed_row = result.fetchone()
+        if not claimed_row:
+            # Either not found, not claimable, or already claimed
+            # Fetch current state to decide
+            existing_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
+            job = existing_q.scalar_one_or_none()
+            if not job:
+                return {"success": False, "error": "job not found"}
+            if job.status in ("done", "dead_letter", "skipped", "manual_required"):
+                return {"success": True, "skipped": True}
+            if job.status == "running":
+                return {"success": True, "status": "already running"}
+            # Could be queued but not matched due to digest/null etc — treat as not claimable
+            return {"success": False, "error": "job not claimable", "status": job.status}
 
-        job.status = "running"
-        job.started_at = datetime.now(timezone.utc)
-        job.locked_at = datetime.now(timezone.utc)
-        job.locked_by = worker_id
-        job.attempts += 1
+        await db.commit()
+        # Re-fetch job after claim
+        job_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
+        job = job_q.scalar_one()
+
+        # Now job is claimed with claim_token, proceed to handler outside of long transaction?
+        # We already committed claim, now run handler
         await db.commit()
 
         try:
@@ -64,30 +157,89 @@ async def process_recorded_job(ctx, job_id: int):
 
             handler = handler_map.get(job.job_type)
             if handler:
+                # P1.2: verify claim_token still valid before handler (stale check)
+                fresh_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job.id))
+                fresh_job = fresh_q.scalar_one_or_none()
+                if not fresh_job or fresh_job.claim_token != claim_token:
+                    logger.warning(f"Stale worker cannot finalize job {job_id} — token mismatch")
+                    await db.rollback()
+                    return {"success": False, "error": "stale worker token mismatch"}
+
                 result = await handler(db, job)
             else:
                 result = {"success": False, "error": f"unknown job_type: {job.job_type}"}
 
+            # Fenced finalize — only if claim_token still matches
+            finalize_sql = text(
+                """
+                UPDATE background_jobs
+                SET status=:status, error_message=:error_message, last_error_code=:last_error_code,
+                    next_run_at=:next_run_at, finished_at=now(),
+                    locked_at=NULL, locked_by='', execution_stage=:execution_stage
+                WHERE id=:job_id AND claim_token=:claim_token
+                RETURNING id
+                """
+            )
+
             if result.get("success"):
-                job.status = "skipped" if result.get("skipped") else "done"
-                job.error_message = ""
-                job.next_run_at = None
+                new_status = "skipped" if result.get("skipped") else "done"
+                new_stage = "completed"
+                err_msg = ""
+                err_code = ""
+                next_run = None
             else:
                 is_permanent = result.get("permanent", False)
                 if is_permanent or job.attempts >= job.max_attempts:
-                    job.status = "dead_letter"
-                    job.retryable = False
-                    job.next_run_at = None
+                    new_status = "dead_letter"
+                    new_stage = "completed" if is_permanent else "manual_required"
+                    next_run = None
                 else:
-                    job.status = "failed"
+                    new_status = "failed"
+                    new_stage = "pre_side_effect"
                     backoff_seconds = min(900, 60 * (2 ** max(0, job.attempts - 1)))
-                    job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
-                job.error_message = result.get("error", "")
-                job.last_error_code = result.get("error_code", "")
+                    next_run = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
+                err_msg = result.get("error", "")[:1000]
+                err_code = result.get("error_code", "")[:50]
 
-            job.finished_at = datetime.now(timezone.utc)
-            job.locked_at = None
-            job.locked_by = ""
+            # For failed jobs that are retryable explicit, keep retryable flag
+            # For done/skipped/dead_letter, set appropriate retryable
+            # We will update retryable separately via ORM for simplicity after fenced check
+            fenced_result = await db.execute(
+                finalize_sql,
+                {
+                    "status": new_status,
+                    "error_message": err_msg,
+                    "last_error_code": err_code,
+                    "next_run_at": next_run,
+                    "execution_stage": new_stage,
+                    "job_id": job.id,
+                    "claim_token": claim_token,
+                },
+            )
+            fenced_row = fenced_result.fetchone()
+            if not fenced_row:
+                logger.warning(f"Stale worker finalize blocked for job {job_id} — token changed during execution")
+                await db.rollback()
+                return {"success": False, "error": "stale finalize blocked"}
+
+            # Update retryable flag based on result if needed (separate update, still fenced via status already set)
+            if new_status == "dead_letter":
+                await db.execute(
+                    text("UPDATE background_jobs SET retryable=false WHERE id=:job_id"),
+                    {"job_id": job.id},
+                )
+            elif new_status == "failed":
+                # Keep retryable as is if spec says retryable, else false
+                from services.background_job_registry import ENABLED_JOB_HANDLERS
+
+                spec = ENABLED_JOB_HANDLERS.get(job.job_type)
+                should_retry = spec.retryable if spec else False
+                if not should_retry:
+                    await db.execute(
+                        text("UPDATE background_jobs SET retryable=false WHERE id=:job_id"),
+                        {"job_id": job.id},
+                    )
+
             await db.commit()
             logger.info(
                 "Background job processed",
@@ -96,52 +248,133 @@ async def process_recorded_job(ctx, job_id: int):
             return result
 
         except Exception as exc:
-            if job.attempts >= job.max_attempts:
-                job.status = "dead_letter"
-                job.retryable = False
-                job.next_run_at = None
-            else:
-                job.status = "failed" if getattr(job, 'retryable', True) else "dead_letter"
-                if job.status == "failed":
-                    backoff_seconds = min(900, 60 * (2 ** max(0, job.attempts - 1)))
-                    job.next_run_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
-                else:
-                    job.next_run_at = None
-            job.error_message = str(exc)
-            job.last_error_code = type(exc).__name__
-            job.finished_at = datetime.now(timezone.utc)
-            job.locked_at = None
-            job.locked_by = ""
-            await db.commit()
-            logger.error(f"Job {job.id} failed: {exc}", exc_info=True)
+            # Fenced failure path
+            try:
+                # Attempt to set failed only if token matches
+                fail_sql = text(
+                    """
+                    UPDATE background_jobs
+                    SET status=CASE WHEN attempts >= max_attempts THEN 'dead_letter' ELSE 'failed' END,
+                        retryable=CASE WHEN attempts >= max_attempts THEN false ELSE retryable END,
+                        error_message=:err, last_error_code=:code,
+                        next_run_at=CASE WHEN attempts >= max_attempts THEN NULL ELSE now() + interval '60 seconds' END,
+                        finished_at=now(), locked_at=NULL, locked_by='',
+                        execution_stage='pre_side_effect'
+                    WHERE id=:job_id AND claim_token=:claim_token
+                    RETURNING id
+                    """
+                )
+                await db.execute(
+                    fail_sql,
+                    {"job_id": job_id, "claim_token": claim_token, "err": str(exc)[:1000], "code": type(exc).__name__[:50]},
+                )
+                await db.commit()
+            except Exception:
+                await db.rollback()
+            logger.error(f"Job {job_id} failed: {exc}", exc_info=True)
             raise
 
 
 async def cron_process_queued_jobs(ctx):
     """
-    Execute DB-recorded jobs that were created by API routes or cron matchers.
+    Execute DB-recorded jobs that were created by API routes or cron matchers — P1.2 stage-aware.
 
-    This keeps the background_jobs table as the source of truth and prevents
-    jobs from sitting in queued/failed state forever when no explicit Redis
-    enqueue call was made by the producer.
+    Claims one job per enabled (job_type, contract_version) pair fairly, using FOR UPDATE SKIP LOCKED.
+    Generic lease reaper only requeues pre_side_effect, not side_effect_in_flight/unknown/manual.
     """
-    now = datetime.now(timezone.utc)
-    async with async_session() as db:
-        result = await db.execute(
-            select(BackgroundJob.id)
-            .where(BackgroundJob.status.in_(("queued", "failed")))
-            .where(BackgroundJob.retryable == True)
-            .where(or_(BackgroundJob.next_run_at.is_(None), BackgroundJob.next_run_at <= now))
-            .order_by(BackgroundJob.created_at.asc())
-            .limit(max(1, settings.ARQ_MAX_JOBS))
-        )
-        job_ids = [row[0] for row in result.all()]
+    from services.background_job_registry import all_enabled_pairs
 
-    for job_id in job_ids:
+    worker_id = f"worker:{__import__('os').getpid()}"
+    # Try each enabled pair fairly, up to ARQ_MAX_JOBS claims per tick
+    claimed_ids = []
+    async with async_session() as db:
+        for job_type, contract_version in all_enabled_pairs():
+            if len(claimed_ids) >= max(1, settings.ARQ_MAX_JOBS):
+                break
+            job, token = await atomic_claim_job(db, worker_id, job_type, contract_version)
+            if job:
+                await db.commit()
+                claimed_ids.append(job.id)
+            else:
+                await db.rollback()
+
+    for job_id in claimed_ids:
         try:
             await process_recorded_job(ctx, job_id)
         except Exception as exc:
             logger.warning(f"Queued job poll failed for job {job_id}: {exc}")
+
+    # Also run inventory sweep for disabled/unknown handlers -> quarantine
+    try:
+        async with async_session() as db:
+            await quarantine_disabled_jobs(db)
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"Quarantine sweep failed: {e}")
+
+
+async def quarantine_disabled_jobs(db):
+    """
+    P1.2 inventory sweeper: move rows with handler disabled/unknown,
+    contract stale/null, or digest null to quarantine/manual_required.
+    """
+    from services.background_job_registry import ENABLED_JOB_HANDLERS
+
+    # Build list of enabled job_types
+    enabled_types = list(ENABLED_JOB_HANDLERS.keys())
+    # Quarantine if job_type not in enabled, or contract version mismatch, or payload_digest null
+    # For each enabled type, we need to check contract version matches
+    # We'll use raw SQL for simplicity
+    # First, quarantine unknown job_type
+    if enabled_types:
+        placeholders = ", ".join([f"'{t}'" for t in enabled_types])
+        # Unknown type
+        await db.execute(
+            text(
+                f"""
+                UPDATE background_jobs
+                SET status='manual_required', execution_stage='manual_required',
+                    retryable=false, error_message='handler disabled or unknown',
+                    last_error_code='handler_disabled'
+                WHERE status IN ('queued', 'failed')
+                  AND job_type NOT IN ({placeholders})
+                  AND status != 'manual_required'
+                """
+            )
+        )
+        # Contract mismatch or null digest
+        for jt, spec in ENABLED_JOB_HANDLERS.items():
+            await db.execute(
+                text(
+                    """
+                    UPDATE background_jobs
+                    SET status='manual_required', execution_stage='manual_required',
+                        retryable=false, error_message='contract stale or digest null',
+                        last_error_code='contract_mismatch'
+                    WHERE status IN ('queued', 'failed')
+                      AND job_type = :job_type
+                      AND (
+                        handler_contract_version IS NULL
+                        OR handler_contract_version != :contract_version
+                        OR payload_digest IS NULL
+                      )
+                      AND status != 'manual_required'
+                    """
+                ),
+                {"job_type": jt, "contract_version": spec.contract_version},
+            )
+    else:
+        # No enabled handlers — quarantine all queued
+        await db.execute(
+            text(
+                """
+                UPDATE background_jobs
+                SET status='manual_required', execution_stage='manual_required',
+                    retryable=false
+                WHERE status IN ('queued', 'failed')
+                """
+            )
+        )
 
 
 # ══════════════════════════════════════════════════
