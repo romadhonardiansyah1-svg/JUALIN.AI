@@ -67,6 +67,9 @@ from models.payment_recovery import (
     PaymentCapabilitySession,
 )
 
+# Auth sessions (P3.1)
+from models.auth_session import AuthSession
+
 __all__ = [
     "Base",
     "User",
@@ -159,5 +162,6 @@ __all__ = [
     "RecipientContactWindow",
     "PaymentCapability",
     "PaymentCapabilitySession",
+    "AuthSession",
 ]
 
