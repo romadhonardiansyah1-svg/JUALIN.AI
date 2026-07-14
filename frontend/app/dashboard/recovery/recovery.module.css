@@ -1,0 +1,52 @@
+/* P2.7 — Observe-only Jualin Santai dashboard */
+.page { display: flex; flex-direction: column; gap: 20px; padding: 20px; max-width: 1200px; margin: 0 auto; }
+.header { margin-bottom: 8px; }
+.title { font-size: 1.8rem; font-weight: 800; margin: 0; }
+.subtitle { color: #6b7280; font-size: 0.95rem; margin-top: 4px; }
+
+.banner { padding: 12px 16px; border-radius: 10px; font-weight: 600; font-size: 0.9rem; }
+.banner.observe { background: #EFF6FF; border: 1px solid #BFDBFE; color: #1E40AF; }
+.banner.approval { background: #F0FDF4; border: 1px solid #BBF7D0; color: #166534; }
+.banner.paused { background: #FEF2F2; border: 1px solid #FECACA; color: #991B1B; }
+.banner.disabled { background: #F3F4F6; border: 1px solid #E5E7EB; color: #374151; }
+.banner.loading { background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; }
+
+.summaryGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.summaryCard { background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px; }
+.summaryLabel { font-size: 0.8rem; color: #6b7280; }
+.summaryValue { font-size: 1.4rem; font-weight: 700; }
+.summaryAmount { font-size: 0.85rem; color: #16a34a; }
+
+.mainGrid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 16px; }
+@media (max-width: 900px) { .mainGrid { grid-template-columns: 1fr; } }
+
+.listPanel, .detailPanel { background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 16px; min-height: 400px; }
+.panelTitle { font-size: 1rem; font-weight: 700; margin-bottom: 12px; }
+
+.list { display: flex; flex-direction: column; gap: 8px; }
+.listItem { text-align: left; padding: 12px; border: 1px solid #E5E7EB; border-radius: 10px; background: #F9FAFB; cursor: pointer; transition: all 0.15s; }
+.listItem:hover { border-color: #22c55e; background: #F0FDF4; }
+.listItem.selected { border-color: #22c55e; background: #F0FDF4; box-shadow: 0 0 0 2px rgba(34,197,94,0.15); }
+.listRow { display: flex; justify-content: space-between; font-weight: 600; }
+.orderRef { color: #111827; }
+.amount { color: #16a34a; }
+.listMeta { display: flex; gap: 8px; font-size: 0.75rem; color: #6b7280; margin-top: 4px; }
+.suppression { font-size: 0.75rem; color: #b45309; margin-top: 4px; }
+
+.detail { display: flex; flex-direction: column; gap: 16px; }
+.evidenceSection h4, .previewSection h4 { font-size: 0.9rem; font-weight: 700; margin-bottom: 8px; }
+.evidenceList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.evidenceItem { display: flex; justify-content: space-between; font-size: 0.8rem; background: #F3F4F6; padding: 6px 10px; border-radius: 8px; }
+.evidenceCode { font-weight: 600; color: #374151; }
+.evidenceTime { color: #6b7280; }
+.previewBox { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px; font-size: 0.85rem; }
+.muted { color: #6b7280; font-size: 0.8rem; }
+.revalidationNote { font-size: 0.8rem; color: #1e40af; background: #EFF6FF; padding: 8px; border-radius: 8px; }
+.recipientSection { font-size: 0.85rem; }
+.observeNote { background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; padding: 10px; border-radius: 8px; font-size: 0.85rem; }
+
+.outcomesPanel { background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 16px; }
+.outcomesGrid { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; margin-top: 8px; }
+
+.stateBox { padding: 20px; text-align: center; color: #6b7280; background: #F9FAFB; border-radius: 10px; border: 1px dashed #E5E7EB; }
+.stateBoxError { padding: 20px; text-align: center; color: #991B1B; background: #FEF2F2; border-radius: 10px; border: 1px solid #FECACA; }

@@ -479,6 +479,30 @@ async def cron_heartbeat(ctx):
 
 
 # ══════════════════════════════════════════════════
+# Cron: Recovery Detector (P2.6 observe-only)
+# ══════════════════════════════════════════════════
+
+async def cron_recovery_detector(ctx):
+    """Periodic job: detect pending payment recovery opportunities in observe mode."""
+    if not getattr(settings, "ENABLE_PAYMENT_RECOVERY", False):
+        return
+    # In Phase 2, only observe mode is allowed; approval mode not yet enabled
+    mode = getattr(settings, "PAYMENT_RECOVERY_MODE", "observe")
+    if mode not in ("observe",):
+        # Until P4, approval mode is unavailable via detector — will be reported via capabilities
+        return
+
+    try:
+        from services.payment_recovery.detector import detect_payment_recovery_opportunities
+        async with async_session() as db:
+            opps = await detect_payment_recovery_opportunities(db)
+            if opps:
+                logger.info(f"Recovery detector: found {len(opps)} opportunities", extra={"count": len(opps)})
+    except Exception as e:
+        logger.error(f"Recovery detector error: {e}", exc_info=True)
+
+
+# ══════════════════════════════════════════════════
 # Worker Settings
 # ══════════════════════════════════════════════════
 
@@ -486,7 +510,7 @@ _redis_url = urlparse(settings.REDIS_URL)
 
 
 def _build_cron_jobs():
-    """Build cron list with legacy followup gated by flag (P0.1 containment)."""
+    """Build cron list with legacy followup gated by flag (P0.1) + recovery detector (P2.6)."""
     jobs = [
         # Execute DB-recorded jobs every minute
         cron(cron_process_queued_jobs, minute=None, unique=True),
@@ -496,6 +520,8 @@ def _build_cron_jobs():
         cron(cron_heartbeat, minute=None, unique=True),
         # JUALIN OS proaktif setiap 10 menit
         cron(cron_agent_os_tick, minute={0, 10, 20, 30, 40, 50}, unique=True),
+        # Recovery detector every 5 minutes in observe mode (P2.6) — exactly one worker registry behind new flag
+        cron(cron_recovery_detector, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}, unique=True),
     ]
     # Legacy followup only if explicitly enabled — disabled by default
     if getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False):
@@ -505,6 +531,13 @@ def _build_cron_jobs():
         logger.info("Worker: legacy followup cron enabled via ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=true")
     else:
         logger.info("Worker: legacy followup cron disabled — ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP=false")
+
+    # Recovery detector logging
+    if getattr(settings, "ENABLE_PAYMENT_RECOVERY", False):
+        logger.info(f"Worker: recovery detector enabled mode={getattr(settings, 'PAYMENT_RECOVERY_MODE', 'observe')}")
+    else:
+        logger.info("Worker: recovery detector disabled — ENABLE_PAYMENT_RECOVERY=false")
+
     return jobs
 
 

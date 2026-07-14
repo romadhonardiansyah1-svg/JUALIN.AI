@@ -44,6 +44,7 @@ from api.routes_wa_templates import router as wa_templates_router
 from api.routes_agent_os import router as agent_os_router
 from api.routes_system import router as system_router
 from api.routes_public_payments import router as public_payments_router
+from api.routes_recovery import router as recovery_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -237,6 +238,9 @@ app.include_router(system_router, prefix="/api/system", tags=["System"])
 
 # Public payment capabilities & consent (P2.4)
 app.include_router(public_payments_router, prefix="/api/public/payments", tags=["Public Payments"])
+
+# Recovery observe-only (P2.6)
+app.include_router(recovery_router, prefix="/api/recovery", tags=["Recovery"])
 
 # ── Static Files (uploads) ──
 import os

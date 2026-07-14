@@ -558,6 +558,15 @@ export const api = {
   getAIImpact: () => fetchCached("/api/analytics/ai-impact", {}, 60000),
   getRecoveryStats: () => fetchCached("/api/analytics/recovery", {}, 60000),
 
+  // ── P2.6 — Recovery observe-only ──
+  getCapabilities: () => fetchAPI("/api/system/capabilities", { method: "GET" }),
+  getRecoveryOverview: () => fetchAPI("/api/recovery/overview"),
+  getRecoveryOpportunities: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return fetchAPI(`/api/recovery/opportunities?${qs}`);
+  },
+  getRecoveryOpportunity: (id) => fetchAPI(`/api/recovery/opportunities/${id}`),
+
   // ── Market Acceptance: Sprint 6 — Trust Layer ──
   getTrustProfile: () => fetchAPI("/api/trust-profile"),
   updateTrustProfile: (body) =>

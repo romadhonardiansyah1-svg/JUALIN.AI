@@ -11,6 +11,7 @@ const sellerNavItems = [
   { href: "/dashboard/agent-os", icon: "🤖", label: "AI Crew" },
   { href: "/dashboard/products", icon: "📦", label: "Produk" },
   { href: "/dashboard/orders", icon: "🛒", label: "Order" },
+  { href: "/dashboard/recovery", icon: "💰", label: "Jualin Santai" },
   { href: "/dashboard/inbox", icon: "IN", label: "Inbox" },
   { href: "/dashboard/customers", icon: "C", label: "Customers" },
   { href: "/dashboard/chat", icon: "💬", label: "Chat" },
