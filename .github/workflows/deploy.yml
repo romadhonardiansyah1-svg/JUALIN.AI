@@ -27,10 +27,10 @@ jobs:
       - name: Compile backend
         run: python -m compileall backend
 
-      - name: Run focused backend tests
+      - name: Run backend tests with disposable PostgreSQL
         run: |
           cd backend
-          python -m unittest discover -s tests -v
+          python -m scripts.run_with_disposable_database -- python -m unittest discover -s tests -v
 
       - name: Python dependency audit
         run: |

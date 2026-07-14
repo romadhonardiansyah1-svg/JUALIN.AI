@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: "no"
+    environment:
+      POSTGRES_USER: ${JUALIN_TEST_BOOTSTRAP_ROLE:?required}
+      POSTGRES_PASSWORD: ${JUALIN_TEST_BOOTSTRAP_PASSWORD:?required}
+      POSTGRES_DB: ${JUALIN_TEST_BOOTSTRAP_DATABASE:?required}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=scram-sha-256
+    ports:
+      - "127.0.0.1::5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,nosuid,noexec
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 1s
+      timeout: 3s
+      retries: 60
+      start_period: 2s
+    labels:
+      com.jualin.disposable: "true"
+      com.jualin.test-run-id: ${JUALIN_TEST_RUN_ID:?required}
+
+networks:
+  default:
+    driver: bridge
+    internal: false
+    attachable: false
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+    labels:
+      com.jualin.disposable: "true"
+      com.jualin.test-run-id: ${JUALIN_TEST_RUN_ID:?required}

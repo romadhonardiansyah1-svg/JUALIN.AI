@@ -36,9 +36,15 @@ Untuk menjalankan dependency lokal:
 
     docker compose up -d db redis
 
-Siapkan schema database baru dari root repository:
+Verifikasi fresh schema hanya pada PostgreSQL disposable. Jalankan dari root
+repository; runner membuat database/role/run ID acak, memanggil guard sebelum
+Alembic, lalu memverifikasi sentinel sebelum teardown:
 
-    .venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
+    $repo = (Get-Location).Path
+    $py = (Resolve-Path -LiteralPath .\.venv\Scripts\python.exe).Path
+    Push-Location backend
+    & $py -m scripts.run_with_disposable_database --cwd $repo -- $py -m alembic -c .\alembic.ini upgrade head
+    Pop-Location
 
 Untuk menjalankan backend dari direktori backend:
 
@@ -55,16 +61,22 @@ Frontend mem-proxy path /api dan /uploads ke backend melalui konfigurasi Next.js
 
 ## Pengujian dan validasi
 
-Backend, dari direktori backend:
+Backend, dari root repository:
 
-    ..\.venv\Scripts\python.exe -m unittest discover -s tests -v
+    $py = (Resolve-Path -LiteralPath .\.venv\Scripts\python.exe).Path
+    Push-Location backend
+    & $py -m scripts.run_with_disposable_database -- $py -m unittest discover -s tests -v
+    Pop-Location
 
 Validasi tambahan dari root:
 
-    .venv\Scripts\python.exe -m compileall backend
-    .venv\Scripts\python.exe -m alembic -c alembic.ini heads
-    .venv\Scripts\python.exe -m alembic -c alembic.ini check
+    & $py -m compileall backend
+    & $py -m alembic -c alembic.ini heads
     docker compose config --quiet
+
+`alembic heads` hanya membaca revision graph. Setiap `current`, `upgrade`,
+`downgrade`, atau `check` yang membuka database wajib dijalankan sebagai target
+`scripts.run_with_disposable_database`; ambient `DATABASE_URL` tidak boleh dipakai.
 
 Frontend, dari direktori frontend:
 
@@ -76,7 +88,7 @@ Compileall hanya memeriksa syntax dan bukan pengganti test.
 
 ## Database dan migration
 
-Revision Alembic membentuk satu rantai hingga head 20260706_0007. `AUTO_CREATE_TABLES` bernilai `false` secara default; Alembic adalah jalur schema normal. Pada stack baru, service Compose `migrate` menjalankan `upgrade head` satu kali sebelum backend dan worker dimulai.
+Revision Alembic membentuk satu rantai hingga head 20260712_0011. `AUTO_CREATE_TABLES` bernilai `false` secara default; Alembic adalah jalur schema normal. Pada stack baru, service Compose `migrate` menjalankan `upgrade head` satu kali sebelum backend dan worker dimulai.
 
 Untuk menjalankan seluruh stack baru:
 
