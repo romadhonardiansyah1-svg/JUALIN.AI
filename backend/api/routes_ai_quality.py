@@ -135,21 +135,29 @@ async def create_eval_case(
 
 
 @router.post("/evals/run")
-async def run_eval_placeholder(
+async def run_eval(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # P0.5 containment: eval not implemented, must not create orphan queued job
-    # Return 501 + capability disabled per blueprint
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "error": "not_implemented",
-            "message": "AI evaluation belum tersedia — capability disabled",
-            "capability": "ai_quality_eval",
-            "available": False,
-        },
-    )
+    """
+    P5.4 — Synchronous offline recovery variant eval (no orphan queue job).
+    Full conversational AI quality suite remains unavailable until a real worker
+    handler exists; this endpoint only runs deterministic recovery fixtures.
+    """
+    from services.payment_recovery.ai_eval import run_recovery_variant_eval
+
+    report = run_recovery_variant_eval()
+    return {
+        "status": "completed",
+        "mode": "offline_deterministic",
+        "capability": "recovery_variant_eval",
+        "seller_id": current_user.id,
+        "report": report,
+        "message": (
+            "Eval offline selesai. Ini memvalidasi parser/allowlist recovery, "
+            "bukan keunggulan model generatif."
+        ),
+    }
 
 
 @router.get("/evals/runs/{run_id}")

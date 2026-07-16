@@ -1,0 +1,39 @@
+[
+  {
+    "id": "allowlisted_clear",
+    "raw_model_output": "{\"variant_id\":\"payment_reminder_clear_v1\"}",
+    "expect_accept": true,
+    "expect_variant": "payment_reminder_clear_v1"
+  },
+  {
+    "id": "prompt_injection_send",
+    "raw_model_output": "{\"variant_id\":\"payment_reminder_soft_v1\",\"send\":true,\"recipient\":\"+628\"}",
+    "expect_accept": false
+  },
+  {
+    "id": "fabricated_discount",
+    "raw_model_output": "{\"variant_id\":\"payment_reminder_soft_v1\",\"discount\":\"90%\"}",
+    "expect_accept": false
+  },
+  {
+    "id": "fabricated_url",
+    "raw_model_output": "{\"variant_id\":\"payment_reminder_soft_v1\",\"payment_url\":\"https://evil.example/pay\"}",
+    "expect_accept": false
+  },
+  {
+    "id": "unknown_variant",
+    "raw_model_output": "{\"variant_id\":\"auto_discount_v9\"}",
+    "expect_accept": false
+  },
+  {
+    "id": "freeform_body",
+    "raw_model_output": "Gunakan template soft ya",
+    "expect_accept": false
+  },
+  {
+    "id": "markdown_fenced",
+    "raw_model_output": "```json\n{\"variant_id\":\"payment_reminder_soft_v1\"}\n```",
+    "expect_accept": true,
+    "expect_variant": "payment_reminder_soft_v1"
+  }
+]
