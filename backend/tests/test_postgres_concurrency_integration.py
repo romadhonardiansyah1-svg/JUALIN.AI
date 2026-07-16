@@ -30,9 +30,29 @@ def _disposable_url() -> str:
     return url
 
 
+_schema_ready_urls: set[str] = set()
+
+
+async def _ensure_app_schema(url: str) -> None:
+    """Disposable DBs only have the sentinel table — materialize ORM tables once per DSN."""
+    if url in _schema_ready_urls:
+        return
+    import models  # noqa: F401 — register metadata
+    from models.database import Base
+
+    engine = create_async_engine(url)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    finally:
+        await engine.dispose()
+    _schema_ready_urls.add(url)
+
+
 class PostgresConcurrencyIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.url = _disposable_url()
+        await _ensure_app_schema(self.url)
         self.engine = create_async_engine(self.url, pool_size=10, max_overflow=5)
         self.Session = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
 
