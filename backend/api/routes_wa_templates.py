@@ -274,8 +274,8 @@ async def sync_wa_template_status(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Sync template status from provider.
-    V1: Admin can manually set status. No direct Meta API integration.
+    P4.4 — Sync template status from WhatsApp Cloud when credentials exist.
+    Never invents approved status when the provider cannot be reached.
     """
     result = await db.execute(
         select(WhatsAppMessageTemplate).where(
@@ -287,8 +287,95 @@ async def sync_wa_template_status(
     if not template:
         raise HTTPException(status_code=404, detail="Template tidak ditemukan")
 
+    from models.inbox import Channel
+    from core.secure_config import decrypt_config
+    from services.messaging.whatsapp_cloud import WhatsAppCloudProvider
+    from config import get_settings
+
+    settings = get_settings()
+    channel_q = await db.execute(
+        select(Channel)
+        .where(
+            Channel.seller_id == current_user.id,
+            Channel.type == "whatsapp",
+            Channel.provider == "whatsapp_cloud",
+            Channel.status == "active",
+        )
+        .limit(1)
+    )
+    channel = channel_q.scalar_one_or_none()
+    access_token = ""
+    phone_number_id = ""
+    waba_id = getattr(settings, "WHATSAPP_WABA_ID", "") or ""
+    if channel:
+        try:
+            cfg = decrypt_config(channel.config_encrypted) or {}
+            if isinstance(cfg, dict):
+                access_token = str(cfg.get("access_token") or "")
+                phone_number_id = str(cfg.get("phone_number_id") or channel.external_id or "")
+                waba_id = str(cfg.get("waba_id") or waba_id or "")
+        except Exception:
+            access_token = ""
+
+    provider = WhatsAppCloudProvider(
+        access_token=access_token,
+        phone_number_id=phone_number_id,
+        waba_id=waba_id,
+    )
+    sync = await provider.sync_message_templates()
+    if not sync.get("ok"):
+        return {
+            "id": template.id,
+            "status": template.status,
+            "provider_status": None,
+            "synced": False,
+            "error": sync.get("error") or "provider_sync_failed",
+            "graph_version": sync.get("graph_version"),
+            "message": "Status provider tidak dapat diverifikasi; status lokal tidak diubah.",
+        }
+
+    match = None
+    for row in sync.get("templates") or []:
+        if row.get("name") == template.name and (
+            not template.language or row.get("language", "").startswith(template.language)
+        ):
+            match = row
+            break
+
+    if not match:
+        return {
+            "id": template.id,
+            "status": template.status,
+            "provider_status": None,
+            "synced": False,
+            "error": "template_not_found_at_provider",
+            "graph_version": sync.get("graph_version"),
+            "message": "Template tidak ditemukan di akun provider.",
+        }
+
+    provider_status = (match.get("status") or "").lower()
+    # Map only known provider statuses; leave local status if unknown.
+    mapped = {
+        "approved": "approved",
+        "rejected": "rejected",
+        "pending": "pending_review",
+        "in_review": "pending_review",
+        "paused": "rejected",
+        "disabled": "rejected",
+    }.get(provider_status)
+    if mapped:
+        template.status = mapped
+        template.provider_template_id = match.get("provider_template_id") or template.provider_template_id
+        if mapped == "rejected" and not template.rejection_reason:
+            template.rejection_reason = "provider_status_" + provider_status
+        await db.commit()
+
     return {
         "id": template.id,
         "status": template.status,
-        "message": "Status synced (V1: manual only)",
+        "provider_status": provider_status,
+        "provider_template_id": match.get("provider_template_id"),
+        "synced": True,
+        "graph_version": sync.get("graph_version"),
+        "message": "Status diselaraskan dari provider.",
     }

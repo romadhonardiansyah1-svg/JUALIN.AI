@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     WHATSAPP_VERIFY_TOKEN: str = ""
     WHATSAPP_ACCESS_TOKEN: str = ""
     WHATSAPP_PHONE_NUMBER_ID: str = ""
+    WHATSAPP_WABA_ID: str = ""
     WHATSAPP_GRAPH_VERSION: str = "v20.0"
     WHATSAPP_APP_SECRET: str = ""
 

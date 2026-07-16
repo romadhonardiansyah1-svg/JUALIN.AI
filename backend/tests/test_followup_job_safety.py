@@ -708,7 +708,8 @@ class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestC
             opportunity_id=opportunity_id,
             contact_subject_id=contact_subject_id,
             channel_id=12,
-            template_code="payment-reminder-v1",
+            template_code="payment_reminder_v1",
+            template_params_json={"language": "id", "body": ["ORD-1"]},
             status="pending",
             attempt_count=0,
             last_error_code=None,
@@ -725,6 +726,10 @@ class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestC
             config_encrypted="encrypted-config",
             external_id="phone-id",
         )
+        subject = SimpleNamespace(
+            address_ciphertext=b"cipher",
+            address_key_version=1,
+        )
         job = SimpleNamespace(
             id=91,
             seller_id=10,
@@ -735,16 +740,18 @@ class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestC
             execution_stage="pre_side_effect",
             side_effect_started_at=None,
             error_message="",
+            last_error_code=None,
+            finished_at=None,
         )
         provider = MagicMock()
-        provider.send_message = AsyncMock(return_value=send_result)
+        provider.send_template = AsyncMock(return_value=send_result)
         db = MagicMock()
         db.execute = AsyncMock(
             side_effect=(
                 _scalar_result(dispatch),
                 _scalar_result(window),
                 _scalar_result(channel),
-                _scalar_result(None),
+                _scalar_result(subject),
                 _scalar_result(job),
                 _scalar_result(opportunity),
             )
@@ -773,6 +780,10 @@ class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestC
                     "access_token": "tenant-token",
                     "phone_number_id": "phone-id",
                 },
+            ),
+            patch(
+                "services.contact_identity.decrypt_address",
+                return_value="+6281111111111",
             ),
             patch.object(dispatch_module, "logger", test_logger),
         ):
@@ -810,7 +821,7 @@ class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestC
                 "retryable": False,
             },
         )
-        state.provider.send_message.assert_not_awaited()
+        state.provider.send_template.assert_not_awaited()
         self.assertNotIn(sensitive_error, repr(state.result))
         self.assertNotIn(sensitive_error, repr(state.logger.method_calls))
 

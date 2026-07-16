@@ -303,43 +303,72 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
             app_secret=cfg.get("app_secret", ""),
         )
 
-        # For MVP, we use send_message as send_template
-        # In real, we would call send_template with template_code, locale, params
-        # Here we simulate with template_code as text
-        # We need recipient phone — resolve via contact subject fingerprint -> need to decrypt? For MVP, use placeholder
-        # We have recipient_fingerprint but not phone; we need to resolve phone via contact_identity decrypt
-        # For MVP, we will fail if no phone, but we have placeholder logic
-
-        # Try to get phone from permission's subject
-        # For MVP, we will just use a dummy phone if not found, and treat as failure if no channel
-
-        # Simulate provider call — for staging, we use fake provider that always returns accepted
-        # Here we call real provider, but if credentials missing, it will fail
-
-        # For this handler, we will assume provider.send_message with template_code
-        # We need to construct message from template_code and params
-        # Simplified: use template_code as message body
-        recipient_phone = "+628123456789"  # Placeholder, real would be decrypted from ContactSubject
-
-        # Attempt to decrypt actual phone from ContactSubject
+        recipient_phone = None
         try:
             from models.payment_recovery import ContactSubject
             from services.contact_identity import decrypt_address
 
-            subj_q = await db.execute(select(ContactSubject).where(ContactSubject.id == dispatch.contact_subject_id))
+            subj_q = await db.execute(
+                select(ContactSubject).where(ContactSubject.id == dispatch.contact_subject_id)
+            )
             subj = subj_q.scalar_one_or_none()
             if subj and subj.address_ciphertext:
                 decrypted = decrypt_address(subj.address_ciphertext, subj.address_key_version)
                 if decrypted:
                     recipient_phone = decrypted
         except Exception:
-            pass
+            recipient_phone = None
 
         # SQLAlchemy autobegins for the channel/contact reads above. End that
         # read transaction before crossing the provider network boundary.
         await db.commit()
+
+        if not recipient_phone:
+            # No network write occurred; mark terminal failure without claiming send.
+            try:
+                async with db.begin():
+                    fresh_job_q = await db.execute(
+                        select(BackgroundJob).where(BackgroundJob.id == job.id)
+                    )
+                    fresh_job = fresh_job_q.scalar_one()
+                    if fresh_job.claim_token != job.claim_token:
+                        return {"success": False, "error": "stale finalize blocked"}
+                    dispatch.status = "failed_terminal"
+                    dispatch.last_error_code = "recipient_unavailable"
+                    job.status = "dead_letter"
+                    job.execution_stage = "completed"
+                    job.retryable = False
+                    job.error_message = "recipient unavailable"
+                    job.last_error_code = "recipient_unavailable"
+            except Exception:
+                await db.rollback()
+            return {
+                "success": False,
+                "outcome": "not_sent",
+                "error": "recipient unavailable",
+                "error_code": "recipient_unavailable",
+                "permanent": True,
+                "retryable": False,
+            }
+
+        template_params = []
+        if isinstance(dispatch.template_params_json, dict):
+            raw_params = dispatch.template_params_json.get("body") or dispatch.template_params_json.get("parameters")
+            if isinstance(raw_params, list):
+                template_params = [str(p) for p in raw_params]
+        language_code = "id"
+        if isinstance(dispatch.template_params_json, dict):
+            language_code = str(dispatch.template_params_json.get("language") or "id")
+
         send_attempted = True
-        send_result = await provider.send_message(recipient_phone, f"Template {dispatch.template_code} for order")
+        # P4.4 — exact utility template send; free-form text is not used for recovery.
+        send_result = await provider.send_template(
+            recipient_phone,
+            template_name=str(dispatch.template_code or "").strip().lower(),
+            language_code=language_code,
+            body_parameters=template_params,
+            expected_parameter_count=len(template_params) if template_params else 0,
+        )
         send_outcome = _classify_provider_result(send_result)
 
         # 4. Conditional finalize by claim token
