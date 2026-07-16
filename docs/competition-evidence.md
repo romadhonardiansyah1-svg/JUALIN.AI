@@ -23,9 +23,11 @@ Baseline commit for this matrix should match `git rev-parse HEAD` when re-run.
 | Outcomes | Observed ≠ causal | `tests.test_recovery_outcomes` | Overview disclaimer | partial |
 | Bounded AI | No free-form financial auth | `tests.test_recovery_ai_copy` | Injection rejected | partial |
 | AI eval offline | Parser suite green | `POST /api/ai-quality/evals/run` | Offline report | partial |
-| Proof Mode | Deterministic invariants | `python -m scripts.proof_mode run-all` | Show JSON + commit SHA | partial |
+| Proof Mode backend | 12/12 required scenarios | `python -m scripts.proof_mode run-all --suite backend` | Show dimensions + commit SHA | **passed** (backend only; browser/staging separate) |
+| Proof Mode UI | Safety Receipt | `/dashboard/proof` + `/api/proof` | Admin run seed 42 | partial |
+| PG concurrency | enqueue/claim/webhook races | disposable PG + `test_postgres_concurrency_integration` | 5 tests OK | **passed** (subset of P1.5 matrix) |
 | Staging send | Exactly one real WA message | P4.7 checklist | Controlled recipient | **blocked** |
-| Browser E2E | Full UI flow | Playwright (not yet suite) | Approve/reject | not_run |
+| Browser E2E | cache tenant switch + flows | Playwright → `proof-browser.json` | A→B cache | **not_run** |
 | Clean install / CI | Reproducible install | CI workflow + README | Fresh clone | partial |
 
 ## How to refresh Proof Mode evidence
