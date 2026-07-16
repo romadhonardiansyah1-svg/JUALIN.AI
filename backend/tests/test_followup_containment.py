@@ -108,7 +108,7 @@ class LifespanContainmentTests(unittest.IsolatedAsyncioTestCase):
                     )
                 )
 
-    async def test_retained_legacy_scheduler_log_does_not_include_customer_name(self):
+    async def test_retained_legacy_scheduler_log_mode_never_marks_followup_sent(self):
         import main
 
         customer_name = "Sensitive Customer Marker"
@@ -147,7 +147,7 @@ class LifespanContainmentTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await main.followup_scheduler()
 
-        mark_sent.assert_awaited_once_with(1, database_session)
+        mark_sent.assert_not_awaited()
         logged_messages = " ".join(
             str(call.args[0])
             for call in test_logger.info.call_args_list

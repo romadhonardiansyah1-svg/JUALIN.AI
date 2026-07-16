@@ -3,7 +3,7 @@ Messaging provider contracts for WhatsApp-first inbox.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
@@ -25,6 +25,7 @@ class SendMessageResult:
     provider_message_id: str = ""
     error_message: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+    outcome: Literal["accepted", "rejected", "unknown"] = "unknown"
 
 
 class MessagingProvider(ABC):

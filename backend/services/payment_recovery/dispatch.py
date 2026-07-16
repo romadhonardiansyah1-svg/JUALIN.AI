@@ -29,8 +29,63 @@ from models.agent_os import AgentApproval
 from models.order import Order, OrderStatus
 from models.scale_core import BackgroundJob
 from core.logging_config import get_logger
+from services.messaging.base import SendMessageResult
 
 logger = get_logger(__name__)
+
+
+def _classify_provider_result(result: object) -> str:
+    """Classify only evidence that is explicit and stable."""
+    if not isinstance(result, SendMessageResult):
+        return "provider_unknown"
+    message_id = result.provider_message_id
+    if (
+        result.success is True
+        and result.outcome == "accepted"
+        and isinstance(message_id, str)
+        and bool(message_id.strip())
+    ):
+        return "accepted"
+    if result.success is False and result.outcome == "rejected":
+        return "rejected"
+    return "provider_unknown"
+
+
+async def _finalize_provider_unknown(
+    db: AsyncSession,
+    *,
+    job: BackgroundJob,
+    dispatch: OutboundDispatch,
+) -> dict:
+    """Persist reconciliation authority and prevent a generic resend."""
+    async with db.begin():
+        fresh_job_q = await db.execute(
+            select(BackgroundJob).where(BackgroundJob.id == job.id)
+        )
+        fresh_job = fresh_job_q.scalar_one()
+        if fresh_job.claim_token != job.claim_token:
+            return {"success": False, "error": "stale finalize blocked"}
+
+        dispatch.status = "provider_unknown"
+        dispatch.last_error_code = "reconciliation_required"
+        job.status = "dead_letter"
+        job.execution_stage = "completed"
+        job.retryable = False
+        job.error_message = "provider outcome unknown"
+        job.last_error_code = "provider_unknown"
+
+    logger.info(
+        "Payment recovery dispatch requires provider reconciliation",
+        extra={"dispatch_id": str(dispatch.id), "seller_id": dispatch.seller_id},
+    )
+    return {
+        "success": False,
+        "outcome": "provider_unknown",
+        "error": "provider outcome unknown",
+        "error_code": "provider_unknown",
+        "permanent": True,
+        "retryable": False,
+    }
 
 
 async def revalidate_before_send(
@@ -128,6 +183,7 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
     if not dispatch_id_str:
         return {"success": False, "error": "missing dispatch_id", "permanent": True}
 
+    send_attempted = False
     try:
         dispatch_id = uuid.UUID(dispatch_id_str)
     except Exception:
@@ -203,14 +259,30 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
             window.consumed_at = datetime.now(timezone.utc)
             await db.commit()
 
-    except Exception as e:
+    except Exception as exc:
         await db.rollback()
-        return {"success": False, "error": f"failed to set in-flight: {e}"}
+        logger.warning(
+            "Payment recovery pre-send state could not be persisted",
+            extra={
+                "dispatch_id": str(dispatch.id),
+                "seller_id": dispatch.seller_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return {
+            "success": False,
+            "outcome": "not_sent",
+            "error": "failed to persist pre-send state",
+            "error_code": "pre_send_state_not_persisted",
+            "permanent": True,
+            "retryable": False,
+        }
 
     # 3. Call provider outside transaction
     # Load channel
     channel_q = await db.execute(select(Channel).where(Channel.id == dispatch.channel_id))
     channel = channel_q.scalar_one_or_none()
+    await db.commit()
 
     if not channel:
         # Terminal failure
@@ -219,7 +291,6 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
             dispatch.last_error_code = "provider_unavailable"
             job.status = "done"
             job.execution_stage = "completed"
-            await db.commit()
         return {"success": False, "error": "channel not found", "permanent": True}
 
     try:
@@ -264,10 +335,15 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
         except Exception:
             pass
 
+        # SQLAlchemy autobegins for the channel/contact reads above. End that
+        # read transaction before crossing the provider network boundary.
+        await db.commit()
+        send_attempted = True
         send_result = await provider.send_message(recipient_phone, f"Template {dispatch.template_code} for order")
+        send_outcome = _classify_provider_result(send_result)
 
         # 4. Conditional finalize by claim token
-        if send_result.success:
+        if send_outcome == "accepted":
             # Accepted
             async with db.begin():
                 # Verify claim token still matches job's current token (fencing)
@@ -281,6 +357,7 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
                 dispatch.provider_message_id = send_result.provider_message_id
                 job.status = "done"
                 job.execution_stage = "completed"
+                job.retryable = False
                 job.finished_at = datetime.now(timezone.utc)
 
                 # Transition opportunity to dispatched
@@ -290,11 +367,13 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
                     opp.status = "dispatched"
                     opp.state_version += 1
 
-                await db.commit()
+            return {
+                "success": True,
+                "outcome": "accepted",
+                "provider_message_id": send_result.provider_message_id,
+            }
 
-            return {"success": True, "provider_message_id": send_result.provider_message_id}
-
-        else:
+        if send_outcome == "rejected":
             # Provider rejected -> terminal failure
             async with db.begin():
                 fresh_job_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job.id))
@@ -304,9 +383,11 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
 
                 dispatch.status = "failed_terminal"
                 dispatch.last_error_code = "provider_rejected"
-                job.status = "done"
+                job.status = "dead_letter"
                 job.execution_stage = "completed"
-                job.error_message = send_result.error_message
+                job.retryable = False
+                job.error_message = "provider rejected"
+                job.last_error_code = "provider_rejected"
 
                 # Opportunity suppressed with terminal reason
                 opp_q = await db.execute(select(RevenueOpportunity).where(RevenueOpportunity.id == dispatch.opportunity_id))
@@ -316,40 +397,60 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
                     opp.terminal_reason_code = "dispatch_provider_rejected"
                     opp.state_version += 1
 
-                await db.commit()
+            return {
+                "success": False,
+                "outcome": "rejected",
+                "error": "provider rejected",
+                "error_code": "provider_rejected",
+                "permanent": True,
+                "retryable": False,
+            }
 
-            return {"success": False, "error": send_result.error_message, "permanent": True}
+        return await _finalize_provider_unknown(
+            db,
+            job=job,
+            dispatch=dispatch,
+        )
 
     except Exception as e:
-        # Timeout or exception after request may have been received by provider -> provider_unknown
-        # Only if we have authoritative proof no-write, we can retry; otherwise unknown
-        err_str = str(e).lower()
-        if "timeout" in err_str or "timed out" in err_str:
-            # Ambiguous -> provider_unknown
+        if send_attempted:
             try:
-                async with db.begin():
-                    dispatch.status = "provider_unknown"
-                    job.status = "manual_required"
-                    job.execution_stage = "manual_required"
-                    job.error_message = f"timeout: {e}"
-                    await db.commit()
-                # Enqueue reconcile (not implemented, just log)
-                logger.info(f"Dispatch {dispatch_id} provider_unknown, needs reconcile")
+                return await _finalize_provider_unknown(
+                    db,
+                    job=job,
+                    dispatch=dispatch,
+                )
             except Exception:
-                pass
-            return {"success": False, "error": f"provider_unknown: {e}", "permanent": False}
+                await db.rollback()
+                return {
+                    "success": False,
+                    "outcome": "provider_unknown",
+                    "error": "provider outcome unknown and evidence was not persisted",
+                    "error_code": "provider_unknown_evidence_not_persisted",
+                    "permanent": True,
+                    "retryable": False,
+                }
 
-        # Other exception -> failed_retryable only if authoritative proof no-write, else terminal
-        # For MVP, treat as terminal
+        # The provider method was never invoked, so this is a pre-send terminal
+        # configuration/dependency failure rather than an ambiguous write.
         try:
+            await db.rollback()
             async with db.begin():
                 dispatch.status = "failed_terminal"
                 dispatch.last_error_code = "provider_unavailable"
-                job.status = "done"
+                job.status = "dead_letter"
                 job.execution_stage = "completed"
-                job.error_message = str(e)
-                await db.commit()
+                job.retryable = False
+                job.error_message = "provider unavailable before send"
+                job.last_error_code = "provider_unavailable"
         except Exception:
-            pass
+            await db.rollback()
 
-        return {"success": False, "error": str(e), "permanent": True}
+        return {
+            "success": False,
+            "outcome": "not_sent",
+            "error": "provider unavailable before send",
+            "error_code": "provider_unavailable",
+            "permanent": True,
+            "retryable": False,
+        }

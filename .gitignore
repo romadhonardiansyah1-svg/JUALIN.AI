@@ -36,3 +36,8 @@ docker-compose.override.yml
 # Embedding model cache
 .cache/
 sentence_transformers/
+
+# Grok agent local MCP/project config (machine paths)
+.grok/
+
+

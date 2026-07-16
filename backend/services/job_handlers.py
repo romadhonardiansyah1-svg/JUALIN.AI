@@ -19,6 +19,7 @@ from models.campaign import Campaign, CampaignRecipient, CampaignMessage
 from models.ai_quality import AITrace
 from models.scale_core import BackgroundJob
 from core.secure_config import decrypt_config
+from services.messaging.base import SendMessageResult
 from services.messaging.whatsapp_cloud import WhatsAppCloudProvider
 from services.customer_resolver import resolve_customer
 
@@ -253,94 +254,300 @@ async def handle_inbox_ai_reply(db: AsyncSession, job: BackgroundJob) -> dict:
 # Handler: pending_payment_followup
 # ════════════════════════════════════════════════
 
-async def handle_pending_payment_followup(db: AsyncSession, job: BackgroundJob) -> dict:
-    """
-    Process a payment follow-up for a single order — fail-closed, tenant-scoped (P0.2).
+def _followup_failure(
+    *,
+    outcome: str,
+    reason: str,
+    error: str,
+    error_code: str,
+) -> dict[str, object]:
+    """Build the terminal, non-retryable result understood by the legacy worker."""
+    return {
+        "success": False,
+        "outcome": outcome,
+        "reason": reason,
+        "error": error,
+        "error_code": error_code,
+        "permanent": True,
+        "retryable": False,
+    }
 
-    - Lookup order by id AND seller_id to prevent cross-tenant mutation
-    - Only provider accepted result may mark followup sent; log mode is not success
-    - Provider failure/exception => failure, no mark
-    """
+
+def _classify_followup_send(result: object) -> str:
+    """Map the additive provider contract to accepted/rejected/unknown."""
+    if not isinstance(result, SendMessageResult):
+        return "provider_unknown"
+    message_id = result.provider_message_id
+    if (
+        result.success is True
+        and result.outcome == "accepted"
+        and isinstance(message_id, str)
+        and bool(message_id.strip())
+    ):
+        return "accepted"
+    if result.success is False and result.outcome == "rejected":
+        return "rejected"
+    return "provider_unknown"
+
+
+async def handle_pending_payment_followup(db: AsyncSession, job: BackgroundJob) -> dict:
+    """Process one contained legacy follow-up without false success or tenant drift."""
     from ai.followup import FOLLOWUP_MESSAGES, mark_followup_sent
 
-    order_id = job.payload.get("order_id")
-    if not order_id:
-        return {"success": False, "error": "missing order_id"}
+    job_id = getattr(job, "id", None)
+    seller_id = getattr(job, "seller_id", None)
+    if not (
+        getattr(settings, "ENABLE_LEGACY_PENDING_PAYMENT_FOLLOWUP", False)
+        and getattr(settings, "ENABLE_WHATSAPP", False)
+    ):
+        logger.info(
+            "Legacy follow-up job suppressed by disabled outbound flags",
+            extra={"job_id": job_id, "seller_id": seller_id},
+        )
+        return _followup_failure(
+            outcome="not_sent",
+            reason="legacy_followup_disabled",
+            error="legacy followup disabled",
+            error_code="legacy_followup_disabled",
+        )
 
-    # Tenant-scoped lookup per INV-01 / BUG-002
+    payload = getattr(job, "payload", None)
+    order_id = payload.get("order_id") if isinstance(payload, dict) else None
+    if type(order_id) is not int or order_id <= 0:
+        return _followup_failure(
+            outcome="suppressed",
+            reason="invalid_order_reference",
+            error="invalid order reference",
+            error_code="invalid_order_reference",
+        )
+    if type(seller_id) is not int or seller_id <= 0:
+        return _followup_failure(
+            outcome="suppressed",
+            reason="invalid_seller_reference",
+            error="invalid seller reference",
+            error_code="invalid_seller_reference",
+        )
+
     result = await db.execute(
-        select(Order).where(Order.id == order_id, Order.seller_id == job.seller_id)
+        select(Order).where(Order.id == order_id, Order.seller_id == seller_id)
     )
     order = result.scalar_one_or_none()
 
     if not order:
-        # Do not reveal whether order exists for other seller — treat as terminal not found
         logger.warning(
             "Followup job order not found or tenant mismatch",
-            extra={"job_id": getattr(job, "id", None), "order_id": order_id, "job_seller_id": job.seller_id},
+            extra={"job_id": job_id, "order_id": order_id, "seller_id": seller_id},
         )
-        return {"success": False, "error": "order not found", "reason": "cross_tenant_or_missing"}
+        return _followup_failure(
+            outcome="suppressed",
+            reason="order_not_found_or_tenant_mismatch",
+            error="order not found",
+            error_code="order_not_found",
+        )
+
+    if order.seller_id != seller_id:
+        logger.error(
+            "Followup job database result violated tenant ownership",
+            extra={"job_id": job_id, "order_id": order_id, "seller_id": seller_id},
+        )
+        return _followup_failure(
+            outcome="suppressed",
+            reason="cross_tenant_reference",
+            error="order not found",
+            error_code="cross_tenant_reference",
+        )
 
     if order.status != OrderStatus.PENDING:
-        return {"success": True, "skipped": True, "reason": "order no longer pending"}
+        return {
+            "success": True,
+            "outcome": "not_sent",
+            "skipped": True,
+            "reason": "order_no_longer_pending",
+        }
 
     followup_num = min(order.followup_count, 2)
     message = FOLLOWUP_MESSAGES[followup_num]
     items_text = order.items if isinstance(order.items, str) else str(order.items)
     message += f"\n\n📋 Detail order:\n{items_text}\n💰 Total: Rp {order.total:,.0f}"
 
-    # Try to send via WhatsApp if channel exists for seller — must succeed to count
     if not order.customer_phone:
-        return {"success": False, "error": "recipient_missing", "reason": "no phone", "permanent": True}
+        return _followup_failure(
+            outcome="not_sent",
+            reason="recipient_missing",
+            error="recipient missing",
+            error_code="recipient_missing",
+        )
 
     channel_result = await db.execute(
         select(Channel)
         .where(Channel.seller_id == order.seller_id)
         .where(Channel.type == "whatsapp")
+        .where(Channel.provider == "whatsapp_cloud")
         .where(Channel.status == "active")
         .limit(1)
     )
     channel = channel_result.scalar_one_or_none()
     if not channel:
         logger.info(
-            f"Follow-up #{order.followup_count + 1} → {order.customer_name} (no channel, suppressed)",
+            "Legacy follow-up not sent because no active channel is available",
             extra={"order_id": order.id, "seller_id": order.seller_id},
         )
-        return {"success": False, "error": "no channel", "reason": "simulated_not_sent", "permanent": True}
+        return _followup_failure(
+            outcome="not_sent",
+            reason="simulated_not_sent",
+            error="channel unavailable",
+            error_code="channel_unavailable",
+        )
 
-    config = decrypt_config(channel.config_encrypted)
-    provider = WhatsAppCloudProvider(
-        access_token=config.get("access_token", ""),
-        phone_number_id=config.get("phone_number_id", channel.external_id),
-        app_secret=config.get("app_secret", ""),
-    )
-    if not provider.access_token or not provider.phone_number_id:
+    try:
+        config = decrypt_config(channel.config_encrypted)
+    except Exception as exc:
+        logger.warning(
+            "Legacy follow-up provider configuration could not be decrypted",
+            extra={
+                "job_id": job_id,
+                "order_id": order.id,
+                "seller_id": order.seller_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return _followup_failure(
+            outcome="not_sent",
+            reason="provider_configuration_unavailable",
+            error="provider configuration unavailable",
+            error_code="provider_configuration_unavailable",
+        )
+
+    if not isinstance(config, dict):
+        config = {}
+    access_token = config.get("access_token")
+    phone_number_id = config.get("phone_number_id") or channel.external_id
+    if not (
+        isinstance(access_token, str)
+        and bool(access_token.strip())
+        and isinstance(phone_number_id, str)
+        and bool(phone_number_id.strip())
+    ):
         logger.info(
-            f"Follow-up #{order.followup_count + 1} → {order.customer_name} (channel not configured, suppressed)",
+            "Legacy follow-up not sent because the tenant channel is not configured",
             extra={"order_id": order.id, "seller_id": order.seller_id},
         )
-        return {"success": False, "error": "channel not configured", "reason": "simulated_not_sent", "permanent": True}
+        return _followup_failure(
+            outcome="not_sent",
+            reason="simulated_not_sent",
+            error="channel not configured",
+            error_code="channel_not_configured",
+        )
+
+    try:
+        provider = WhatsAppCloudProvider(
+            access_token=access_token,
+            phone_number_id=phone_number_id,
+            app_secret=config.get("app_secret", ""),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Legacy follow-up provider could not be initialized",
+            extra={
+                "job_id": job_id,
+                "order_id": order.id,
+                "seller_id": order.seller_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        return _followup_failure(
+            outcome="not_sent",
+            reason="provider_configuration_unavailable",
+            error="provider configuration unavailable",
+            error_code="provider_configuration_unavailable",
+        )
 
     try:
         send_result = await provider.send_message(order.customer_phone, message)
-    except Exception as e:
-        logger.warning(f"WhatsApp followup error: {e}", extra={"order_id": order.id})
-        return {"success": False, "error": f"provider exception: {e}", "reason": "provider_unavailable"}
-
-    if not send_result.success:
+    except Exception as exc:
         logger.warning(
-            f"WhatsApp followup failed: {send_result.error_message}",
-            extra={"order_id": order.id, "seller_id": order.seller_id},
+            "Legacy follow-up provider outcome is unknown",
+            extra={
+                "job_id": job_id,
+                "order_id": order.id,
+                "seller_id": order.seller_id,
+                "error_type": type(exc).__name__,
+            },
         )
-        return {
-            "success": False,
-            "error": send_result.error_message or "provider rejected",
-            "reason": "provider_rejected",
-        }
+        return _followup_failure(
+            outcome="provider_unknown",
+            reason="provider_unknown",
+            error="provider outcome unknown",
+            error_code="provider_unknown",
+        )
 
-    # Only provider accepted counts as sent — then mark
-    await mark_followup_sent(order.id, db)
-    return {"success": True, "order_id": order.id, "sent_via": "whatsapp"}
+    send_outcome = _classify_followup_send(send_result)
+    if send_outcome == "rejected":
+        logger.warning(
+            "Legacy follow-up provider rejected the request",
+            extra={"job_id": job_id, "order_id": order.id, "seller_id": order.seller_id},
+        )
+        return _followup_failure(
+            outcome="rejected",
+            reason="provider_rejected",
+            error="provider rejected",
+            error_code="provider_rejected",
+        )
+    if send_outcome != "accepted":
+        logger.warning(
+            "Legacy follow-up provider outcome is unknown",
+            extra={"job_id": job_id, "order_id": order.id, "seller_id": order.seller_id},
+        )
+        return _followup_failure(
+            outcome="provider_unknown",
+            reason="provider_unknown",
+            error="provider outcome unknown",
+            error_code="provider_unknown",
+        )
+
+    try:
+        marked = await mark_followup_sent(order.id, order.seller_id, db)
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            "Accepted legacy follow-up evidence could not be persisted",
+            extra={
+                "job_id": job_id,
+                "order_id": order.id,
+                "seller_id": order.seller_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+        failure = _followup_failure(
+            outcome="accepted",
+            reason="accepted_evidence_not_persisted",
+            error="accepted evidence not persisted",
+            error_code="accepted_evidence_not_persisted",
+        )
+        failure["provider_message_id"] = send_result.provider_message_id
+        return failure
+
+    if marked is not True:
+        logger.error(
+            "Accepted legacy follow-up evidence did not match the tenant order",
+            extra={"job_id": job_id, "order_id": order.id, "seller_id": order.seller_id},
+        )
+        failure = _followup_failure(
+            outcome="accepted",
+            reason="accepted_evidence_not_persisted",
+            error="accepted evidence not persisted",
+            error_code="accepted_evidence_not_persisted",
+        )
+        failure["provider_message_id"] = send_result.provider_message_id
+        return failure
+
+    return {
+        "success": True,
+        "outcome": "accepted",
+        "order_id": order.id,
+        "sent_via": "whatsapp",
+        "provider_message_id": send_result.provider_message_id,
+    }
 
 
 # ════════════════════════════════════════════════

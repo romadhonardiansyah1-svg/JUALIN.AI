@@ -57,7 +57,7 @@ async def followup_scheduler():
     Run follow-up checks every 15 minutes.
     Sends reminders to customers who haven't paid.
     """
-    from ai.followup import get_pending_followups, mark_followup_sent, auto_cancel_expired
+    from ai.followup import get_pending_followups, auto_cancel_expired
 
     while True:
         try:
@@ -65,16 +65,15 @@ async def followup_scheduler():
                 # 1. Get pending follow-ups
                 followups = await get_pending_followups(db)
                 for fu in followups:
-                    # In production, send via WhatsApp/SMS API
+                    # Observe-only legacy path: logging a candidate is not send evidence.
                     logger.info(
-                        "Legacy follow-up candidate processed",
+                        "Legacy follow-up candidate simulated without outbound send",
                         extra={
                             "order_id": fu["order_id"],
                             "seller_id": fu["seller_id"],
                             "followup_number": fu["followup_number"],
                         },
                     )
-                    await mark_followup_sent(fu["order_id"], db)
 
                 # 2. Auto-cancel expired orders
                 cancelled = await auto_cancel_expired(db)

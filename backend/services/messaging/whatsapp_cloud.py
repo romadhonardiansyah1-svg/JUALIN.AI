@@ -27,7 +27,11 @@ class WhatsAppCloudProvider(MessagingProvider):
 
     async def send_message(self, to: str, text: str) -> SendMessageResult:
         if not self.access_token or not self.phone_number_id:
-            return SendMessageResult(success=False, error_message="WhatsApp Cloud API belum dikonfigurasi")
+            return SendMessageResult(
+                success=False,
+                error_message="WhatsApp Cloud API belum dikonfigurasi",
+                outcome="unknown",
+            )
 
         url = f"https://graph.facebook.com/{self.graph_version}/{self.phone_number_id}/messages"
         payload = {
@@ -40,12 +44,36 @@ class WhatsAppCloudProvider(MessagingProvider):
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.post(url, headers=self._headers(), json=payload)
             data = response.json() if response.text else {}
-            if response.status_code >= 400:
-                return SendMessageResult(success=False, error_message=str(data), raw=data)
+            if not response.is_success:
+                return SendMessageResult(
+                    success=False,
+                    error_message=str(data),
+                    raw=data,
+                    # HTTP status alone is not provider acceptance evidence. Until
+                    # provider-specific rejection semantics are proven, stay
+                    # conservative so ambiguous writes enter reconciliation.
+                    outcome="unknown",
+                )
             message_id = (data.get("messages") or [{}])[0].get("id", "")
-            return SendMessageResult(success=True, provider_message_id=message_id, raw=data)
+            if not isinstance(message_id, str) or not message_id.strip():
+                return SendMessageResult(
+                    success=False,
+                    error_message="Provider response did not include a message id",
+                    raw=data,
+                    outcome="unknown",
+                )
+            return SendMessageResult(
+                success=True,
+                provider_message_id=message_id,
+                raw=data,
+                outcome="accepted",
+            )
         except Exception as e:
-            return SendMessageResult(success=False, error_message=str(e))
+            return SendMessageResult(
+                success=False,
+                error_message=str(e),
+                outcome="unknown",
+            )
 
     async def send_media(self, to: str, media_url: str, caption: str = "") -> SendMessageResult:
         text = f"{caption}\n{media_url}".strip()

@@ -80,15 +80,24 @@ async def get_pending_followups(db: AsyncSession) -> list[dict]:
     return followups
 
 
-async def mark_followup_sent(order_id: int, db: AsyncSession):
-    """Mark an order as having received a follow-up."""
-    result = await db.execute(select(Order).where(Order.id == order_id))
+async def mark_followup_sent(
+    order_id: int,
+    seller_id: int,
+    db: AsyncSession,
+) -> bool:
+    """Persist accepted follow-up evidence for one exact tenant order."""
+    result = await db.execute(
+        select(Order).where(Order.id == order_id, Order.seller_id == seller_id)
+    )
     order = result.scalar_one_or_none()
-    
-    if order:
-        order.followup_count += 1
-        order.last_followup_at = datetime.now(timezone.utc)
-        await db.commit()
+
+    if not order:
+        return False
+
+    order.followup_count += 1
+    order.last_followup_at = datetime.now(timezone.utc)
+    await db.commit()
+    return True
 
 
 async def auto_cancel_expired(db: AsyncSession) -> int:
