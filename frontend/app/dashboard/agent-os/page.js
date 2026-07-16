@@ -23,33 +23,56 @@ export default function AgentOsPage() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    try {
-      setError("");
-      const [ov, act, appr, neg, pol, imp] = await Promise.all([
-        api.agentOsOverview(),
-        api.agentOsActivity(40),
-        api.agentOsApprovals("pending"),
-        api.agentOsNegotiations(),
-        api.agentOsGetPolicy(),
-        api.agentOsImpact(),
-      ]);
-      setOverview(ov);
-      setActivity(act);
-      setApprovals(appr);
-      setNegotiations(neg);
-      setPolicy(pol);
-      setImpact(imp);
-    } catch (e) {
-      setError(e.message || "Gagal memuat");
-    } finally {
-      setLoading(false);
+    setError("");
+    // P5.5 — independent section loads; one failure must not blank all sections.
+    const tasks = [
+      ["overview", api.agentOsOverview()],
+      ["activity", api.agentOsActivity(40)],
+      ["approvals", api.agentOsApprovals("pending")],
+      ["negotiations", api.agentOsNegotiations()],
+      ["policy", api.agentOsGetPolicy()],
+      ["impact", api.agentOsImpact()],
+    ];
+    const settled = await Promise.allSettled(tasks.map(([, p]) => p));
+    const failed = [];
+    settled.forEach((res, i) => {
+      const key = tasks[i][0];
+      if (res.status !== "fulfilled") {
+        failed.push(key);
+        return;
+      }
+      const value = res.value;
+      if (key === "overview") setOverview(value);
+      if (key === "activity") setActivity(value || []);
+      if (key === "approvals") setApprovals(value || []);
+      if (key === "negotiations") setNegotiations(value || []);
+      if (key === "policy") setPolicy(value);
+      if (key === "impact") setImpact(value);
+    });
+    if (failed.length) {
+      setError(`Sebagian data belum dimuat: ${failed.join(", ")}. Bagian lain tetap ditampilkan.`);
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    load();
-    const t = setInterval(load, 8000); // live refresh feed
-    return () => clearInterval(t);
+    let cancelled = false;
+    const safeLoad = () => {
+      if (!cancelled && typeof document !== "undefined" && document.visibilityState === "visible") {
+        load();
+      }
+    };
+    safeLoad();
+    const t = setInterval(safeLoad, 8000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") safeLoad();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [load]);
 
   const loadBrief = async () => {
@@ -72,12 +95,15 @@ export default function AgentOsPage() {
   };
 
   const savePolicy = async (patch) => {
+    const previous = policy;
     try {
       const next = { ...policy, ...patch };
       setPolicy(next);
-      await api.agentOsUpdatePolicy(patch);
+      const saved = await api.agentOsUpdatePolicy(patch);
+      if (saved && typeof saved === "object") setPolicy(saved);
     } catch (e) {
-      setError(e.message);
+      setPolicy(previous);
+      setError(e.message || "Gagal menyimpan kebijakan");
     }
   };
 

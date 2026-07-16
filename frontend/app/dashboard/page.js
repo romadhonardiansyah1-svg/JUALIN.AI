@@ -14,40 +14,30 @@ export default function DashboardOverview() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    const userData = localStorage.getItem("jualin_user");
-    if (userData) setUser(JSON.parse(userData));
+    // Prefer session identity; avoid treating localStorage as source of truth for claims.
+    try {
+      const userData = localStorage.getItem("jualin_user");
+      if (userData) setUser(JSON.parse(userData));
+    } catch {
+      setUser(null);
+    }
 
     async function load() {
-      try {
-        const [s, q] = await Promise.all([api.getSummary(), api.getQuota()]);
-        setSummary(s);
-        setQuota(q);
-      } catch (e) {
-        // P0.5: failure must not appear as valid zero data
-        setSummary(null);
-        setQuota(null);
-      }
-
-      try {
-        const od = await api.getOrdersDaily(7);
-        if (od?.length > 0) setDailyOrders(od);
-        else throw new Error("empty");
-      } catch {
-        setDailyOrders([]);
-      }
-
-      // Load chat stats (from Phase 2)
-      try {
-        const cs = await api.getChatStats(7);
-        setChatStats(cs);
-      } catch { /* ignore */ }
-
-      // Load money dashboard (Market Acceptance Sprint 5)
-      try {
-        const md = await api.getMoneyDashboard();
-        setMoneyData(md);
-      } catch { /* ignore */ }
-
+      const [sRes, qRes, odRes, csRes, mdRes] = await Promise.allSettled([
+        api.getSummary(),
+        api.getQuota(),
+        api.getOrdersDaily(7),
+        api.getChatStats(7),
+        api.getMoneyDashboard(),
+      ]);
+      // P5.5 — independent section results; failure is null/unavailable, not zero.
+      setSummary(sRes.status === "fulfilled" ? sRes.value : null);
+      setQuota(qRes.status === "fulfilled" ? qRes.value : null);
+      setDailyOrders(
+        odRes.status === "fulfilled" && Array.isArray(odRes.value) ? odRes.value : []
+      );
+      setChatStats(csRes.status === "fulfilled" ? csRes.value : null);
+      setMoneyData(mdRes.status === "fulfilled" ? mdRes.value : null);
       setLoading(false);
     }
     load();
@@ -70,16 +60,60 @@ export default function DashboardOverview() {
 
   const stats = moneyData && !moneyData.is_empty
     ? [
-        { label: "AI Bantu Closing", value: `Rp ${((moneyData.ai_assisted_revenue || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "green", icon: "🤖" },
-        { label: "Order Dibantu AI", value: moneyData.ai_assisted_orders || 0, change: "", up: true, type: "blue", icon: "🛒" },
-        { label: "Payment Pending", value: `Rp ${((moneyData.pending_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: false, type: "orange", icon: "⏳" },
-        { label: "Pembayaran teramati", value: `Rp ${((moneyData.recovered_payment_value || 0) / 1000000).toFixed(1)}Jt`, change: "", up: true, type: "purple", icon: "💰" },
+        {
+          label: "Omzet (teramati, bukan kausal AI)",
+          value: `Rp ${((moneyData.ai_assisted_revenue || 0) / 1000000).toFixed(1)}Jt`,
+          change: "",
+          up: true,
+          type: "green",
+          icon: "📊",
+        },
+        {
+          label: "Order terkait sesi chat",
+          value: moneyData.ai_assisted_orders ?? "—",
+          change: "",
+          up: true,
+          type: "blue",
+          icon: "🛒",
+        },
+        {
+          label: "Payment Pending",
+          value: `Rp ${((moneyData.pending_payment_value || 0) / 1000000).toFixed(1)}Jt`,
+          change: "",
+          up: false,
+          type: "orange",
+          icon: "⏳",
+        },
+        {
+          label: "Pembayaran teramati (bukan recovered by AI)",
+          value: `Rp ${((moneyData.recovered_payment_value || 0) / 1000000).toFixed(1)}Jt`,
+          change: "",
+          up: true,
+          type: "purple",
+          icon: "💰",
+        },
       ]
     : [
         { label: "Chat Hari Ini", value: summary?.chat_today ?? "—", change: "", up: true, type: "green", icon: "💬" },
         { label: "Order Hari Ini", value: summary?.orders_today ?? "—", change: "", up: true, type: "blue", icon: "🛒" },
-        { label: "Revenue", value: summary ? `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)}Jt` : "—", change: "", up: true, type: "purple", icon: "💰" },
-        { label: "Avg Respons", value: summary ? `${summary?.avg_response_time || 3} dtk` : "—", change: "", up: true, type: "orange", icon: "⚡" },
+        {
+          label: "Revenue",
+          value: summary != null ? `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)}Jt` : "—",
+          change: "",
+          up: true,
+          type: "purple",
+          icon: "💰",
+        },
+        {
+          label: "Avg Respons",
+          value: summary != null && summary?.avg_response_time != null
+            ? `${summary.avg_response_time} dtk`
+            : "—",
+          change: "",
+          up: true,
+          type: "orange",
+          icon: "⚡",
+        },
       ];
 
   const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -109,6 +143,7 @@ export default function DashboardOverview() {
             <strong>{summary.orders_pending} customer belum bayar</strong> — periksa pesanan menunggu pembayaran
           </span>
           <Link href="/dashboard/orders" className={styles.alertLink}>Lihat Order →</Link>
+          <Link href="/dashboard/recovery" className={styles.alertLink}>Jualin Santai →</Link>
         </div>
       )}
       {summary === null && (
@@ -192,19 +227,31 @@ export default function DashboardOverview() {
             <div className={styles.quickStats}>
               <div className={styles.quickStatRow}>
                 <span className={styles.quickLabel}>Produk Aktif</span>
-                <span className={styles.quickValue}>{summary?.products_active || 0}</span>
+                <span className={styles.quickValue}>
+                  {summary != null ? (summary.products_active ?? "—") : "—"}
+                </span>
               </div>
               <div className={styles.quickStatRow}>
                 <span className={styles.quickLabel}>Avg Response Time</span>
-                <span className={styles.quickValue}>{chatStats?.avg_response_time_ms ? `${(chatStats.avg_response_time_ms / 1000).toFixed(1)}s` : `${summary?.avg_response_time || 3}s`}</span>
+                <span className={styles.quickValue}>
+                  {chatStats?.avg_response_time_ms != null
+                    ? `${(chatStats.avg_response_time_ms / 1000).toFixed(1)}s`
+                    : summary?.avg_response_time != null
+                      ? `${summary.avg_response_time}s`
+                      : "—"}
+                </span>
               </div>
               <div className={styles.quickStatRow}>
                 <span className={styles.quickLabel}>Conversion Rate</span>
-                <span className={styles.quickValue}>{chatStats?.conversion_rate || 0}%</span>
+                <span className={styles.quickValue}>
+                  {chatStats?.conversion_rate != null ? `${chatStats.conversion_rate}%` : "—"}
+                </span>
               </div>
               <div className={styles.quickStatRow}>
                 <span className={styles.quickLabel}>Total Interaksi</span>
-                <span className={styles.quickValue}>{chatStats?.total_interactions || summary?.messages_today || 0}</span>
+                <span className={styles.quickValue}>
+                  {chatStats?.total_interactions ?? summary?.messages_today ?? "—"}
+                </span>
               </div>
             </div>
           </div>

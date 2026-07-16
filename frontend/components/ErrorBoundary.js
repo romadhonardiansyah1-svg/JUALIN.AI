@@ -17,25 +17,39 @@ export class ErrorBoundary extends Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error("ErrorBoundary caught:", error, errorInfo);
+    // P5.5 — never log full stacks with potential PII in production UI path.
+    const safe = {
+      name: error?.name || "Error",
+      message: String(error?.message || "unknown").slice(0, 200),
+      componentStack: String(errorInfo?.componentStack || "").slice(0, 300),
+    };
+    if (process.env.NODE_ENV !== "production") {
+      console.error("ErrorBoundary caught:", safe);
+    } else {
+      console.error("ErrorBoundary caught:", safe.name, safe.message);
+    }
   }
 
   render() {
     if (this.state.hasError) {
+      const isProd = process.env.NODE_ENV === "production";
       return (
         <div style={{
           display: "flex", flexDirection: "column", alignItems: "center",
           justifyContent: "center", minHeight: "300px", padding: "40px",
           textAlign: "center", gap: "16px",
         }}>
-          <span style={{ fontSize: "3rem" }}>⚠️</span>
+          <span style={{ fontSize: "3rem" }} aria-hidden>⚠️</span>
           <h3 style={{ fontSize: "1.2rem", color: "#334155" }}>
             Terjadi Kesalahan
           </h3>
           <p style={{ color: "#64748B", maxWidth: "400px" }}>
-            {this.state.error?.message || "Halaman ini mengalami error. Coba muat ulang."}
+            {isProd
+              ? "Halaman ini mengalami error. Coba muat ulang. Jika berlanjut, hubungi dukungan dengan waktu kejadian."
+              : (this.state.error?.message || "Halaman ini mengalami error. Coba muat ulang.")}
           </p>
           <button
+            type="button"
             onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
             style={{
               padding: "10px 24px", background: "#6366F1", color: "white",
