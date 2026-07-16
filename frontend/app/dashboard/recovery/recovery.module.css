@@ -112,6 +112,16 @@
 
 .outcomesPanel { background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 16px; }
 .outcomesGrid { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; margin-top: 8px; }
+.disclaimer {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
 
 .stateBox { padding: 20px; text-align: center; color: #6b7280; background: #F9FAFB; border-radius: 10px; border: 1px dashed #E5E7EB; }
 .stateBoxError { padding: 20px; text-align: center; color: #991B1B; background: #FEF2F2; border-radius: 10px; border: 1px solid #FECACA; }

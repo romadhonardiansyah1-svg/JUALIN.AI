@@ -89,8 +89,9 @@ async def get_overview(
         "expired_unpaid": counts_raw.get("expired_unpaid", 0),
     }
 
-    # Honest ledger aggregates (P5.1): observed-after-acceptance only.
-    from models.payment_recovery import OutcomeEvent, AttributionAssessment
+    # Honest ledger + denominators (P5.1/P5.2). Never invent zeros as success.
+    from models.payment_recovery import OutcomeEvent, AttributionAssessment, OutboundDispatch
+    from services.payment_recovery.outcomes import RULE_VERSION, ATTRIBUTION_WINDOW
 
     observed_q = await db.execute(
         select(
@@ -105,6 +106,19 @@ async def get_overview(
     observed_amount = observed_row[0] or 0
     observed_orders = int(observed_row[1] or 0)
 
+    reversed_q = await db.execute(
+        select(
+            func.coalesce(func.sum(OutcomeEvent.amount), 0),
+            func.count(OutcomeEvent.id),
+        ).where(
+            OutcomeEvent.seller_id == current_user.id,
+            OutcomeEvent.event_type == "payment_reversed",
+        )
+    )
+    reversed_row = reversed_q.one()
+    reversed_amount = reversed_row[0] or 0
+    reversed_orders = int(reversed_row[1] or 0)
+
     attributed_q = await db.execute(
         select(
             func.coalesce(func.sum(AttributionAssessment.estimate), 0),
@@ -118,9 +132,34 @@ async def get_overview(
     attributed_amount = attributed_row[0] or 0
     attributed_orders = int(attributed_row[1] or 0)
 
+    accepted_q = await db.execute(
+        select(func.count(OutboundDispatch.id)).where(
+            OutboundDispatch.seller_id == current_user.id,
+            OutboundDispatch.status == "accepted",
+        )
+    )
+    delivered_q = await db.execute(
+        select(func.count(OutboundDispatch.id)).where(
+            OutboundDispatch.seller_id == current_user.id,
+            OutboundDispatch.delivery_status.in_(("delivered", "read")),
+        )
+    )
+    approved_count = counts_raw.get("dispatch_pending", 0) + counts_raw.get("dispatched", 0) + counts_raw.get(
+        "payment_observed", 0
+    )
+
+    denominators = {
+        "eligible_detected": counts.get("detected", 0),
+        "awaiting_approval": counts.get("awaiting_approval", 0),
+        "approved_or_later": approved_count,
+        "provider_accepted": int(accepted_q.scalar() or 0),
+        "delivered_or_read": int(delivered_q.scalar() or 0),
+        "payment_observed": observed_orders,
+        "reversed": reversed_orders,
+    }
+
     from datetime import datetime, timezone
     from config import get_settings
-    from services.payment_recovery.outcomes import RULE_VERSION
 
     now = datetime.now(timezone.utc)
     settings = get_settings()
@@ -133,25 +172,38 @@ async def get_overview(
             "as_of": now.isoformat(),
             "mode": mode,
             "counts": counts,
+            "denominators": denominators,
             "outcomes": {
                 "observed_payment": {
+                    "label": "Pembayaran teramati setelah pengingat",
                     "amount": str(observed_amount),
                     "currency": "IDR",
                     "orders": observed_orders,
+                    "window_hours": int(ATTRIBUTION_WINDOW.total_seconds() // 3600),
                 },
                 "rule_attributed": {
+                    "label": "Terkait pengingat menurut aturan atribusi",
                     "amount": str(attributed_amount),
                     "currency": "IDR",
                     "orders": attributed_orders,
                     "rule_version": RULE_VERSION,
+                    "not_causal": True,
+                },
+                "reversed": {
+                    "label": "Pembayaran dibatalkan/dikembalikan",
+                    "amount": str(reversed_amount),
+                    "currency": "IDR",
+                    "orders": reversed_orders,
                 },
                 "causal_estimate": None,
                 "disclaimer": (
                     "Data ini menunjukkan urutan waktu, bukan bukti bahwa "
-                    "pengingat menyebabkan pembayaran."
+                    "pengingat menyebabkan pembayaran. "
+                    "Angka 'terkait aturan' bukan revenue recovered by AI."
                 ),
             },
             "stale": False,
+            "unavailable": None,
         },
         headers={
             "Cache-Control": "private, no-store",

@@ -483,6 +483,40 @@ async def process_webhook(
             metadata={"provider": provider, "invoice_id": invoice_id},
         )
 
+    # P5.2 — honest recovery ledger from verified payment/refund facts only.
+    # Paid may re-enter for duplicate webhooks (ledger is idempotent by source key).
+    # Reversal only on transition into refunded to avoid extra work on stable refunded state.
+    recovery_outcome: dict | None = None
+    if new_status == "paid":
+        from services.payment_recovery.outcomes import on_verified_payment
+
+        paid_amount = incoming_amount if incoming_amount is not None else expected_amount
+        recovery_outcome = await on_verified_payment(
+            db,
+            seller_id=order.seller_id,
+            order_id=order.id,
+            amount=paid_amount if paid_amount is not None else order.total,
+            observed_at=order.paid_at or datetime.now(timezone.utc),
+            payment_attempt_id=payment_attempt.id if payment_attempt else None,
+            provider=provider,
+            invoice_id=invoice_id,
+            currency="IDR",
+        )
+    elif new_status == "refunded" and old_status != "refunded":
+        from services.payment_recovery.outcomes import record_payment_reversal
+
+        rev_amount = incoming_amount if incoming_amount is not None else expected_amount
+        recovery_outcome = await record_payment_reversal(
+            db,
+            seller_id=order.seller_id,
+            order_id=order.id,
+            amount=rev_amount if rev_amount is not None else order.total,
+            observed_at=datetime.now(timezone.utc),
+            provider=provider,
+            invoice_id=invoice_id,
+            currency="IDR",
+        )
+
     await db.commit()
 
     logger.info(
@@ -492,6 +526,9 @@ async def process_webhook(
             "provider": provider,
             "old_status": old_status,
             "new_status": new_status,
+            "recovery_outcome_applied": bool(
+                recovery_outcome and recovery_outcome.get("applied")
+            ),
         },
     )
 
@@ -501,4 +538,5 @@ async def process_webhook(
         "old_status": old_status,
         "new_status": new_status,
         "provider": provider,
+        "recovery_outcome": recovery_outcome,
     }

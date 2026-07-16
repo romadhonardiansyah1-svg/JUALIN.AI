@@ -215,6 +215,40 @@ class OutcomeRecordingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result["reason"], "opportunity_not_found")
 
+    async def test_on_verified_payment_no_opportunity_is_honest(self):
+        from services.payment_recovery.outcomes import on_verified_payment
+
+        db = AsyncMock()
+        empty = MagicMock()
+        empty.scalars.return_value.all.return_value = []
+        db.execute = AsyncMock(return_value=empty)
+        result = await on_verified_payment(
+            db,
+            seller_id=1,
+            order_id=2,
+            amount="1000.00",
+            provider="midtrans",
+            invoice_id="inv-1",
+        )
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["reason"], "no_recovery_opportunity")
+
+    async def test_reversal_requires_prior_observed(self):
+        from services.payment_recovery.outcomes import record_payment_reversal
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[_scalar(None), _scalar(None)])
+        result = await record_payment_reversal(
+            db,
+            seller_id=1,
+            order_id=2,
+            amount="1000.00",
+            provider="midtrans",
+            invoice_id="inv-1",
+        )
+        self.assertFalse(result["applied"])
+        self.assertEqual(result["reason"], "no_prior_observed_payment")
+
 
 if __name__ == "__main__":
     unittest.main()

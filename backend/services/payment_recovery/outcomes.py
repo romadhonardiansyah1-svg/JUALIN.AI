@@ -226,6 +226,170 @@ async def reconcile_payment_for_opportunity(
     )
 
 
+async def on_verified_payment(
+    db: AsyncSession,
+    *,
+    seller_id: int,
+    order_id: int,
+    amount: object,
+    observed_at: datetime | None = None,
+    payment_attempt_id: uuid.UUID | None = None,
+    provider: str = "",
+    invoice_id: str = "",
+    currency: str = "IDR",
+) -> dict[str, Any]:
+    """
+    P5.2 — Idempotent payment→recovery bridge.
+
+    Locates seller-scoped opportunities for the order/attempt and records at most
+    one OutcomeEvent per namespaced source key. No opportunity → no fabrication.
+    """
+    observed_at = _aware(observed_at) or datetime.now(timezone.utc)
+    source_suffix = invoice_id or str(payment_attempt_id or order_id)
+    source_event_key = f"payment:{provider or 'unknown'}:{seller_id}:{order_id}:{source_suffix}"
+
+    opp_q = select(RevenueOpportunity).where(
+        RevenueOpportunity.seller_id == seller_id,
+        RevenueOpportunity.order_id == order_id,
+    )
+    if payment_attempt_id is not None:
+        opp_q = opp_q.where(RevenueOpportunity.payment_attempt_id == payment_attempt_id)
+    opp_q = opp_q.order_by(RevenueOpportunity.created_at.desc())
+    result = await db.execute(opp_q)
+    opportunities = list(result.scalars().all())
+    if not opportunities:
+        return {"applied": False, "reason": "no_recovery_opportunity"}
+
+    results = []
+    for opportunity in opportunities:
+        dispatch_q = await db.execute(
+            select(OutboundDispatch).where(
+                OutboundDispatch.opportunity_id == opportunity.id,
+                OutboundDispatch.seller_id == seller_id,
+            )
+        )
+        dispatch = dispatch_q.scalar_one_or_none()
+        # Distinct key per opportunity so multi-opp orders stay idempotent.
+        key = f"{source_event_key}:opp:{opportunity.id}"
+        rec = await record_verified_payment_outcome(
+            db,
+            seller_id=seller_id,
+            order_id=order_id,
+            payment_attempt_id=opportunity.payment_attempt_id,
+            opportunity=opportunity,
+            dispatch=dispatch,
+            amount=amount,
+            currency=currency,
+            observed_at=observed_at,
+            source_event_key=key,
+            evidence={"provider": provider, "invoice_id": invoice_id},
+        )
+        results.append(rec)
+
+    applied_any = any(r.get("applied") for r in results)
+    return {
+        "applied": applied_any,
+        "reason": "recorded" if applied_any else results[0].get("reason") if results else "empty",
+        "results": results,
+    }
+
+
+async def on_dispatch_accepted(
+    db: AsyncSession,
+    *,
+    seller_id: int,
+    opportunity_id: uuid.UUID,
+    order_id: int,
+    amount: object,
+    paid_at: datetime | None,
+    payment_attempt_id: uuid.UUID | None = None,
+    currency: str = "IDR",
+) -> dict[str, Any]:
+    """
+    Dual trigger: when dispatch becomes accepted and order already has paid_at,
+    record observed-after-reminder if payment was after acceptance.
+    """
+    if paid_at is None:
+        return {"applied": False, "reason": "order_not_paid"}
+    return await reconcile_payment_for_opportunity(
+        db,
+        seller_id=seller_id,
+        opportunity_id=opportunity_id,
+        amount=amount,
+        observed_at=paid_at,
+        source_event_key=(
+            f"payment:post_accept:{seller_id}:{order_id}:"
+            f"{payment_attempt_id or opportunity_id}"
+        ),
+        currency=currency,
+    )
+
+
+async def record_payment_reversal(
+    db: AsyncSession,
+    *,
+    seller_id: int,
+    order_id: int,
+    amount: object,
+    observed_at: datetime | None = None,
+    provider: str = "",
+    invoice_id: str = "",
+    currency: str = "IDR",
+) -> dict[str, Any]:
+    """Append reversal ledger linked to prior observed payment; never reopen opportunity."""
+    observed_at = _aware(observed_at) or datetime.now(timezone.utc)
+    amount_dec = _as_decimal(amount)
+    if amount_dec is None:
+        return {"applied": False, "reason": "invalid_amount"}
+
+    source_event_key = f"payment_reversal:{provider or 'unknown'}:{seller_id}:{order_id}:{invoice_id or 'na'}"
+    existing = await _get_existing_outcome(db, source_event_key=source_event_key)
+    if existing:
+        return {
+            "applied": False,
+            "reason": "duplicate_source_event",
+            "outcome_event_id": str(existing.id),
+        }
+
+    # Link to most recent payment_observed for this seller/order if present.
+    prior_q = await db.execute(
+        select(OutcomeEvent)
+        .where(
+            OutcomeEvent.seller_id == seller_id,
+            OutcomeEvent.order_id == order_id,
+            OutcomeEvent.event_type == "payment_observed",
+        )
+        .order_by(OutcomeEvent.observed_at.desc())
+        .limit(1)
+    )
+    prior = prior_q.scalar_one_or_none()
+    if not prior:
+        return {"applied": False, "reason": "no_prior_observed_payment"}
+
+    reversal = OutcomeEvent(
+        seller_id=seller_id,
+        order_id=order_id,
+        payment_attempt_id=prior.payment_attempt_id,
+        opportunity_id=prior.opportunity_id,
+        dispatch_id=prior.dispatch_id,
+        event_type="payment_reversed",
+        source_event_key=source_event_key,
+        amount=amount_dec,
+        currency=(currency or prior.currency or "IDR")[:3].upper(),
+        reversal_of_id=prior.id,
+        observed_at=observed_at,
+        evidence_json={"provider": provider, "invoice_id": invoice_id},
+    )
+    db.add(reversal)
+    await db.flush()
+    return {
+        "applied": True,
+        "reason": "reversal_recorded",
+        "outcome_event_id": str(reversal.id),
+        "reversal_of_id": str(prior.id),
+    }
+
+
 async def mark_expired_unpaid_if_due(
     db: AsyncSession,
     *,

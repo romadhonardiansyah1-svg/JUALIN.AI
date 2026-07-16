@@ -180,6 +180,63 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(result["success"])
                 self.assertIn("Amount mismatch", result["error"])
 
+    async def test_paid_webhook_invokes_recovery_outcome_bridge(self):
+        from services.payments.factory import process_webhook
+        from services.payments.base import PaymentStatus
+        from models.order import Order, OrderStatus
+
+        mock_db = AsyncMock()
+        order = MagicMock(spec=Order)
+        order.id = 9
+        order.seller_id = 10
+        order.status = OrderStatus.PENDING
+        order.total = 100000
+        order.items = []
+        order.paid_at = None
+
+        mock_order_result = MagicMock()
+        mock_order_result.scalar_one_or_none.return_value = order
+        mock_attempt_result = MagicMock()
+        mock_attempt_result.scalar_one_or_none.return_value = None
+        mock_history_result = MagicMock()
+        mock_history_result.scalars.return_value.first.return_value = None
+
+        mock_gateway = MagicMock()
+        mock_gateway.validate_webhook = AsyncMock(
+            return_value=MagicMock(
+                valid=True,
+                order_id="JUALIN-9",
+                status=PaymentStatus.PAID,
+                amount=100000,
+            )
+        )
+        outcome = {"applied": True, "reason": "recorded"}
+
+        with patch("services.payments.factory.get_payment_gateway", return_value=mock_gateway):
+            mock_db.execute.side_effect = [
+                mock_attempt_result,
+                mock_order_result,
+            ]
+            with (
+                patch("core.audit.record_audit", new=AsyncMock()),
+                patch(
+                    "services.payment_recovery.outcomes.on_verified_payment",
+                    new=AsyncMock(return_value=outcome),
+                ) as bridge,
+            ):
+                result = await process_webhook(
+                    provider="midtrans", payload={"gross_amount": "100000"}, headers={}, db=mock_db
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["new_status"], "paid")
+        self.assertEqual(result["recovery_outcome"], outcome)
+        bridge.assert_awaited_once()
+        kwargs = bridge.await_args.kwargs
+        self.assertEqual(kwargs["seller_id"], 10)
+        self.assertEqual(kwargs["order_id"], 9)
+        self.assertEqual(kwargs["provider"], "midtrans")
+
 
 if __name__ == "__main__":
     unittest.main()

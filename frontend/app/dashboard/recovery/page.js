@@ -248,27 +248,65 @@ export default function RecoveryPage() {
       ) : overviewState === "error" ? (
         <StateBox state="error" />
       ) : overview ? (
-        <div className={styles.summaryGrid}>
-          <div className={styles.summaryCard}>
-            <span className={styles.summaryLabel}>Menunggu Persetujuan</span>
-            <span className={styles.summaryValue}>{overview.counts?.awaiting_approval ?? 0}</span>
+        <>
+          <div className={styles.summaryGrid}>
+            <div className={styles.summaryCard}>
+              <span className={styles.summaryLabel}>Terdeteksi (eligible)</span>
+              <span className={styles.summaryValue}>
+                {overview.denominators?.eligible_detected ?? overview.counts?.detected ?? "—"}
+              </span>
+            </div>
+            <div className={styles.summaryCard}>
+              <span className={styles.summaryLabel}>Menunggu Persetujuan</span>
+              <span className={styles.summaryValue}>
+                {overview.denominators?.awaiting_approval ?? overview.counts?.awaiting_approval ?? "—"}
+              </span>
+            </div>
+            <div className={styles.summaryCard}>
+              <span className={styles.summaryLabel}>Provider accepted</span>
+              <span className={styles.summaryValue}>
+                {overview.denominators?.provider_accepted ?? "—"}
+              </span>
+            </div>
+            <div className={styles.summaryCard}>
+              <span className={styles.summaryLabel}>Delivered / read</span>
+              <span className={styles.summaryValue}>
+                {overview.denominators?.delivered_or_read ?? "—"}
+              </span>
+            </div>
+            <div className={styles.summaryCard}>
+              <span className={styles.summaryLabel}>Pembayaran teramati</span>
+              <span className={styles.summaryValue}>
+                {overview.outcomes?.observed_payment?.orders ?? "—"}
+              </span>
+              <span className={styles.summaryAmount}>
+                Rp{overview.outcomes?.observed_payment?.amount ?? "—"}
+              </span>
+            </div>
+            <div className={styles.summaryCard}>
+              <span className={styles.summaryLabel}>Terkait aturan (bukan kausal)</span>
+              <span className={styles.summaryValue}>
+                {overview.outcomes?.rule_attributed?.orders ?? "—"}
+              </span>
+              <span className={styles.summaryAmount}>
+                Rp{overview.outcomes?.rule_attributed?.amount ?? "—"}
+              </span>
+            </div>
           </div>
-          <div className={styles.summaryCard}>
-            <span className={styles.summaryLabel}>Terjadwal</span>
-            <span className={styles.summaryValue}>{overview.counts?.scheduled ?? 0}</span>
-          </div>
-          <div className={styles.summaryCard}>
-            <span className={styles.summaryLabel}>Ditekan (Suppressed)</span>
-            <span className={styles.summaryValue}>{overview.counts?.suppressed ?? 0}</span>
-          </div>
-          <div className={styles.summaryCard}>
-            <span className={styles.summaryLabel}>Pembayaran Teramati</span>
-            <span className={styles.summaryValue}>{overview.outcomes?.observed_payment?.orders ?? 0}</span>
-            <span className={styles.summaryAmount}>Rp{overview.outcomes?.observed_payment?.amount || "0.00"}</span>
-          </div>
-        </div>
+          <p className={styles.disclaimer} role="note">
+            {overview.outcomes?.disclaimer ||
+              "Data ini menunjukkan urutan waktu, bukan bukti bahwa pengingat menyebabkan pembayaran."}
+            {overview.as_of ? (
+              <>
+                {" "}
+                As-of: {new Date(overview.as_of).toLocaleString("id-ID")}. Rule:{" "}
+                {overview.outcomes?.rule_attributed?.rule_version || "—"}.
+              </>
+            ) : null}
+          </p>
+        </>
       ) : (
-        <StateBox state="empty">Belum ada simulasi peluang pada periode ini.</StateBox>
+        <StateBox state="empty">Belum ada data recovery untuk periode ini.</StateBox>
       )}
 
       <div className={styles.mainGrid}>
@@ -428,22 +466,43 @@ export default function RecoveryPage() {
       </div>
 
       <div className={styles.outcomesPanel}>
-        <h3>Outcomes Terbaru</h3>
+        <h3>Outcomes (bukti jujur)</h3>
         <p className={styles.muted}>
-          Pembayaran teramati setelah pengingat (bukan bukti kausal). Data ini menunjukkan urutan
-          waktu, bukan bukti bahwa pengingat menyebabkan pembayaran.
+          <strong>Jangan dibaca sebagai “revenue recovered by AI”.</strong> Observed = pembayaran
+          setelah provider acceptance. Rule-attributed = korelasi temporal menurut aturan. Causal
+          hanya jika holdout terbukti.
         </p>
+        {overviewState === "error" && (
+          <StateBox state="error">Ringkasan outcome belum tersedia.</StateBox>
+        )}
         {overview?.outcomes && (
           <div className={styles.outcomesGrid}>
             <div>
-              Teramati: Rp{overview.outcomes.observed_payment?.amount} (
-              {overview.outcomes.observed_payment?.orders} order)
+              {overview.outcomes.observed_payment?.label || "Pembayaran teramati"}: Rp
+              {overview.outcomes.observed_payment?.amount ?? "—"} (
+              {overview.outcomes.observed_payment?.orders ?? "—"} order)
             </div>
-            <div>Terkait aturan: Rp{overview.outcomes.rule_attributed?.amount}</div>
+            <div>
+              {overview.outcomes.rule_attributed?.label || "Terkait aturan"}: Rp
+              {overview.outcomes.rule_attributed?.amount ?? "—"} (
+              {overview.outcomes.rule_attributed?.orders ?? "—"} order) — rule{" "}
+              {overview.outcomes.rule_attributed?.rule_version || "—"}
+            </div>
+            <div>
+              Dikembalikan/refund: Rp{overview.outcomes.reversed?.amount ?? "—"} (
+              {overview.outcomes.reversed?.orders ?? "—"} order)
+            </div>
             <div>
               Estimasi kausal:{" "}
               {overview.outcomes.causal_estimate ??
-                "Belum tersedia karena belum ada kelompok pembanding yang memadai."}
+                "Belum tersedia — belum ada holdout/randomized evidence."}
+            </div>
+            <div className={styles.muted}>
+              Denominator: detected {overview.denominators?.eligible_detected ?? "—"} · approval{" "}
+              {overview.denominators?.awaiting_approval ?? "—"} · accepted{" "}
+              {overview.denominators?.provider_accepted ?? "—"} · delivered{" "}
+              {overview.denominators?.delivered_or_read ?? "—"} · paid{" "}
+              {overview.denominators?.payment_observed ?? "—"}
             </div>
           </div>
         )}

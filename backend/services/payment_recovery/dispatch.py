@@ -411,6 +411,37 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
                 if opp:
                     opp.status = "dispatched"
                     opp.state_version += 1
+                    # Dual trigger: order may already be paid when acceptance is finalized.
+                    try:
+                        from services.payment_recovery.outcomes import on_dispatch_accepted
+
+                        order_paid_q = await db.execute(
+                            select(Order).where(
+                                Order.id == opp.order_id,
+                                Order.seller_id == dispatch.seller_id,
+                            )
+                        )
+                        paid_order = order_paid_q.scalar_one_or_none()
+                        if paid_order and paid_order.paid_at:
+                            await on_dispatch_accepted(
+                                db,
+                                seller_id=dispatch.seller_id,
+                                opportunity_id=opp.id,
+                                order_id=opp.order_id,
+                                amount=opp.amount_snapshot,
+                                paid_at=paid_order.paid_at,
+                                payment_attempt_id=opp.payment_attempt_id,
+                                currency=opp.currency or "IDR",
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "Post-accept outcome reconcile deferred",
+                            extra={
+                                "seller_id": dispatch.seller_id,
+                                "dispatch_id": str(dispatch.id),
+                                "error_type": type(exc).__name__,
+                            },
+                        )
 
             return {
                 "success": True,
