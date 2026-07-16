@@ -308,13 +308,31 @@ async def get_opportunity_detail(
     if order and order.customer_phone:
         recipient_masked = _mask_phone(order.customer_phone)
 
+    # P5.3 — bounded static/AI-selected allowlisted preview (no free-form body).
+    from services.payment_recovery.ai_copy import select_recovery_template_variant
+
+    selection = await select_recovery_template_variant(
+        {
+            "order_ref": f"ORD-{opp.order_id}",
+            "amount_display": f"Rp{opp.amount_snapshot}",
+            "currency": opp.currency or "IDR",
+        },
+        allow_ai=False,  # AI selection off until eval gate; static baseline only
+        fallback="static",
+    )
+    if selection.ok and selection.template_code:
+        template_code = selection.template_code
+    preview_text = selection.rendered_preview or (
+        f"Halo, pesanan {order.id if order else opp.order_id} senilai "
+        f"Rp{opp.amount_snapshot} masih menunggu pembayaran."
+    )
+
     preview = {
         "template_code": template_code,
         "template_provider_status": "local_registry",
-        "text": (
-            f"Halo, pesanan {order.id if order else opp.order_id} senilai "
-            f"Rp{opp.amount_snapshot} masih menunggu pembayaran."
-        ),
+        "template_selection_source": selection.source,
+        "template_selection_reason": selection.reason,
+        "text": preview_text,
         "payment_reference": _masked_reference(order.payment_url if order else None),
         "scheduled_at": opp.eligible_at.isoformat() if opp.eligible_at else None,
         "action_digest": action_digest,
