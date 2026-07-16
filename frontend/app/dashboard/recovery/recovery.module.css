@@ -45,8 +45,79 @@
 .recipientSection { font-size: 0.85rem; }
 .observeNote { background: #FFFBEB; border: 1px solid #FDE68A; color: #92400E; padding: 10px; border-radius: 8px; font-size: 0.85rem; }
 
+.decisionBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.approveBtn,
+.rejectBtn {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+.approveBtn {
+  background: #16a34a;
+  color: white;
+}
+.approveBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rejectBtn {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #e5e7eb;
+}
+.rejectBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.decisionSuccess {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.decisionError {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+.digest {
+  font-size: 0.75rem;
+  color: #4b5563;
+  word-break: break-all;
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .outcomesPanel { background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 16px; }
 .outcomesGrid { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; margin-top: 8px; }
 
 .stateBox { padding: 20px; text-align: center; color: #6b7280; background: #F9FAFB; border-radius: 10px; border: 1px dashed #E5E7EB; }
 .stateBoxError { padding: 20px; text-align: center; color: #991B1B; background: #FEF2F2; border-radius: 10px; border: 1px solid #FECACA; }
+
+@media (max-width: 320px) {
+  .page { padding: 12px; }
+  .approveBtn,
+  .rejectBtn { width: 100%; }
+}

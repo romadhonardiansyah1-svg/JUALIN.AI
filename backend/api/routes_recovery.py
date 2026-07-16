@@ -99,12 +99,18 @@ async def get_overview(
     observed_amount = observed_q.scalar() or 0
 
     from datetime import datetime, timezone
+    from config import get_settings
+
     now = datetime.now(timezone.utc)
+    settings = get_settings()
+    mode = getattr(settings, "PAYMENT_RECOVERY_MODE", "observe") or "observe"
+    if not getattr(settings, "ENABLE_PAYMENT_RECOVERY", False):
+        mode = "observe"
 
     return JSONResponse(
         content={
             "as_of": now.isoformat(),
-            "mode": "observe",  # Phase 2 only observe
+            "mode": mode,
             "counts": counts,
             "outcomes": {
                 "observed_payment": {"amount": str(observed_amount), "currency": "IDR", "orders": counts.get("payment_observed", 0)},
@@ -196,16 +202,41 @@ async def get_opportunity_detail(
     attempt_q = await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == opp.payment_attempt_id))
     attempt = attempt_q.scalar_one_or_none()
 
-    # Build masked response
-    recipient_masked = "+62••••••1234"  # Placeholder, real would come from ContactSubject via HMAC
-    # For observe, we don't have contact subject yet? We have permission, but we mask
+    # Load pending recovery approval for exact digest (read-only; no materialization).
+    from models.agent_os import AgentApproval
+
+    approval_q = await db.execute(
+        select(AgentApproval).where(
+            AgentApproval.opportunity_id == opp.id,
+            AgentApproval.seller_id == current_user.id,
+            AgentApproval.status == "pending",
+        )
+    )
+    approval = approval_q.scalar_one_or_none()
+    action_digest = approval.action_digest if approval and approval.action_digest else None
+    template_code = "payment_reminder_v1"
+    if approval and isinstance(approval.detail_json, dict):
+        template_code = approval.detail_json.get("template_code") or template_code
+
+    recipient_masked = "+62••••••••••"
+    if order and order.customer_phone:
+        recipient_masked = _mask_phone(order.customer_phone)
+
     preview = {
-        "template_code": "payment_reminder_v1",
-        "text": f"Halo, pesanan {order.id if order else opp.order_id} di toko Anda senilai Rp{opp.amount_snapshot} masih menunggu pembayaran.",
+        "template_code": template_code,
+        "template_provider_status": "local_registry",
+        "text": (
+            f"Halo, pesanan {order.id if order else opp.order_id} senilai "
+            f"Rp{opp.amount_snapshot} masih menunggu pembayaran."
+        ),
         "payment_reference": _masked_reference(order.payment_url if order else None),
         "scheduled_at": opp.eligible_at.isoformat() if opp.eligible_at else None,
-        "action_digest": "pending_approval_required_in_next_phase",
-        "expires_at": opp.expires_at.isoformat() if opp.expires_at else None,
+        "action_digest": action_digest,
+        "expires_at": (
+            approval.expires_at.isoformat()
+            if approval and getattr(approval, "expires_at", None)
+            else (opp.expires_at.isoformat() if opp.expires_at else None)
+        ),
     }
 
     return JSONResponse(
@@ -213,6 +244,21 @@ async def get_opportunity_detail(
             "id": str(opp.id),
             "state_version": opp.state_version,
             "status": opp.status,
+            "can_decide": bool(
+                approval
+                and opp.status == "awaiting_approval"
+                and action_digest
+            ),
+            "approval": (
+                {
+                    "id": approval.id,
+                    "status": approval.status,
+                    "action_digest": action_digest,
+                    "expires_at": preview["expires_at"],
+                }
+                if approval
+                else None
+            ),
             "order": {
                 "reference": f"ORD-{opp.order_id}",
                 "amount": str(opp.amount_snapshot),

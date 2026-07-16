@@ -595,6 +595,16 @@ export const api = {
     return fetchAPI(`/api/recovery/opportunities?${qs}`);
   },
   getRecoveryOpportunity: (id) => fetchAPI(`/api/recovery/opportunities/${id}`),
+  approveRecoveryOpportunity: (id, body) =>
+    fetchAPI(`/api/recovery/opportunities/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  rejectRecoveryOpportunity: (id, body) =>
+    fetchAPI(`/api/recovery/opportunities/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // ── Market Acceptance: Sprint 6 — Trust Layer ──
   getTrustProfile: () => fetchAPI("/api/trust-profile"),
