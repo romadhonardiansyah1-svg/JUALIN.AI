@@ -38,4 +38,4 @@ arq==0.26.3
 python-dotenv==1.2.2
 httpx==0.28.1
 aiofiles==24.1.0
-Pillow==12.2.0
+Pillow==12.3.0
