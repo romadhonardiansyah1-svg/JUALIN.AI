@@ -89,17 +89,38 @@ async def get_overview(
         "expired_unpaid": counts_raw.get("expired_unpaid", 0),
     }
 
-    # Outcomes observed (sum of amount_snapshot for payment_observed)
+    # Honest ledger aggregates (P5.1): observed-after-acceptance only.
+    from models.payment_recovery import OutcomeEvent, AttributionAssessment
+
     observed_q = await db.execute(
-        select(func.coalesce(func.sum(RevenueOpportunity.amount_snapshot), 0)).where(
-            RevenueOpportunity.seller_id == current_user.id,
-            RevenueOpportunity.status == "payment_observed",
+        select(
+            func.coalesce(func.sum(OutcomeEvent.amount), 0),
+            func.count(OutcomeEvent.id),
+        ).where(
+            OutcomeEvent.seller_id == current_user.id,
+            OutcomeEvent.event_type == "payment_observed",
         )
     )
-    observed_amount = observed_q.scalar() or 0
+    observed_row = observed_q.one()
+    observed_amount = observed_row[0] or 0
+    observed_orders = int(observed_row[1] or 0)
+
+    attributed_q = await db.execute(
+        select(
+            func.coalesce(func.sum(AttributionAssessment.estimate), 0),
+            func.count(AttributionAssessment.id),
+        ).where(
+            AttributionAssessment.seller_id == current_user.id,
+            AttributionAssessment.method == "rule_attributed",
+        )
+    )
+    attributed_row = attributed_q.one()
+    attributed_amount = attributed_row[0] or 0
+    attributed_orders = int(attributed_row[1] or 0)
 
     from datetime import datetime, timezone
     from config import get_settings
+    from services.payment_recovery.outcomes import RULE_VERSION
 
     now = datetime.now(timezone.utc)
     settings = get_settings()
@@ -113,9 +134,22 @@ async def get_overview(
             "mode": mode,
             "counts": counts,
             "outcomes": {
-                "observed_payment": {"amount": str(observed_amount), "currency": "IDR", "orders": counts.get("payment_observed", 0)},
-                "rule_attributed": {"amount": "0.00", "currency": "IDR", "orders": 0},
+                "observed_payment": {
+                    "amount": str(observed_amount),
+                    "currency": "IDR",
+                    "orders": observed_orders,
+                },
+                "rule_attributed": {
+                    "amount": str(attributed_amount),
+                    "currency": "IDR",
+                    "orders": attributed_orders,
+                    "rule_version": RULE_VERSION,
+                },
                 "causal_estimate": None,
+                "disclaimer": (
+                    "Data ini menunjukkan urutan waktu, bukan bukti bahwa "
+                    "pengingat menyebabkan pembayaran."
+                ),
             },
             "stale": False,
         },
