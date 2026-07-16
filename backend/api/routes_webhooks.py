@@ -32,6 +32,10 @@ from core.idempotency import (
 from services.messaging.whatsapp_cloud import WhatsAppCloudProvider
 from services.customer_resolver import resolve_customer, record_customer_event
 from services.payment_recovery.delivery_projection import project_whatsapp_delivery_fact
+from services.payment_recovery.opt_out import (
+    apply_transactional_stop,
+    is_transactional_stop_keyword,
+)
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -268,17 +272,31 @@ async def whatsapp_cloud_webhook(request: Request):
                 thread.last_message_preview = msg.content[:500]
                 thread.last_message_at = datetime.now(timezone.utc)
                 thread.unread_count = (thread.unread_count or 0) + 1
+                # Do not log raw STOP body/phone beyond existing sanitized preview path.
                 await record_customer_event(
                     db,
                     seller_id=channel.seller_id,
                     customer_id=customer.id,
                     event_type="chat.inbound",
                     title="Pesan WhatsApp masuk",
-                    data={"thread_id": thread.id, "message_id": msg.external_message_id, "content": msg.content[:500]},
+                    data={
+                        "thread_id": thread.id,
+                        "message_id": msg.external_message_id,
+                        "content": msg.content[:500],
+                    },
                     source="whatsapp_cloud",
                 )
 
-            if thread.mode == "ai":
+            # P4.3 — exact STOP/BERHENTI only; never auto-opt-out on BATAL.
+            if msg.content_type == "text" and is_transactional_stop_keyword(msg.content):
+                await apply_transactional_stop(
+                    db,
+                    seller_id=channel.seller_id,
+                    channel="whatsapp",
+                    sender_phone=contact.phone or msg.phone,
+                    source_event=msg.external_message_id,
+                )
+            elif thread.mode == "ai":
                 await enqueue_job_record(
                     db,
                     job_type="inbox_ai_reply",
