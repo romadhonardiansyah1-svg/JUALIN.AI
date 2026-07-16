@@ -635,10 +635,20 @@ def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
 
 
 def load_sanitized_artifact(path: Path) -> dict[str, Any]:
-    """Read proof artifact and strip any accidental secret-like keys."""
+    """Read proof artifact and reject real secret-like values (not prose mentions)."""
+    import re
+
     data = json.loads(path.read_text(encoding="utf-8"))
     blob = json.dumps(data)
-    for needle in ("access_token", "Bearer ", "password", "WHATSAPP_ACCESS_TOKEN="):
-        if needle in blob:
-            raise ValueError(f"artifact failed redaction check: contains {needle!r}")
+    # Fail on JWT-like tokens, bearer credentials, env assignment forms.
+    patterns = (
+        r"Bearer\s+[A-Za-z0-9\-_\.]{20,}",
+        r"WHATSAPP_ACCESS_TOKEN\s*=\s*\S+",
+        r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}",
+        r"\"password\"\s*:\s*\"[^\"]{8,}\"",
+        r"\"access_token\"\s*:\s*\"[^\"]{8,}\"",
+    )
+    for pat in patterns:
+        if re.search(pat, blob):
+            raise ValueError(f"artifact failed redaction check: pattern {pat!r}")
     return data
