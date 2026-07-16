@@ -23,9 +23,15 @@ from config import get_settings
 from models.database import async_session
 from models.inbox import Channel, ChannelContact, InboxThread, InboxMessage
 from core.logging_config import get_logger
-from core.idempotency import get_or_create_webhook_event, mark_webhook_processed, enqueue_job_record
+from core.idempotency import (
+    get_or_create_webhook_event,
+    get_or_create_webhook_event_composite,
+    mark_webhook_processed,
+    enqueue_job_record,
+)
 from services.messaging.whatsapp_cloud import WhatsAppCloudProvider
 from services.customer_resolver import resolve_customer, record_customer_event
+from services.payment_recovery.delivery_projection import project_whatsapp_delivery_fact
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -150,17 +156,26 @@ async def whatsapp_cloud_webhook(request: Request):
         return Response(status_code=200, content="OK")
 
     async with async_session() as db:
-        # Handle delivery statuses first — persist as typed normalized fact, monotonic, idempotent
+        # Handle delivery statuses first — durable inbox, then project to recovery domain.
         for st in statuses:
-            # Composite identity: provider + account + message_id + status + timestamp
+            provider_account_id = str(st.get("provider_account_id") or "").strip()
             composite_id = f"{st.get('message_id')}:{st.get('status')}:{st.get('timestamp')}"
-            await get_or_create_webhook_event(
+            event, is_new = await get_or_create_webhook_event_composite(
                 db,
                 provider="whatsapp_cloud",
-                payload=st,  # normalized, not raw
-                event_type=f"delivery_{st.get('status')}",
+                provider_account_id=provider_account_id,
                 external_event_id=composite_id,
-                provider_account_id=str(payload.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("metadata", {}).get("phone_number_id", "")),
+                event_type=f"delivery_{st.get('status')}",
+                payload=st,
+            )
+            if not is_new and event.status == "processed":
+                continue
+            # P4.2a: single owner that may mutate dispatch/opportunity from delivery facts.
+            projection = await project_whatsapp_delivery_fact(db, fact=st)
+            await mark_webhook_processed(
+                event,
+                status="processed" if projection.get("applied") else "ignored",
+                error="" if projection.get("applied") else str(projection.get("reason") or ""),
             )
 
         for msg in messages:
