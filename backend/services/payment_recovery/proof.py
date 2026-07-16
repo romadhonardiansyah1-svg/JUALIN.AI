@@ -595,6 +595,7 @@ def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
         "run_id": run_id,
         "suite": suite,
         "seed": seed,
+        "schema_version": "proof-artifact-v1",
         "commit_sha": _git_commit_sha(),
         "started_at": started,
         "finished_at": datetime.now(timezone.utc).isoformat(),

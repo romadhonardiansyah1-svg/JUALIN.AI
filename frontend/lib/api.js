@@ -611,6 +611,8 @@ export const api = {
   runProofMode: (body = {}) =>
     fetchAPI("/api/proof/run", { method: "POST", body: JSON.stringify(body) }),
   getProofLatest: () => fetchAPI("/api/proof/latest"),
+  downloadProofArtifact: (name = "proof-backend-latest.json") =>
+    fetchAPI(`/api/proof/download/${encodeURIComponent(name)}`),
 
   // ── Market Acceptance: Sprint 6 — Trust Layer ──
   getTrustProfile: () => fetchAPI("/api/trust-profile"),
