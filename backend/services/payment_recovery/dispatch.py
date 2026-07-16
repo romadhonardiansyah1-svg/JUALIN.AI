@@ -158,12 +158,28 @@ async def revalidate_before_send(
     if supp:
         return False, "consent_withdrawn"
 
-    # Check global kill switch and tenant pause (simplified)
+    # Env + global DB kill switch + tenant pause (authoritative before side effect)
     from config import get_settings
+    from models.payment_recovery import PaymentRecoveryControl
+    from models.agent_os import AgentPolicy
 
     settings = get_settings()
     if not getattr(settings, "ENABLE_PAYMENT_RECOVERY", False):
         return False, "feature_disabled"
+
+    control_q = await db.execute(
+        select(PaymentRecoveryControl).where(PaymentRecoveryControl.id == 1)
+    )
+    control = control_q.scalar_one_or_none()
+    if not control or not control.enabled or control.paused:
+        return False, "global_paused" if (control and control.paused) else "feature_disabled"
+
+    policy_q = await db.execute(
+        select(AgentPolicy).where(AgentPolicy.seller_id == seller_id)
+    )
+    policy = policy_q.scalar_one_or_none()
+    if not policy or getattr(policy, "payment_recovery_paused", True):
+        return False, "tenant_paused"
 
     # All checks pass
     return True, None
