@@ -1,5 +1,5 @@
 # JUALIN.AI Backend — Dockerfile
-FROM python:3.11.15-slim
+FROM python:3.14.6-slim
 
 WORKDIR /app
 
