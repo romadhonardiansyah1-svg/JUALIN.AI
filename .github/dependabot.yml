@@ -9,6 +9,10 @@ updates:
       backend-security:
         patterns:
           - "*"
+    ignore:
+      # arq currently requires redis>=4.2,<6
+      - dependency-name: "redis"
+        versions: [">=6.0.0a0"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
