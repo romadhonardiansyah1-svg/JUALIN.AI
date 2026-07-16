@@ -606,6 +606,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // ── P6.3 — Proof Mode (admin/demo) ──
+  getProofCapability: () => fetchAPI("/api/proof/capability"),
+  runProofMode: (body = {}) =>
+    fetchAPI("/api/proof/run", { method: "POST", body: JSON.stringify(body) }),
+  getProofLatest: () => fetchAPI("/api/proof/latest"),
+
   // ── Market Acceptance: Sprint 6 — Trust Layer ──
   getTrustProfile: () => fetchAPI("/api/trust-profile"),
   updateTrustProfile: (body) =>

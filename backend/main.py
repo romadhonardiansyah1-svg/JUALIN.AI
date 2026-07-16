@@ -45,6 +45,7 @@ from api.routes_agent_os import router as agent_os_router
 from api.routes_system import router as system_router
 from api.routes_public_payments import router as public_payments_router
 from api.routes_recovery import router as recovery_router
+from api.routes_proof import router as proof_router
 from middleware import RequestLoggingMiddleware, RateLimitMiddleware
 
 settings = get_settings()
@@ -245,6 +246,7 @@ app.include_router(public_payments_router, prefix="/api/public/payments", tags=[
 
 # Recovery observe-only (P2.6)
 app.include_router(recovery_router, prefix="/api/recovery", tags=["Recovery"])
+app.include_router(proof_router, prefix="/api/proof", tags=["Proof Mode"])
 
 # ── Static Files (uploads) ──
 import os

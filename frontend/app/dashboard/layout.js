@@ -44,6 +44,7 @@ const adminNavItems = [
   { href: "/dashboard/admin", icon: "🏠", label: "Dashboard" },
   { href: "/dashboard/admin/sellers", icon: "👥", label: "Kelola Seller" },
   { href: "/dashboard/admin/system", icon: "🖥️", label: "System" },
+  { href: "/dashboard/proof", icon: "🧪", label: "Proof Mode" },
   { href: "/dashboard", icon: "🏪", label: "Toko Saya", divider: true },
   { href: "/dashboard/agent-os", icon: "🤖", label: "AI Crew" },
   { href: "/dashboard/products", icon: "📦", label: "Produk" },
