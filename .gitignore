@@ -41,3 +41,7 @@ sentence_transformers/
 .grok/
 
 
+
+# Proof mode / local artifacts
+artifacts/
+
