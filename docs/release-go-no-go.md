@@ -15,8 +15,8 @@ Recovery remains disabled by default. Do not enable production recovery flags fr
 
 ## Source identity
 
-Base `HEAD`: `c085728005b5bc3ee25639d005c2768721a524cd`.
-The audited changes are uncommitted, so there is **no exact releasable commit SHA** yet. Artifacts from another SHA must not be used as release evidence.
+A release candidate is now committed. The authoritative source identity is the exact `git rev-parse HEAD` / CI `GITHUB_SHA` used for each run.
+The evidence below predates a successful clean-SHA release run, so it remains non-release-grade until regenerated on that exact commit.
 
 ## Evidence from this working tree
 
@@ -62,7 +62,7 @@ The focused real suite currently covers A→logout→B cache/auth isolation, pub
 4. Regenerate backend and browser artifacts with the same exact commit SHA, evidence run ID, and seed; require aggregate `verified_offline` without treating it as live-provider proof.
 5. Keep mocked browser artifacts labeled `unverified`; never promote them to `browser_e2e: passed`.
 6. Execute controlled staging-provider, backup/restore, kill-switch, and rollback rehearsals before live approval mode.
-7. Commit the reviewed candidate, regenerate evidence at that exact SHA, and obtain human go/no-go approval.
+7. Regenerate evidence at the exact clean SHA and obtain human go/no-go approval.
 
 ## Operator constraints
 
