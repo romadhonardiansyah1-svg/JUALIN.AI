@@ -87,57 +87,62 @@ async def atomic_claim_job(db, worker_id: str, job_type: str, contract_version: 
     return job, claim_token
 
 
-async def process_recorded_job(ctx, job_id: int):
-    """Dispatch a recorded background job to the appropriate handler — P1.2 fenced."""
+async def process_recorded_job(ctx, job_id: int, claim_token=None):
+    """Execute a DB-recorded job under a newly acquired or poller-owned lease."""
     worker_id = f"worker:{__import__('os').getpid()}"
     async with async_session() as db:
-        # Try atomic claim by id + token check for direct dispatch path (legacy direct id)
-        # If job_id provided, we attempt to claim it specifically with fencing
-        claim_token = uuid_module.uuid4()
-        # First, attempt to claim this specific job if it is still claimable
-        # We use a conditional update that ensures only one worker wins
-        claim_specific_sql = text(
-            """
-            UPDATE background_jobs
-            SET status='running', claim_token=:claim_token,
-                lease_expires_at=now() + interval '2 minutes',
-                lock_version=lock_version + 1, locked_by=:worker_id, locked_at=now(),
-                attempts=attempts + 1, started_at=now()
-            WHERE id=:job_id
-              AND status IN ('queued', 'failed')
-              AND execution_stage = 'pre_side_effect'
-              AND attempts < max_attempts
-              AND payload_digest IS NOT NULL
-              AND (lease_expires_at IS NULL OR lease_expires_at < now())
-            RETURNING id
-            """
-        )
-        result = await db.execute(
-            claim_specific_sql,
-            {"job_id": job_id, "claim_token": claim_token, "worker_id": worker_id},
-        )
-        claimed_row = result.fetchone()
-        if not claimed_row:
-            # Either not found, not claimable, or already claimed
-            # Fetch current state to decide
-            existing_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
-            job = existing_q.scalar_one_or_none()
+        if claim_token is None:
+            claim_token = uuid_module.uuid4()
+            claim_specific_sql = text(
+                """
+                UPDATE background_jobs
+                SET status='running', claim_token=:claim_token,
+                    lease_expires_at=now() + interval '2 minutes',
+                    lock_version=lock_version + 1, locked_by=:worker_id, locked_at=now(),
+                    attempts=attempts + 1, started_at=now()
+                WHERE id=:job_id
+                  AND status IN ('queued', 'failed')
+                  AND execution_stage = 'pre_side_effect'
+                  AND attempts < max_attempts
+                  AND payload_digest IS NOT NULL
+                  AND (lease_expires_at IS NULL OR lease_expires_at < now())
+                RETURNING id
+                """
+            )
+            result = await db.execute(
+                claim_specific_sql,
+                {"job_id": job_id, "claim_token": claim_token, "worker_id": worker_id},
+            )
+            if not result.fetchone():
+                existing_q = await db.execute(
+                    select(BackgroundJob).where(BackgroundJob.id == job_id)
+                )
+                job = existing_q.scalar_one_or_none()
+                if not job:
+                    return {"success": False, "error": "job not found"}
+                if job.status in ("done", "dead_letter", "skipped", "manual_required"):
+                    return {"success": True, "skipped": True}
+                if job.status == "running":
+                    return {"success": True, "status": "already running"}
+                return {"success": False, "error": "job not claimable", "status": job.status}
+
+            await db.commit()
+            job_q = await db.execute(
+                select(BackgroundJob).where(BackgroundJob.id == job_id)
+            )
+            job = job_q.scalar_one()
+        else:
+            job_q = await db.execute(
+                select(BackgroundJob).where(BackgroundJob.id == job_id)
+            )
+            job = job_q.scalar_one_or_none()
             if not job:
                 return {"success": False, "error": "job not found"}
             if job.status in ("done", "dead_letter", "skipped", "manual_required"):
                 return {"success": True, "skipped": True}
-            if job.status == "running":
-                return {"success": True, "status": "already running"}
-            # Could be queued but not matched due to digest/null etc — treat as not claimable
-            return {"success": False, "error": "job not claimable", "status": job.status}
+            if job.status != "running" or job.claim_token != claim_token:
+                return {"success": False, "error": "stale worker token mismatch"}
 
-        await db.commit()
-        # Re-fetch job after claim
-        job_q = await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))
-        job = job_q.scalar_one()
-
-        # Now job is claimed with claim_token, proceed to handler outside of long transaction?
-        # We already committed claim, now run handler
         await db.commit()
 
         try:
@@ -290,21 +295,21 @@ async def cron_process_queued_jobs(ctx):
 
     worker_id = f"worker:{__import__('os').getpid()}"
     # Try each enabled pair fairly, up to ARQ_MAX_JOBS claims per tick
-    claimed_ids = []
+    claimed_jobs = []
     async with async_session() as db:
         for job_type, contract_version in all_enabled_pairs():
-            if len(claimed_ids) >= max(1, settings.ARQ_MAX_JOBS):
+            if len(claimed_jobs) >= max(1, settings.ARQ_MAX_JOBS):
                 break
             job, token = await atomic_claim_job(db, worker_id, job_type, contract_version)
             if job:
                 await db.commit()
-                claimed_ids.append(job.id)
+                claimed_jobs.append((job.id, token))
             else:
                 await db.rollback()
 
-    for job_id in claimed_ids:
+    for job_id, claim_token in claimed_jobs:
         try:
-            await process_recorded_job(ctx, job_id)
+            await process_recorded_job(ctx, job_id, claim_token=claim_token)
         except Exception as exc:
             logger.warning(f"Queued job poll failed for job {job_id}: {exc}")
 
@@ -487,23 +492,46 @@ async def cron_heartbeat(ctx):
 # ══════════════════════════════════════════════════
 
 async def cron_recovery_detector(ctx):
-    """Periodic job: detect pending payment recovery opportunities in observe mode."""
+    """Detect opportunities and, in approval mode, materialize exact approvals."""
     if not getattr(settings, "ENABLE_PAYMENT_RECOVERY", False):
         return
-    # In Phase 2, only observe mode is allowed; approval mode not yet enabled
     mode = getattr(settings, "PAYMENT_RECOVERY_MODE", "observe")
-    if mode not in ("observe",):
-        # Until P4, approval mode is unavailable via detector — will be reported via capabilities
+    if mode not in ("observe", "approval"):
         return
 
     try:
         from services.payment_recovery.detector import detect_payment_recovery_opportunities
+
         async with async_session() as db:
-            opps = await detect_payment_recovery_opportunities(db)
-            if opps:
-                logger.info(f"Recovery detector: found {len(opps)} opportunities", extra={"count": len(opps)})
-    except Exception as e:
-        logger.error(f"Recovery detector error: {e}", exc_info=True)
+            opportunities = await detect_payment_recovery_opportunities(db)
+            approval_count = 0
+            if mode == "approval":
+                from services.payment_recovery.approval_materializer import (
+                    materialize_approval_for_opportunity,
+                )
+
+                for opportunity in opportunities:
+                    approval = await materialize_approval_for_opportunity(
+                        db,
+                        seller_id=opportunity.seller_id,
+                        opportunity_id=opportunity.id,
+                        policy_version=opportunity.policy_version,
+                    )
+                    if approval:
+                        approval_count += 1
+                await db.commit()
+
+            if opportunities:
+                logger.info(
+                    "Recovery detector completed",
+                    extra={
+                        "count": len(opportunities),
+                        "approval_count": approval_count,
+                        "mode": mode,
+                    },
+                )
+    except Exception as exc:
+        logger.error(f"Recovery detector error: {exc}", exc_info=True)
 
 
 # ══════════════════════════════════════════════════

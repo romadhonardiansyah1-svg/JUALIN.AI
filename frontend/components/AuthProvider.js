@@ -15,15 +15,15 @@ export default function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [error, setError] = useState(null);
   const refreshingRef = useRef(false);
-  const epochRef = useRef(0);
 
-  const clearAndLogout = useCallback(() => {
+  const clearAndLogout = useCallback((broadcast = true) => {
     try {
       clearAuthStateAndCache();
     } catch {}
     setUser(null);
     setState("unauthenticated");
-    // Broadcast logout to other tabs
+    if (!broadcast) return;
+
     try {
       const bc = new BroadcastChannel("jualin-auth");
       bc.postMessage({ type: "logout", epoch: Date.now() });
@@ -87,8 +87,10 @@ export default function AuthProvider({ children }) {
     try {
       await api.refreshAuth();
       await fetchMe(true);
-    } catch {
-      clearAndLogout();
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 409)) {
+        clearAndLogout();
+      }
     } finally {
       refreshingRef.current = false;
     }
@@ -101,7 +103,7 @@ export default function AuthProvider({ children }) {
     // Listen for storage events (logout from other tabs)
     const onStorage = (e) => {
       if (e.key === "jualin_logout") {
-        clearAndLogout();
+        clearAndLogout(false);
       }
     };
     window.addEventListener("storage", onStorage);
@@ -112,7 +114,7 @@ export default function AuthProvider({ children }) {
       bc = new BroadcastChannel("jualin-auth");
       bc.onmessage = (ev) => {
         if (ev.data?.type === "logout") {
-          clearAndLogout();
+          clearAndLogout(false);
         }
       };
     } catch {}
@@ -150,10 +152,18 @@ export default function AuthProvider({ children }) {
     if (typeof window !== "undefined") window.location.href = "/login";
   }, [clearAndLogout]);
 
+  const updateUser = useCallback((nextUser) => {
+    if (!nextUser) return;
+    setUser(nextUser);
+    setState("authenticated");
+    setError(null);
+  }, []);
+
   const value = {
     state,
     user,
     error,
+    updateUser,
     isAuthenticated: state === "authenticated" && !!user,
     isChecking: state === "checking" || state === "refreshing",
     login,

@@ -5,9 +5,10 @@ All functions receive explicit fact objects, injected clock, no DB/network.
 """
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime, timezone, time
+from datetime import datetime, timedelta, timezone, time
 from decimal import Decimal
 from typing import Literal, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 
 
@@ -139,9 +140,20 @@ def evaluate_policy(fact: PolicyFact) -> PolicyDecision:
     if not fact.attempt_is_current:
         return PolicyDecision(allowed=False, suppression_code="dispatch_already_exists", eligible=False, reason="not current attempt")
 
-    # All checks passed — eligible
-    # For MVP, we still need quiet hours check for scheduling
-    # If current time is in quiet hours, we would defer, but for policy evaluation we still allow with scheduled_at deferred
+    quiet_status, quiet_code = resolve_quiet_hours(
+        current_time_utc=fact.current_time_utc,
+        recipient_timezone=fact.recipient_timezone,
+        quiet_start=fact.quiet_hours_start,
+        quiet_end=fact.quiet_hours_end,
+    )
+    if quiet_status != "allowed":
+        return PolicyDecision(
+            allowed=False,
+            suppression_code=quiet_code,
+            eligible=quiet_status == "deferred",
+            reason="deferred by quiet hours" if quiet_status == "deferred" else "quiet hours unavailable",
+        )
+
     return PolicyDecision(allowed=True, suppression_code=None, eligible=True, reason="eligible")
 
 
@@ -152,30 +164,36 @@ def resolve_quiet_hours(
     quiet_start: time,
     quiet_end: time,
 ) -> tuple[str, str]:
-    """
-    Returns (allowed|deferred, reason).
-    Simplified: if timezone unknown, suppress.
-    If in quiet hours, defer.
-    """
+    """Return an allow/defer decision using the recipient's IANA timezone."""
     if not recipient_timezone:
         return ("suppressed", "recipient_timezone_unknown")
+    if current_time_utc.tzinfo is None or current_time_utc.utcoffset() is None:
+        return ("suppressed", "current_time_timezone_unknown")
 
-    # For MVP, we assume conservative window [20:00, 08:00) is quiet
-    # Actual logic would convert current_time_utc to recipient timezone and check
-    # Here we implement simple check assuming current_time_utc already in recipient tz for test
-    # Real implementation would use zoneinfo
+    try:
+        recipient_zone = ZoneInfo(recipient_timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        # Indonesia does not observe DST; keep the safety check available on
+        # Windows runtimes that do not bundle the IANA timezone database.
+        indonesia_offsets = {
+            "Asia/Jakarta": 7,
+            "Asia/Pontianak": 7,
+            "Asia/Makassar": 8,
+            "Asia/Ujung_Pandang": 8,
+            "Asia/Jayapura": 9,
+        }
+        offset = indonesia_offsets.get(recipient_timezone)
+        if offset is None:
+            return ("suppressed", "recipient_timezone_invalid")
+        recipient_zone = timezone(timedelta(hours=offset))
 
-    # If quiet hours wrap midnight (e.g., 21:00-08:00)
-    def is_quiet(t: time) -> bool:
-        if quiet_start <= quiet_end:
-            return quiet_start <= t < quiet_end
-        else:
-            return t >= quiet_start or t < quiet_end
+    local_time = current_time_utc.astimezone(recipient_zone).time().replace(tzinfo=None)
 
-    # Convert utc to local naive for check (simplified)
-    # In real code, use zoneinfo
-    local_time = current_time_utc.time()
+    if quiet_start <= quiet_end:
+        is_quiet = quiet_start <= local_time < quiet_end
+    else:
+        is_quiet = local_time >= quiet_start or local_time < quiet_end
 
-    if is_quiet(local_time):
+    if is_quiet:
         return ("deferred", "quiet_hours_deferred")
     return ("allowed", "ok")

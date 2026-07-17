@@ -114,11 +114,13 @@ export default function RecoveryPage() {
     }
   }, []);
 
-  const loadDetail = useCallback(async (id) => {
+  const loadDetail = useCallback(async (id, { preserveDecision = false } = {}) => {
     const reqId = ++detailRequestId.current;
     setDetailState("loading");
-    setDecisionState("idle");
-    setDecisionMessage("");
+    if (!preserveDecision) {
+      setDecisionState("idle");
+      setDecisionMessage("");
+    }
     approveKeyRef.current = newIdempotencyKey("recovery-approve");
     rejectKeyRef.current = newIdempotencyKey("recovery-reject");
     try {
@@ -183,7 +185,7 @@ export default function RecoveryPage() {
       );
       setLiveMessage("Persetujuan diterima. Pengingat dijadwalkan, belum terkirim.");
       await Promise.all([loadOverview(), loadOpportunities()]);
-      await loadDetail(selected.id);
+      await loadDetail(selected.id, { preserveDecision: true });
     } catch (err) {
       if (!mountedRef.current) return;
       const msg = decisionCopy(err);
@@ -213,7 +215,7 @@ export default function RecoveryPage() {
       setDecisionMessage(result?.message || "Peluang ditolak. Tidak ada pesan yang dikirim.");
       setLiveMessage("Peluang ditolak.");
       await Promise.all([loadOverview(), loadOpportunities()]);
-      await loadDetail(selected.id);
+      await loadDetail(selected.id, { preserveDecision: true });
     } catch (err) {
       if (!mountedRef.current) return;
       const msg = decisionCopy(err);

@@ -7,6 +7,7 @@ Live provider staging remains blocked without credentials.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -16,8 +17,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, time, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
+from unittest.mock import AsyncMock, MagicMock
 
+from config import get_settings
 from services.messaging.base import SendMessageResult
 from services.payment_recovery.ai_copy import parse_model_selection, select_static
 from services.payment_recovery.delivery_projection import should_advance_delivery
@@ -63,6 +67,21 @@ def _git_commit_sha() -> str:
         return out.strip()
     except Exception:
         return "unknown"
+
+
+def git_source_tree_clean() -> bool:
+    try:
+        root = Path(__file__).resolve().parents[3]
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.returncode == 0 and not result.stdout.strip()
+    except Exception:
+        return False
 
 
 def _assert(
@@ -111,35 +130,61 @@ class ScenarioResult:
 
 
 def scenario_duplicate_webhook(seed: int) -> ScenarioResult:
-    r = ScenarioResult(
+    """Project the same normalized provider fact twice through production code."""
+    from services.payment_recovery.delivery_projection import project_whatsapp_delivery_fact
+
+    result = ScenarioResult(
         scenario_id="duplicate-webhook",
         status="not_run",
         seed=seed,
         invariants=["INV-06", "INV-13"],
-        setup="delivery_status monotonic ranks",
-        injection_point="should_advance_delivery",
+        setup="same provider delivery fact projected twice",
+        injection_point="project_whatsapp_delivery_fact",
         provider_calls=0,
     )
-    r.assertions = [
-        _assert(
-            should_advance_delivery("delivered", "delivered") is False,
-            "duplicate delivered is no-op",
-            expected=False,
-            actual=should_advance_delivery("delivered", "delivered"),
-            audit_code="delivery_duplicate_ignored",
-        ),
-        _assert(
-            should_advance_delivery("read", "delivered") is False,
-            "out-of-order delivered after read no-op",
-            audit_code="delivery_no_downgrade",
-        ),
-        _assert(
-            should_advance_delivery("delivered", "failed") is False,
-            "failed does not downgrade delivered",
-            audit_code="delivery_failed_no_downgrade",
-        ),
+    channel = SimpleNamespace(id=7, seller_id=3)
+    dispatch = SimpleNamespace(
+        id=uuid.UUID(int=seed),
+        seller_id=3,
+        opportunity_id=uuid.UUID(int=seed + 1),
+        status="accepted",
+        accepted_at=datetime.now(timezone.utc),
+        delivery_status="not_available",
+        delivered_at=None,
+        read_at=None,
+        delivery_failed_at=None,
+    )
+
+    def scalar(value):
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = value
+        return query_result
+
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=(scalar(channel), scalar(dispatch), scalar(channel), scalar(dispatch))
+    )
+    fact = {
+        "provider": "whatsapp_cloud",
+        "provider_account_id": "account-7",
+        "message_id": "wamid.duplicate",
+        "status": "delivered",
+        "timestamp": "2026-07-17T07:00:00Z",
+    }
+
+    async def exercise():
+        first = await project_whatsapp_delivery_fact(db, fact=fact)
+        second = await project_whatsapp_delivery_fact(db, fact=fact)
+        return first, second
+
+    first, second = asyncio.run(exercise())
+    result.assertions = [
+        _assert(first["applied"] is True, "first delivery fact changes dispatch"),
+        _assert(second["applied"] is False, "duplicate delivery fact is a no-op"),
+        _assert(second["reason"] == "no_transition", "duplicate has explicit no-transition evidence"),
+        _assert(dispatch.delivery_status == "delivered", "duplicate cannot downgrade delivery state"),
     ]
-    return r.finalize()
+    return result.finalize()
 
 
 def scenario_paid_before_send(seed: int) -> ScenarioResult:
@@ -267,7 +312,7 @@ def scenario_redis_loss(seed: int) -> ScenarioResult:
     r.assertions = [
         _assert("ON CONFLICT" in source, "enqueue uses ON CONFLICT durable insert"),
         _assert("INSERT INTO background_jobs" in source, "persists BackgroundJob before async"),
-        _assert("redis" not in source.lower() or "best" in source.lower() or True, "postgres is authority"),
+        _assert("redis" not in source.lower(), "durable enqueue does not depend on Redis"),
     ]
     # Explicit: Redis not required for row existence
     r.assertions.append(
@@ -281,80 +326,186 @@ def scenario_redis_loss(seed: int) -> ScenarioResult:
 
 
 def scenario_cross_tenant(seed: int) -> ScenarioResult:
-    r = ScenarioResult(
+    """Exercise production projection with a channel that has no tenant-bound dispatch."""
+    from services.payment_recovery.delivery_projection import project_whatsapp_delivery_fact
+
+    result = ScenarioResult(
         scenario_id="cross-tenant",
         status="not_run",
         seed=seed,
         invariants=["INV-01"],
-        setup="phone normalization identity + tenant keying",
-        injection_point="normalize_indonesian_phone",
+        setup="active seller-A channel and seller-B-shaped foreign dispatch",
+        injection_point="project_whatsapp_delivery_fact",
         provider_calls=0,
     )
-    a = normalize_indonesian_phone("081234567890")
-    b = normalize_indonesian_phone("+6281234567890")
-    bad = normalize_indonesian_phone("not-a-phone")
-    r.assertions = [
-        _assert(a.status == "valid" and b.status == "valid", "valid ID phones normalize"),
-        _assert(a.e164 == b.e164, "same logical recipient same e164", expected=a.e164, actual=b.e164),
-        _assert(bad.status != "valid", "invalid phone not accepted"),
+    channel = SimpleNamespace(id=11, seller_id=1)
+    foreign_dispatch = SimpleNamespace(
+        seller_id=2, status="accepted", delivery_status="not_available"
+    )
+
+    def scalar(value):
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = value
+        return query_result
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=(scalar(channel), scalar(None)))
+    projection = asyncio.run(
+        project_whatsapp_delivery_fact(
+            db,
+            fact={
+                "provider": "whatsapp_cloud",
+                "provider_account_id": "seller-a-account",
+                "message_id": "seller-b-message",
+                "status": "delivered",
+            },
+        )
+    )
+    dispatch_query = str(db.execute.await_args_list[1].args[0]).lower()
+    result.assertions = [
+        _assert(projection["applied"] is False, "foreign dispatch is not projected"),
+        _assert(projection["reason"] == "dispatch_not_found", "lookup fails closed"),
+        _assert("seller_id" in dispatch_query and "channel_id" in dispatch_query, "dispatch lookup is tenant and channel scoped"),
+        _assert(foreign_dispatch.delivery_status == "not_available", "foreign tenant state is untouched"),
     ]
-    return r.finalize()
+    return result.finalize()
 
 
 def scenario_stale_approval(seed: int) -> ScenarioResult:
-    r = ScenarioResult(
+    """Mutate a bound payment fact and execute production send revalidation."""
+    from models.order import OrderStatus
+    from services.payment_recovery.actions import action_digest
+    from services.payment_recovery.approval_materializer import (
+        build_bound_recovery_action,
+    )
+    from services.payment_recovery.dispatch import revalidate_before_send
+
+    result = ScenarioResult(
         scenario_id="stale-approval",
         status="not_run",
         seed=seed,
         invariants=["INV-11"],
-        setup="action digest mutates when amount/schedule changes",
-        injection_point="action_digest",
+        setup="approved canonical action followed by payment amount mutation",
+        injection_point="revalidate_before_send",
         provider_calls=0,
     )
-    from services.payment_recovery.actions import action_digest, build_canonical_action
+    opportunity = SimpleNamespace(
+        id=uuid.UUID(int=seed),
+        seller_id=1,
+        status="dispatch_pending",
+        order_id=2,
+        payment_attempt_id=uuid.UUID(int=seed + 1),
+        amount_snapshot=Decimal("10000.00"),
+        currency="IDR",
+    )
+    order = SimpleNamespace(
+        id=2,
+        seller_id=1,
+        status=OrderStatus.PENDING,
+        paid_at=None,
+    )
+    attempt = SimpleNamespace(
+        id=opportunity.payment_attempt_id,
+        seller_id=1,
+        order_id=2,
+        amount=Decimal("10000.00"),
+        is_current=True,
+        payment_expires_at=None,
+        trusted_link_reference="payment-reference",
+        external_attempt_id="attempt-1",
+    )
+    permission = SimpleNamespace(
+        id=uuid.UUID(int=seed + 2),
+        seller_id=1,
+        order_id=2,
+        payment_attempt_id=attempt.id,
+        contact_subject_id=uuid.UUID(int=seed + 3),
+        address_fingerprint="recipient-fingerprint",
+        channel="whatsapp",
+        purpose="transactional_payment_reminder",
+        scope_type="order_payment_cycle",
+        status="active",
+        expires_at=None,
+    )
+    channel = SimpleNamespace(
+        id=7,
+        seller_id=1,
+        type="whatsapp",
+        provider="whatsapp_cloud",
+        status="active",
+        external_id="phone-number-id",
+    )
+    template = SimpleNamespace(
+        id=8,
+        seller_id=1,
+        name="payment_reminder_v1",
+        language="id",
+        body="Bayar {{1}} {{2}}",
+        variables_json=[{"key": "order"}, {"key": "amount"}],
+        provider_template_id="provider-template-8",
+        status="approved",
+    )
+    action, template_params = build_bound_recovery_action(
+        opportunity=opportunity,
+        order=order,
+        attempt=attempt,
+        permission=permission,
+        channel=channel,
+        template=template,
+        scheduled_at="2026-07-17T07:00:00Z",
+        policy_version=1,
+    )
+    digest = action_digest(action)
+    dispatch = SimpleNamespace(
+        opportunity_id=opportunity.id,
+        approval_id=1,
+        action_digest=digest,
+        contact_permission_id=permission.id,
+        contact_subject_id=permission.contact_subject_id,
+        recipient_fingerprint=permission.address_fingerprint,
+        seller_id=1,
+        channel_id=channel.id,
+        channel_type=channel.type,
+        provider=channel.provider,
+        template_code=template.name,
+        template_params_json=template_params,
+    )
+    approval = SimpleNamespace(
+        action_digest=digest,
+        policy_version=1,
+        detail_json={"template_id": template.id, "action": action},
+    )
 
-    base = {
-        "seller_id": 1,
-        "order_id": 2,
-        "payment_attempt_id": str(uuid.UUID(int=seed)),
-        "amount": "10000.00",
-        "currency": "IDR",
-        "template_code": "payment_reminder_soft_v1",
-        "language": "id",
-        "scheduled_at": "2026-07-01T10:00:00+00:00",
-        "recipient_fingerprint": "fp1",
-        "channel": "whatsapp",
-        "policy_version": 1,
-        "action_revision": 1,
-    }
-    try:
-        d1 = action_digest(base)
-        mutated = dict(base)
-        mutated["amount"] = "20000.00"
-        d2 = action_digest(mutated)
-        r.assertions = [
-            _assert(isinstance(d1, str) and len(d1) == 64, "digest is sha256 hex"),
-            _assert(d1 != d2, "amount change invalidates digest", expected="different", actual="same" if d1 == d2 else "different", audit_code="stale_digest"),
+    attempt.amount = Decimal("20000.00")
+    opportunity.amount_snapshot = attempt.amount
+
+    def scalar(value):
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = value
+        return query_result
+
+    db = MagicMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            scalar(dispatch),
+            scalar(opportunity),
+            scalar(approval),
+            scalar(order),
+            scalar(attempt),
+            scalar(permission),
+            scalar(channel),
+            scalar(template),
         ]
-    except Exception as exc:
-        # Fallback if build_canonical_action required
-        try:
-            a1 = build_canonical_action(**{k: base[k] for k in base if k in ("seller_id", "order_id")})  # type: ignore
-        except Exception:
-            a1 = None
-        r.assertions = [
-            _assert(
-                False,
-                f"action_digest contract error: {type(exc).__name__}",
-            )
-        ]
-        # Still prove constant-time comparison intent via inequality of digests on raw
-        d1 = hashlib.sha256(json.dumps(base, sort_keys=True).encode()).hexdigest()
-        d2 = hashlib.sha256(json.dumps({**base, "amount": "20000.00"}, sort_keys=True).encode()).hexdigest()
-        r.assertions = [
-            _assert(d1 != d2, "canonical mutation changes digest", audit_code="stale_digest"),
-        ]
-    return r.finalize()
+    )
+    allowed, reason = asyncio.run(
+        revalidate_before_send(db, seller_id=1, dispatch_id=uuid.UUID(int=seed + 4))
+    )
+    result.assertions = [
+        _assert(allowed is False, "production revalidation blocks mutated action"),
+        _assert(reason == "approval_stale", "mutation returns approval_stale"),
+        _assert(db.execute.await_count == 8, "revalidation reached current template facts"),
+    ]
+    return result.finalize()
 
 
 def scenario_consent_withdrawal(seed: int) -> ScenarioResult:
@@ -397,8 +548,12 @@ def scenario_quiet_hours_expiry(seed: int) -> ScenarioResult:
     empty = parse_legacy_expiry("")
     valid = parse_legacy_expiry("2026-07-02T00:00:00+00:00")
     r.assertions = [
-        _assert(status == "deferred" or code == "quiet_hours_deferred" or status != "ok",
-                "quiet hours defers send", actual={"status": status, "code": code}, audit_code="quiet_hours_deferred"),
+        _assert(
+            status == "deferred" and code == "quiet_hours_deferred",
+            "quiet hours defers send",
+            actual={"status": status, "code": code},
+            audit_code="quiet_hours_deferred",
+        ),
         _assert(invalid is None, "invalid expiry suppresses (None)"),
         _assert(empty is None, "empty expiry suppresses"),
         _assert(valid is not None and valid.tzinfo is not None, "valid expiry parsed aware"),
@@ -512,11 +667,29 @@ SCENARIOS: dict[str, Callable[[int], ScenarioResult]] = {
 
 
 def production_guard_blocks_proof_mode() -> tuple[bool, str]:
-    env = (os.environ.get("ENVIRONMENT") or os.environ.get("APP_ENV") or "").lower()
-    proof = (os.environ.get("ENABLE_DEMO_PROOF_MODE") or "").lower() in {"1", "true", "yes"}
-    if env == "production" and proof:
+    environments = {
+        str(value).strip().lower()
+        for value in (
+            os.environ.get("ENVIRONMENT"),
+            os.environ.get("APP_ENV"),
+        )
+        if value
+    }
+    if "production" in environments:
         return True, "proof_mode_forbidden_in_production"
-    if os.environ.get("WHATSAPP_ACCESS_TOKEN") and proof:
+
+    settings = get_settings()
+    credential_names = (
+        "WHATSAPP_ACCESS_TOKEN",
+        "WHATSAPP_PHONE_NUMBER_ID",
+        "WHATSAPP_WABA_ID",
+        "WHATSAPP_APP_SECRET",
+        "WHATSAPP_VERIFY_TOKEN",
+    )
+    if any(
+        str(os.environ.get(name) or getattr(settings, name, "")).strip()
+        for name in credential_names
+    ):
         return True, "real_whatsapp_credentials_present"
     return False, "ok"
 
@@ -539,7 +712,18 @@ def run_scenario(scenario_id: str, seed: int = 42) -> ScenarioResult:
             seed=seed,
             assertions=[_assert(False, f"unknown scenario: {scenario_id}")],
         ).finalize()
-    result = fn(seed)
+    try:
+        result = fn(seed)
+    except Exception as exc:
+        return ScenarioResult(
+            scenario_id=scenario_id,
+            status="failed",
+            seed=seed,
+            assertions=[
+                _assert(False, f"scenario execution failed: {type(exc).__name__}")
+            ],
+            details={"error_type": type(exc).__name__},
+        )
     if result.status == "not_run" and not result.assertions:
         return result  # browser / deferred
     return result.finalize() if result.status == "not_run" else result
@@ -550,7 +734,11 @@ def _count(results: list[ScenarioResult], status: str) -> int:
 
 
 def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
-    run_id = str(uuid.uuid4())
+    run_id = (os.environ.get("JUALIN_EVIDENCE_RUN_ID") or str(uuid.uuid4())).strip()
+    if not run_id:
+        run_id = str(uuid.uuid4())
+    source_commit = _git_commit_sha()
+    source_tree_clean_at_start = git_source_tree_clean()
     started = datetime.now(timezone.utc).isoformat()
     if suite == "backend":
         ids = list(REQUIRED_BACKEND_SCENARIOS)
@@ -577,7 +765,7 @@ def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
     backend_failed = [r for r in backend_results if r.status == "failed"]
     backend_passed = [r for r in backend_results if r.status == "passed"]
 
-    # Backend suite status ignores browser not_run
+    # Backend proof is independent of browser and staging dimensions.
     if missing_required or empty_assertion_failures or backend_failed:
         backend_status = "failed"
     elif any(r.status == "blocked" for r in backend_results):
@@ -589,16 +777,33 @@ def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
 
     browser_result = next((r for r in results if r.scenario_id == BROWSER_SCENARIO_ID), None)
     browser_status = browser_result.status if browser_result else "not_run"
-    staging_status = "blocked"  # P4.7 always blocked without credentials in this harness
+    staging_status = "blocked"
+    finished = datetime.now(timezone.utc).isoformat()
+    source_identity_stable = (
+        source_tree_clean_at_start
+        and git_source_tree_clean()
+        and source_commit != "unknown"
+        and _git_commit_sha() == source_commit
+    )
+    suite_status = (
+        backend_status
+        if suite == "backend"
+        else "passed"
+        if all(r.status == "passed" for r in results)
+        else "failed"
+    )
+    artifact_status = suite_status if source_identity_stable else "unverified"
 
     payload = {
         "run_id": run_id,
         "suite": suite,
         "seed": seed,
         "schema_version": "proof-artifact-v1",
-        "commit_sha": _git_commit_sha(),
+        "redaction_status": "passed",
+        "commit_sha": source_commit,
+        "source_tree_clean": source_identity_stable,
         "started_at": started,
-        "finished_at": datetime.now(timezone.utc).isoformat(),
+        "finished_at": finished,
         "command": f"python -m scripts.proof_mode run-all --suite {suite} --seed {seed}",
         "environment": os.environ.get("ENVIRONMENT") or "local",
         "scenarios": [asdict(r) for r in results],
@@ -621,10 +826,7 @@ def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
             "browser_e2e": browser_status,
             "staging_provider": staging_status,
         },
-        # Aggregate status is backend-only for suite=backend; never claim browser/staging.
-        "status": backend_status if suite == "backend" else (
-            "passed" if all(r.status == "passed" for r in results) else "failed"
-        ),
+        "status": artifact_status,
         "disclaimer": (
             "Offline deterministic proof of safety invariants. "
             "Does not prove live WhatsApp/payment staging. "
@@ -634,21 +836,104 @@ def run_all(seed: int = 42, suite: str = "backend") -> dict[str, Any]:
     return payload
 
 
-def load_sanitized_artifact(path: Path) -> dict[str, Any]:
-    """Read proof artifact and reject real secret-like values (not prose mentions)."""
+def validate_sanitized_artifact(data: dict[str, Any]) -> None:
+    """Reject secret-bearing or unbounded artifact payloads before persistence/use."""
     import re
 
-    data = json.loads(path.read_text(encoding="utf-8"))
-    blob = json.dumps(data)
-    # Fail on JWT-like tokens, bearer credentials, env assignment forms.
+    if not isinstance(data, dict):
+        raise ValueError("artifact root must be an object")
+
+    sensitive_keys = {
+        "access_token",
+        "api_key",
+        "authorization",
+        "capability_token",
+        "cookie",
+        "database_url",
+        "dsn",
+        "password",
+        "password_hash",
+        "private_key",
+        "refresh_token",
+        "secret",
+        "secret_key",
+        "set_cookie",
+        "test_database_url",
+    }
+    sensitive_suffixes = (
+        "_access_token",
+        "_api_key",
+        "_capability_token",
+        "_private_key",
+        "_cookie",
+        "_dsn",
+        "_password",
+        "_refresh_token",
+        "_secret",
+        "_secret_key",
+    )
+    visited = 0
+
+    def reject_sensitive_keys(value: Any, depth: int = 0) -> None:
+        nonlocal visited
+        visited += 1
+        if visited > 100_000 or depth > 32:
+            raise ValueError("artifact exceeds safety limits")
+        if isinstance(value, dict):
+            for raw_key, nested in value.items():
+                key = re.sub(r"(?<!^)(?=[A-Z])", "_", str(raw_key))
+                key = re.sub(r"[^a-zA-Z0-9]+", "_", key).strip("_").lower()
+                compact_key = re.sub(r"[^a-z0-9]", "", str(raw_key).lower())
+                if (
+                    key in sensitive_keys
+                    or key == "token"
+                    or key.endswith("_token")
+                    or key.endswith(sensitive_suffixes)
+                    or compact_key.endswith(("token", "apikey", "password", "secret", "privatekey", "cookie", "dsn"))
+                ):
+                    raise ValueError("artifact contains a sensitive field")
+                reject_sensitive_keys(nested, depth + 1)
+        elif isinstance(value, list):
+            for nested in value:
+                reject_sensitive_keys(nested, depth + 1)
+
+    reject_sensitive_keys(data)
+    try:
+        blob = json.dumps(data)
+    except (RecursionError, TypeError, ValueError) as exc:
+        raise ValueError("artifact cannot be serialized safely") from exc
+    if len(blob.encode("utf-8")) > 2_000_000:
+        raise ValueError("artifact exceeds size limit")
     patterns = (
         r"Bearer\s+[A-Za-z0-9\-_\.]{20,}",
         r"WHATSAPP_ACCESS_TOKEN\s*=\s*\S+",
         r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}",
-        r"\"password\"\s*:\s*\"[^\"]{8,}\"",
-        r"\"access_token\"\s*:\s*\"[^\"]{8,}\"",
+        r'"password"\s*:\s*"[^"]{8,}"',
+        r'"access_token"\s*:\s*"[^"]{8,}"',
     )
-    for pat in patterns:
-        if re.search(pat, blob):
-            raise ValueError(f"artifact failed redaction check: pattern {pat!r}")
+    if any(re.search(pattern, blob) for pattern in patterns):
+        raise ValueError("artifact failed redaction check")
+
+
+def load_sanitized_artifact(path: Path) -> dict[str, Any]:
+    """Read a bounded proof artifact and reject duplicate or sensitive fields."""
+    if path.stat().st_size > 2_000_000:
+        raise ValueError("artifact exceeds size limit")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("artifact contains duplicate keys")
+            result[key] = value
+        return result
+
+    try:
+        data = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+        )
+    except RecursionError as exc:
+        raise ValueError("artifact exceeds nesting limit") from exc
+    validate_sanitized_artifact(data)
     return data

@@ -456,6 +456,29 @@ class DisposableDatabaseRunnerTests(unittest.TestCase):
             call(["network", "rm", runtime.network_id]),
         )
 
+    @patch(
+        "scripts.run_with_disposable_database._remove_preprovisioned_project",
+        side_effect=RuntimeError("synthetic cleanup detail"),
+    )
+    @patch(
+        "scripts.run_with_disposable_database._compose",
+        side_effect=(MagicMock(stdout=""), RuntimeError("primary startup failure")),
+    )
+    def test_start_cleanup_does_not_mask_primary_failure(
+        self, mock_compose, mock_cleanup
+    ) -> None:
+        authority = self.runner.new_authority(RUN_ID)
+
+        with self.assertRaisesRegex(RuntimeError, "primary startup failure") as raised:
+            self.runner._start_container(authority)
+
+        self.assertEqual(
+            getattr(raised.exception, "__notes__", []),
+            ["Disposable database startup cleanup also failed; details withheld"],
+        )
+        self.assertNotIn("synthetic cleanup detail", str(raised.exception))
+        mock_cleanup.assert_called_once_with(authority)
+
     @patch("scripts.run_with_disposable_database.psycopg2.connect")
     def test_provision_installs_vector_as_bootstrap_before_role_handoff(
         self, mock_connect
@@ -557,6 +580,29 @@ class DisposableDatabaseRunnerTests(unittest.TestCase):
         result = self.runner.run_command(["python", "-m", "unittest"])
 
         self.assertEqual(result, 9)
+        mock_provision.assert_called_once_with(authority)
+        mock_target.assert_called_once()
+        mock_teardown.assert_called_once_with(authority)
+
+    @patch(
+        "scripts.run_with_disposable_database.verify_and_remove",
+        side_effect=RuntimeError("teardown failed"),
+    )
+    @patch("scripts.run_with_disposable_database.run_target", return_value=9)
+    @patch("scripts.run_with_disposable_database._provision_database")
+    @patch("scripts.run_with_disposable_database._start_container")
+    def test_nonzero_target_and_teardown_failure_report_both_outcomes(
+        self, mock_start, mock_provision, mock_target, mock_teardown
+    ) -> None:
+        authority = self._authority()
+        mock_start.return_value = authority
+
+        with self.assertRaisesRegex(
+            self.runner.SafetyError,
+            "Target exited with code 9; verified teardown also failed",
+        ):
+            self.runner.run_command(["python", "-m", "unittest"])
+
         mock_provision.assert_called_once_with(authority)
         mock_target.assert_called_once()
         mock_teardown.assert_called_once_with(authority)

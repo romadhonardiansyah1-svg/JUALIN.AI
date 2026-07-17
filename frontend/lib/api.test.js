@@ -136,9 +136,47 @@ describe('BUG-025 tenant cache isolation (P0.3b)', () => {
       expect(e.message).toMatch(/Session expired/);
     }
 
-    // After 401, token should be cleared and cache cleared
+    // Session probes clear stale state without redirecting /login back to itself.
     expect(global.localStorage.getItem('jualin_token')).toBeNull();
     expect(global.localStorage.getItem('jualin_user')).toBeNull();
+    expect(window.location.href).toBe('');
+
+    if (originalLocation) {
+      window.location = originalLocation;
+    }
+  });
+
+
+  it('public capability 401 stays local and preserves seller auth state', async () => {
+    const { api } = await import('./api.js');
+
+    global.localStorage.setItem('jualin_token', 'token-A');
+    global.localStorage.setItem('jualin_user', JSON.stringify({ id: 1 }));
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      headers: mockHeaders(),
+      json: async () => ({ detail: { error: 'capability_required' } }),
+    });
+
+    const originalLocation = global.window?.location;
+    if (typeof window !== 'undefined') {
+      delete window.location;
+      window.location = { href: '/pay/42' };
+    } else {
+      global.window = {
+        localStorage: global.localStorage,
+        location: { href: '/pay/42' },
+        caches: { keys: async () => [] },
+      };
+    }
+
+    await expect(api.getPublicPaymentStatusViaSession(42)).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(global.localStorage.getItem('jualin_token')).toBe('token-A');
+    expect(global.localStorage.getItem('jualin_user')).not.toBeNull();
+    expect(window.location.href).toBe('/pay/42');
 
     if (originalLocation) {
       window.location = originalLocation;

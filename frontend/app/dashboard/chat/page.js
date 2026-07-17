@@ -1,9 +1,11 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 import styles from "./chat.module.css";
 
 export default function ChatMonitorPage() {
+  const { user } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [activeConv, setActiveConv] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -57,12 +59,11 @@ export default function ChatMonitorPage() {
     setSending(true);
 
     try {
-      // Get user data for seller slug
-      const userData = JSON.parse(localStorage.getItem("jualin_user") || "{}");
+      if (!user?.slug) throw new Error("Seller identity unavailable");
       const data = await api.sendChat({
         message: userMsg.content,
         session_id: testSession,
-        seller_slug: userData.slug || "toko-sari-fashion",
+        seller_slug: user.slug,
       });
 
       setMessages((prev) => [

@@ -25,6 +25,7 @@ settings = get_settings()
 ACCESS_TTL_MINUTES = 15
 REFRESH_IDLE_DAYS = 30
 REFRESH_ABSOLUTE_DAYS = 90  # absolute max
+REFRESH_REPLAY_GRACE_SECONDS = 10
 
 
 def _hash_token(token: str) -> str:
@@ -104,66 +105,56 @@ async def rotate_refresh_token(
     db: AsyncSession,
     *,
     old_refresh_token: str,
-) -> Tuple[AuthSession, str, str] | Tuple[None, str, str]:
-    """
-    Rotate refresh token transactionally.
-    - Old token must be valid, not expired, not revoked, current
-    - Creates new session row with incremented rotation_counter, same family_id, new hashes
-    - Old row marked not current, but kept for reuse detection
-    - Returns (new_session, new_raw_refresh, new_raw_csrf) or (None, "", "") if invalid
-    - If old token reuse detected (already rotated and old token presented again), revoke entire family and return None (security event)
+) -> tuple[AuthSession | None, str, str, str | None]:
+    """Rotate one refresh family under a row lock.
+
+    A just-rotated token can be presented by another browser tab before the
+    winning response installs its cookie. During that short grace window the
+    loser receives ``already_rotated`` without revoking the winner. Replays
+    outside the grace window revoke the family.
     """
     old_hash = _hash_token(old_refresh_token)
-
-    # Find session by refresh hash
-    q = await db.execute(select(AuthSession).where(AuthSession.refresh_token_hash == old_hash))
+    q = await db.execute(
+        select(AuthSession)
+        .where(AuthSession.refresh_token_hash == old_hash)
+        .with_for_update()
+    )
     old_session = q.scalar_one_or_none()
-
     if not old_session:
-        return None, "", ""
+        return None, "", "", "invalid"
 
     now = datetime.now(timezone.utc)
-
-    # Check revoked
     if old_session.revoked_at:
-        # Already revoked — possible reuse? Check if family has newer current?
-        # For reuse detection, if old_session is not current but presented again, revoke family
-        if not old_session.is_current:
-            # Reuse detected — revoke entire family
-            await _revoke_family(db, old_session.family_id, reason="reuse_detected")
-            await db.commit()
-            return None, "", ""
-        return None, "", ""
-
-    # Check expiry
+        return None, "", "", "invalid"
     if old_session.expires_at < now or old_session.absolute_expires_at < now:
-        return None, "", ""
+        return None, "", "", "invalid"
 
-    # If old session is not current, it's a replay of old token after rotation — reuse detection
     if not old_session.is_current:
+        rotated_at = old_session.last_used_at
+        if rotated_at and rotated_at.tzinfo is None:
+            rotated_at = rotated_at.replace(tzinfo=timezone.utc)
+        if rotated_at and now - rotated_at <= timedelta(
+            seconds=REFRESH_REPLAY_GRACE_SECONDS
+        ):
+            return None, "", "", "already_rotated"
         await _revoke_family(db, old_session.family_id, reason="reuse_detected")
-        await db.commit()
-        return None, "", ""
+        return None, "", "", "reuse_detected"
 
-    # Valid — rotate
-    # Mark old as not current
     old_session.is_current = False
     old_session.last_used_at = now
+    # Make the partial-unique predicate false before inserting its successor.
+    await db.flush()
 
-    # Create new
     new_raw_refresh = generate_refresh_token()
     new_raw_csrf = generate_csrf_token()
-    new_hash = _hash_token(new_raw_refresh)
-    new_csrf_hash = hash_csrf_token(new_raw_csrf)
-
     new_session = AuthSession(
         user_id=old_session.user_id,
         seller_id=old_session.seller_id,
         family_id=old_session.family_id,
         rotation_counter=old_session.rotation_counter + 1,
         is_current=True,
-        refresh_token_hash=new_hash,
-        csrf_token_hash=new_csrf_hash,
+        refresh_token_hash=_hash_token(new_raw_refresh),
+        csrf_token_hash=hash_csrf_token(new_raw_csrf),
         actor_user_id=old_session.actor_user_id,
         effective_seller_id=old_session.effective_seller_id,
         auth_mode=old_session.auth_mode,
@@ -178,7 +169,7 @@ async def rotate_refresh_token(
     )
     db.add(new_session)
     await db.flush()
-    return new_session, new_raw_refresh, new_raw_csrf
+    return new_session, new_raw_refresh, new_raw_csrf, None
 
 
 async def _revoke_family(db: AsyncSession, family_id: uuid.UUID, reason: str = "revoked"):

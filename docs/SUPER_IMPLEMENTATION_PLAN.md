@@ -2,7 +2,7 @@
 
 > Dokumen kerja utama untuk stabilisasi lanjutan dan pembangunan **JUALIN SANTAI: Safe Revenue Recovery Loop + Proof Mode**.
 >
-> Status: **PROPOSED — belum diimplementasikan**
+> Status: **IMPLEMENTASI BERJALAN — REQUEST CHANGES; recovery/live production NO-GO**
 >
 > Tanggal baseline: 12 Juli 2026 (Asia/Jakarta)
 >
@@ -3854,7 +3854,9 @@ git diff --check
 - Playwright config, fixtures, dan focused E2E tests;
 - disposable DB guard/startup scripts P7.0.
 
-Workflow aktual sudah pin Python/Node dan build dasar, tetapi belum mempunyai PostgreSQL/Redis services, Alembic migration, frontend unit test, atau real-browser gate. Patch minimum wajib:
+Status implementasi 17 Juli 2026: CI sudah pin Python 3.11/Node 20, menjalankan backend lewat guarded disposable PostgreSQL runner, frontend unit/lint/build/audit, mocked browser suite berlabel `unverified`, dan job focused real-browser yang memakai PostgreSQL/Redis/FastAPI/Next.js/Chromium nyata tanpa API mock. Backend dan browser artifact sekarang wajib mempunyai schema, exact commit SHA, clean source tree, evidence run ID, seed, urutan timestamp timezone-aware, summary, dan assertion yang konsisten sebelum aggregate menjadi `verified_offline`; status ini tidak pernah berarti live-provider/production. Local guarded execution terakhir berhenti aman sebelum provisioning karena Docker engine tidak tersedia, sedangkan rerun mocked-browser terbaru berhenti sebelum assertion karena executable Chromium yang dipin belum tersedia. Karena itu real artifact tetap `not_run`, mocked artifact tetap `unverified`, release tetap **REQUEST CHANGES / NO-GO**, dan recovery tetap disabled by default. Focused suite baru mencakup A→logout→B cache/auth isolation, capability exchange, approval, serta worker kill-switch; ia belum memenuhi seluruh flow pada butir 7 di bawah.
+
+Patch minimum wajib:
 
 1. `actions/setup-python` exact 3.11.15 dan `setup-node` major 20; buat fresh venv, lalu assert runtime;
 2. PostgreSQL+pgvector dan Redis service dengan health checks serta DSN test-only;

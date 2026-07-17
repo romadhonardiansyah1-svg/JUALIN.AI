@@ -1,9 +1,11 @@
 "use client";
 import { useState, useEffect } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 import styles from "./settings.module.css";
 
 export default function SettingsPage() {
+  const { user: sessionUser, updateUser } = useAuth();
   const [user, setUser] = useState(null);
   const [aiStyle, setAiStyle] = useState("santai");
   const [aiActive, setAiActive] = useState(true);
@@ -12,14 +14,11 @@ export default function SettingsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const userData = localStorage.getItem("jualin_user");
-    if (userData) {
-      const u = JSON.parse(userData);
-      setUser(u);
-      setAiStyle(u.ai_style || "santai");
-      setAiActive(u.ai_active !== false);
-    }
-  }, []);
+    if (!sessionUser) return;
+    setUser(sessionUser);
+    setAiStyle(sessionUser.ai_style || "santai");
+    setAiActive(sessionUser.ai_active !== false);
+  }, [sessionUser]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -30,9 +29,8 @@ export default function SettingsPage() {
         ai_active: aiActive,
         ai_style: aiStyle,
       });
-      // Update localStorage with fresh data
-      localStorage.setItem("jualin_user", JSON.stringify(updated));
       setUser(updated);
+      updateUser(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e) {

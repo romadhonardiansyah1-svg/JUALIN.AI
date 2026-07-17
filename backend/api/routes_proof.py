@@ -7,6 +7,8 @@ No arbitrary path/DSN/command/module. Artifacts sanitized with schema version.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 import time
 from dataclasses import asdict
@@ -23,12 +25,20 @@ from api.routes_auth import get_current_user
 from config import get_settings
 from models.database import get_db
 from models.user import User, UserRole
+from services.payment_recovery.evidence_collector import (
+    artifact_metadata_verification_error,
+    artifact_structure_verification_error,
+    backend_pass_verification_error,
+    browser_pass_verification_error,
+)
 from services.payment_recovery.proof import (
     REQUIRED_BACKEND_SCENARIOS,
+    git_source_tree_clean,
     load_sanitized_artifact,
     production_guard_blocks_proof_mode,
     run_all,
     run_scenario,
+    validate_sanitized_artifact,
 )
 from services.payment_recovery.proof import _git_commit_sha  # evidence metadata only
 
@@ -80,8 +90,15 @@ class ProofRunRequest(BaseModel):
 
 
 def _is_production() -> bool:
-    env = (__import__("os").environ.get("ENVIRONMENT") or "").lower()
-    return env == "production"
+    environments = {
+        str(value).strip().lower()
+        for value in (
+            __import__("os").environ.get("ENVIRONMENT"),
+            __import__("os").environ.get("APP_ENV"),
+        )
+        if value
+    }
+    return "production" in environments
 
 
 def _production_proof_disabled() -> bool:
@@ -147,7 +164,7 @@ def _enrich_payload(payload: dict[str, Any], *, actor_user_id: int) -> dict[str,
     payload["actor_user_id"] = actor_user_id
     payload["generated_at"] = datetime.now(timezone.utc).isoformat()
     payload["environment"] = (__import__("os").environ.get("ENVIRONMENT") or "local")
-    payload["redaction_status"] = "passed"
+    payload["redaction_status"] = "pending"
     payload["limitations"] = {
         "browser_e2e": "not_run_until_playwright",
         "staging_provider": "blocked_without_credentials",
@@ -159,20 +176,101 @@ def _enrich_payload(payload: dict[str, Any], *, actor_user_id: int) -> dict[str,
     return payload
 
 
-def _stale_status(data: dict[str, Any]) -> str | None:
-    """Return UNVERIFIED reason if artifact is stale/mismatched vs current HEAD."""
+def _stale_status(
+    data: dict[str, Any], *, expected_suite: str = "backend"
+) -> str | None:
+    """Return UNVERIFIED reason when evidence cannot represent current source."""
     current = _git_commit_sha()
+    if current == "unknown":
+        return "current_commit_unknown"
+    if not git_source_tree_clean():
+        return "current_source_tree_dirty"
+
     art_commit = data.get("commit_sha") or ""
     if not art_commit or art_commit == "unknown":
         return "missing_commit_sha"
-    if current != "unknown" and art_commit != current:
+    if art_commit != current:
         return "commit_mismatch"
-    if data.get("schema_version") not in (None, SCHEMA_VERSION) and data.get("schema_version") != SCHEMA_VERSION:
-        # allow missing schema_version for older local runs but mark unverified
-        return "schema_mismatch"
-    if not data.get("schema_version"):
-        return "missing_schema_version"
-    return None
+    if data.get("schema_version") != SCHEMA_VERSION:
+        return (
+            "missing_schema_version"
+            if not data.get("schema_version")
+            else "schema_mismatch"
+        )
+    if data.get("redaction_status") != "passed":
+        return "artifact_redaction_unverified"
+    if data.get("suite") != expected_suite:
+        return f"{expected_suite}_suite_mismatch"
+
+    status = data.get("status")
+    if status not in {
+        "passed",
+        "failed",
+        "blocked",
+        "not_run",
+        "unverified",
+        "UNVERIFIED",
+    }:
+        return "invalid_artifact_status"
+    metadata_error = artifact_metadata_verification_error(
+        data, expected_suite=expected_suite
+    )
+    if metadata_error:
+        return metadata_error
+    if status == "passed":
+        validator = (
+            backend_pass_verification_error
+            if expected_suite == "backend"
+            else browser_pass_verification_error
+        )
+        return validator(data)
+    return artifact_structure_verification_error(
+        data, expected_suite=expected_suite
+    )
+
+
+def _apply_artifact_verification(
+    data: dict[str, Any], *, expected_suite: str = "backend"
+) -> dict[str, Any]:
+    reported_status = data.get("status")
+    reason = _stale_status(data, expected_suite=expected_suite)
+    if reason:
+        data["verification_status"] = "UNVERIFIED"
+        data["unverified_reason"] = reason
+        data["status"] = "UNVERIFIED"
+        if isinstance(data.get("dimensions"), dict):
+            data["dimensions"] = {
+                key: "unverified" if value == "passed" else value
+                for key, value in data["dimensions"].items()
+            }
+    else:
+        data["verification_status"] = reported_status or "UNVERIFIED"
+    return data
+
+
+def _write_sanitized_artifact(path: Path, payload: dict[str, Any]) -> None:
+    """Validate first, then atomically replace the persisted artifact."""
+    validate_sanitized_artifact(payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_name: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_name = handle.name
+            json.dump(payload, handle, indent=2, default=str)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+        temp_name = None
+    finally:
+        if temp_name:
+            Path(temp_name).unlink(missing_ok=True)
 
 
 @router.get("/capability")
@@ -262,15 +360,37 @@ async def proof_run(
             payload = run_all(seed=body.seed, suite=body.suite)
 
         payload = _enrich_payload(payload, actor_user_id=current_user.id)
+        validate_sanitized_artifact(payload)
+        payload["redaction_status"] = "passed"
+        payload = _apply_artifact_verification(payload)
         path = _artifact_path()
-        path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
-        load_sanitized_artifact(path)
+        _write_sanitized_artifact(path, payload)
         return JSONResponse(
             content=payload,
             headers={"Cache-Control": "private, no-store"},
         )
     finally:
         _RUN_LOCK.release()
+
+
+def _unverified_artifact_response(
+    *, reason: str, download_name: str | None = None
+) -> JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    if download_name:
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{Path(download_name).name}"'
+        )
+    return JSONResponse(
+        content={
+            "status": "UNVERIFIED",
+            "verification_status": "UNVERIFIED",
+            "unverified_reason": reason,
+            "watermark": "DATA SIMULASI",
+            "schema_version": SCHEMA_VERSION,
+        },
+        headers=headers,
+    )
 
 
 @router.get("/latest")
@@ -291,24 +411,12 @@ async def proof_latest(current_user: User = Depends(get_current_user)):
         )
     try:
         data = load_sanitized_artifact(path)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "redaction_failed", "message": "Artifact gagal redaction"},
-        ) from exc
+    except ValueError:
+        return _unverified_artifact_response(reason="artifact_unreadable")
 
-    stale = _stale_status(data)
+    _apply_artifact_verification(data, expected_suite="backend")
     data["watermark"] = "DATA SIMULASI"
     data["schema_version"] = data.get("schema_version") or SCHEMA_VERSION
-    data["redaction_status"] = "passed"
-    if stale:
-        data["verification_status"] = "UNVERIFIED"
-        data["unverified_reason"] = stale
-        # Do not claim aggregate PASS when stale
-        if data.get("status") == "passed":
-            data["status"] = "UNVERIFIED"
-    else:
-        data["verification_status"] = data.get("status") or "UNVERIFIED"
     return JSONResponse(content=data, headers={"Cache-Control": "private, no-store"})
 
 
@@ -328,16 +436,14 @@ async def proof_download(
     try:
         data = load_sanitized_artifact(path)
     except ValueError:
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "redaction_failed", "message": "Artifact gagal redaction"},
+        return _unverified_artifact_response(
+            reason="artifact_unreadable",
+            download_name=name,
         )
+    expected_suite = "browser" if name == "proof-browser.json" else "backend"
+    _apply_artifact_verification(data, expected_suite=expected_suite)
     data["watermark"] = "DATA SIMULASI"
     data["schema_version"] = data.get("schema_version") or SCHEMA_VERSION
-    stale = _stale_status(data)
-    if stale:
-        data["verification_status"] = "UNVERIFIED"
-        data["unverified_reason"] = stale
     return JSONResponse(
         content=data,
         headers={

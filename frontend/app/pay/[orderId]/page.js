@@ -30,6 +30,7 @@ export default function PaymentPage() {
   const [methodsLoaded, setMethodsLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
   const [capabilityExchanged, setCapabilityExchanged] = useState(false);
+  const [capabilityReady, setCapabilityReady] = useState(false);
 
   const [consentGranted, setConsentGranted] = useState(false);
   const [consentCopyVersion] = useState("v1");
@@ -46,9 +47,12 @@ export default function PaymentPage() {
   };
 
   useEffect(() => {
-    async function doExchange() {
+    async function initializeCapability() {
       const fragmentToken = extractFragmentToken();
-      if (!fragmentToken) return;
+      if (!fragmentToken) {
+        setCapabilityReady(true);
+        return;
+      }
       try {
         const cleanUrl = window.location.pathname + window.location.search;
         window.history.replaceState(null, "", cleanUrl);
@@ -56,15 +60,19 @@ export default function PaymentPage() {
       try {
         await api.exchangePublicCapability(orderId, fragmentToken);
         setCapabilityExchanged(true);
+        setCapabilityReady(true);
       } catch (e) {
         console.error("Capability exchange failed", e);
         setError(e.message || "Token pembayaran tidak valid");
+        setLoading(false);
       }
     }
-    doExchange();
+    initializeCapability();
   }, [orderId]);
 
   useEffect(() => {
+    if (!capabilityReady) return;
+
     async function loadOrder() {
       try {
         let data;
@@ -72,11 +80,8 @@ export default function PaymentPage() {
           try {
             data = await api.getPublicPaymentStatusViaSession(orderId);
           } catch (sessionErr) {
-            if (legacyToken) {
-              data = await api.getPublicPaymentStatus(orderId, legacyToken);
-            } else {
-              throw sessionErr;
-            }
+            if (legacyToken) data = await api.getPublicPaymentStatus(orderId, legacyToken);
+            else throw sessionErr;
           }
         } else {
           data = await api.getPublicPaymentStatus(orderId, legacyToken);
@@ -89,42 +94,38 @@ export default function PaymentPage() {
       }
       setLoading(false);
     }
-    const hasFragment = typeof window !== "undefined" && window.location.hash;
-    if (hasFragment && !capabilityExchanged) {
-      const t = setTimeout(() => loadOrder(), 600);
-      return () => clearTimeout(t);
-    } else {
-      loadOrder();
-    }
-  }, [orderId, legacyToken, capabilityExchanged]);
+    loadOrder();
+  }, [orderId, legacyToken, capabilityExchanged, capabilityReady]);
 
   useEffect(() => {
+    if (!capabilityReady) return;
+
     async function loadMethods() {
       try {
         let data;
         if (capabilityExchanged || !legacyToken) {
           try {
             data = await api.getPublicPaymentMethodsViaSession(orderId);
-          } catch {
+          } catch (sessionErr) {
             if (legacyToken) data = await api.getPublicPaymentMethods(orderId, legacyToken);
-            else throw new Error("no session");
+            else throw sessionErr;
           }
         } else {
           data = await api.getPublicPaymentMethods(orderId, legacyToken);
         }
         setMethods(data.methods || []);
         if (data.methods?.length > 0) setSelectedMethod(data.methods[0]);
-        setMethodsLoaded(true);
       } catch (e) {
         console.error("Failed to load payment methods", e);
+      } finally {
         setMethodsLoaded(true);
       }
     }
     loadMethods();
-  }, [orderId, legacyToken, capabilityExchanged]);
+  }, [orderId, legacyToken, capabilityExchanged, capabilityReady]);
 
   useEffect(() => {
-    if (!paymentInfo || paymentStatus === "paid" || paymentStatus === "expired") return;
+    if (!capabilityReady || !paymentInfo || paymentStatus === "paid" || paymentStatus === "expired") return;
     setPolling(true);
     const interval = setInterval(async () => {
       try {
@@ -132,9 +133,9 @@ export default function PaymentPage() {
         if (capabilityExchanged || !legacyToken) {
           try {
             data = await api.getPublicPaymentStatusViaSession(orderId);
-          } catch {
+          } catch (sessionErr) {
             if (legacyToken) data = await api.getPublicPaymentStatus(orderId, legacyToken);
-            else throw new Error("no session");
+            else throw sessionErr;
           }
         } else {
           data = await api.getPublicPaymentStatus(orderId, legacyToken);
@@ -150,14 +151,14 @@ export default function PaymentPage() {
       clearInterval(interval);
       setPolling(false);
     };
-  }, [paymentInfo, paymentStatus, orderId, legacyToken, capabilityExchanged]);
+  }, [paymentInfo, paymentStatus, orderId, legacyToken, capabilityExchanged, capabilityReady]);
 
   useEffect(() => {
     if (statusParam === "finish") setPolling(true);
   }, [statusParam]);
 
   const handleCreatePayment = useCallback(async () => {
-    if (!selectedMethod || creating) return;
+    if (!capabilityReady || !selectedMethod || creating) return;
     setCreating(true);
     setError(null);
     try {
@@ -186,9 +187,10 @@ export default function PaymentPage() {
       setError(e.message || "Gagal membuat pembayaran");
     }
     setCreating(false);
-  }, [selectedMethod, orderId, legacyToken, creating, capabilityExchanged]);
+  }, [selectedMethod, orderId, legacyToken, creating, capabilityExchanged, capabilityReady]);
 
   const handleConsentSave = useCallback(async () => {
+    if (!capabilityReady) return;
     setConsentSaving(true);
     setConsentMessage("");
     try {
@@ -198,7 +200,7 @@ export default function PaymentPage() {
       setConsentMessage(e.message || "Gagal menyimpan izin");
     }
     setConsentSaving(false);
-  }, [orderId, consentGranted, consentCopyVersion]);
+  }, [orderId, consentGranted, consentCopyVersion, capabilityReady]);
 
   const formatRp = (amount) => `Rp ${Number(amount || 0).toLocaleString("id-ID")}`;
 

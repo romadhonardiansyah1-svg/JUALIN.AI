@@ -21,10 +21,12 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
+from models.inbox import Channel
+from models.wa_template import WhatsAppMessageTemplate
 from models.payment_recovery import (
     RevenueOpportunity,
     PaymentAttempt,
@@ -34,9 +36,8 @@ from models.payment_recovery import (
 )
 from models.agent_os import AgentApproval
 from models.order import Order
-from services.payment_recovery.actions import build_canonical_action, action_digest
-from services.background_job_registry import ENABLED_JOB_HANDLERS
-from core.idempotency import make_payload_digest
+from services.payment_recovery.actions import action_digest
+from services.payment_recovery.approval_materializer import build_bound_recovery_action
 import json as json_lib
 
 
@@ -165,46 +166,102 @@ async def approve_recovery(
     if approval.expires_at and approval.expires_at < now:
         raise HTTPException(status_code=410, detail={"error": "approval_expired"})
 
-    # 6. Load current facts
-    order_q = await db.execute(select(Order).where(Order.id == opportunity.order_id))
+    # 6. Rebuild the exact action from seller-scoped current facts.
+    order_q = await db.execute(
+        select(Order).where(
+            Order.id == opportunity.order_id,
+            Order.seller_id == principal_seller_id,
+        )
+    )
     order = order_q.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail={"error": "order_not_found"})
 
-    attempt_q = await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == opportunity.payment_attempt_id))
+    attempt_q = await db.execute(
+        select(PaymentAttempt).where(
+            PaymentAttempt.id == opportunity.payment_attempt_id,
+            PaymentAttempt.order_id == order.id,
+            PaymentAttempt.seller_id == principal_seller_id,
+            PaymentAttempt.is_current.is_(True),
+        )
+    )
     attempt = attempt_q.scalar_one_or_none()
     if not attempt:
-        raise HTTPException(status_code=404, detail={"error": "payment_attempt_not_found"})
+        raise HTTPException(status_code=409, detail={"error": "approval_stale"})
 
-    perm_q = await db.execute(
+    permission_q = await db.execute(
         select(ContactPermission).where(
             ContactPermission.seller_id == principal_seller_id,
             ContactPermission.order_id == order.id,
             ContactPermission.payment_attempt_id == attempt.id,
+            ContactPermission.channel == "whatsapp",
+            ContactPermission.purpose == "transactional_payment_reminder",
+            ContactPermission.scope_type == "order_payment_cycle",
             ContactPermission.status == "active",
+            or_(ContactPermission.expires_at.is_(None), ContactPermission.expires_at > now),
         )
     )
-    permission = perm_q.scalar_one_or_none()
+    permission = permission_q.scalar_one_or_none()
     if not permission:
         raise HTTPException(status_code=409, detail={"error": "consent_missing", "message": "Izin tidak aktif"})
 
-    # 7. Rebuild canonical action and compare digest constant-time
-    # Simplified: rebuild with same params as materializer
-    # For MVP, we use existing detail_json action if present
-    existing_action = (approval.detail_json or {}).get("action")
-    if not existing_action:
+    existing_detail = approval.detail_json or {}
+    existing_action = existing_detail.get("action")
+    if not isinstance(existing_action, dict):
         raise HTTPException(status_code=409, detail={"error": "approval_stale"})
 
-    # Rebuild fresh action from current facts to ensure no mutation
-    # Use existing action's fields but update policy_version etc from current
-    # For MVP, we just compare digest of existing action vs client digest
+    channel_q = await db.execute(
+        select(Channel).where(
+            Channel.id == existing_action.get("channel_id"),
+            Channel.seller_id == principal_seller_id,
+            Channel.type == existing_action.get("channel_type"),
+            Channel.provider == "whatsapp_cloud",
+            Channel.status == "active",
+        )
+    )
+    channel = channel_q.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=409, detail={"error": "approval_stale", "message": "Channel berubah"})
+
+    template_q = await db.execute(
+        select(WhatsAppMessageTemplate).where(
+            WhatsAppMessageTemplate.id == existing_detail.get("template_id"),
+            WhatsAppMessageTemplate.seller_id == principal_seller_id,
+            WhatsAppMessageTemplate.name == existing_action.get("provider_template_name"),
+            WhatsAppMessageTemplate.language == existing_action.get("provider_template_locale"),
+            WhatsAppMessageTemplate.status == "approved",
+        )
+    )
+    template = template_q.scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=409, detail={"error": "approval_stale", "message": "Template berubah"})
+
+    fresh_action, template_params = build_bound_recovery_action(
+        opportunity=opportunity,
+        order=order,
+        attempt=attempt,
+        permission=permission,
+        channel=channel,
+        template=template,
+        scheduled_at=existing_action.get("scheduled_at_utc"),
+        policy_version=approval.policy_version,
+    )
+    fresh_digest = action_digest(fresh_action)
     expected_digest = approval.action_digest
-    if not constant_time_compare(action_digest_from_client, expected_digest):
+    if not (
+        constant_time_compare(fresh_digest, expected_digest)
+        and constant_time_compare(action_digest_from_client, expected_digest)
+    ):
         raise HTTPException(status_code=409, detail={"error": "approval_stale", "message": "Digest tidak cocok, data berubah"})
 
-    # 8. Acquire contact-window row/advisory lock and recheck cap
-    # Use pg_advisory_xact_lock on hash of contact_subject_id + purpose
-    lock_key = hash((str(permission.contact_subject_id), "transactional_payment_reminder")) % (2**31 - 1)
+    # 8. Acquire a process-stable advisory lock and recheck the cap
+    lock_material = (
+        f"{principal_seller_id}:{permission.contact_subject_id}:"
+        "transactional_payment_reminder"
+    ).encode("utf-8")
+    lock_key = int.from_bytes(
+        hashlib.sha256(lock_material).digest()[:8], "big", signed=True
+    )
     await db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
 
     # Check rolling cap: count reserved + consumed in last 24h for same subject
@@ -255,18 +312,18 @@ async def approve_recovery(
         seller_id=principal_seller_id,
         opportunity_id=opportunity.id,
         approval_id=approval.id,
-        channel_id=1,  # placeholder
-        channel_type="whatsapp",
+        channel_id=channel.id,
+        channel_type=channel.type,
         status="scheduled",
         delivery_status="not_available",
-        template_code="payment_reminder_v1",
-        template_params_json={"order_id": order.id, "amount": str(attempt.amount)},
+        template_code=template.name,
+        template_params_json=template_params,
         action_digest=expected_digest,
         contact_permission_id=permission.id,
         contact_subject_id=permission.contact_subject_id,
         recipient_fingerprint=permission.address_fingerprint,
         idempotency_key=idempotency_key_dispatch,
-        provider="whatsapp_cloud",
+        provider=channel.provider,
         scheduled_at=now,
     )
     db.add(dispatch)
@@ -315,14 +372,5 @@ async def approve_recovery(
     await db.flush()
     await db.commit()
 
-    # 15. Best-effort enqueue Redis (outside transaction)
-    try:
-        from cache import get_redis
-
-        redis = await get_redis()
-        if redis:
-            await redis.lpush("arq:queue", str(job.id))
-    except Exception:
-        pass
-
+    # The durable database queue is the source of truth. The poller will claim this job.
     return response_snapshot

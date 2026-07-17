@@ -126,15 +126,16 @@ export function clearAuthStateAndCache() {
 // ── Fetch wrapper with epoch-aware inflight guard + typed errors (P0.4) + P3.5 no Bearer ──
 async function fetchAPI(endpoint, options = {}) {
   const requestEpoch = _sessionEpoch;
+  const { authPolicy = "seller", ...requestOptions } = options;
 
   const headers = {
     "Content-Type": "application/json",
-    ...options.headers,
+    ...requestOptions.headers,
   };
 
   // CSRF for cookie-auth mutating requests — read csrf cookie and add header
   if (typeof document !== "undefined") {
-    const method = (options.method || "GET").toUpperCase();
+    const method = (requestOptions.method || "GET").toUpperCase();
     if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
       try {
         const csrfCookie = document.cookie
@@ -151,16 +152,16 @@ async function fetchAPI(endpoint, options = {}) {
   }
 
   // Timeout handling via AbortController (30s default, overridable via options.timeout)
-  const timeoutMs = options.timeout ?? 30000;
+  const timeoutMs = requestOptions.timeout ?? 30000;
   const ctrl = new AbortController();
   const timeoutId = setTimeout(() => ctrl.abort(), timeoutMs);
-  const signal = options.signal || ctrl.signal;
+  const signal = requestOptions.signal || ctrl.signal;
 
   let res;
   try {
     res = await fetch(`${API_BASE}${endpoint}`, {
       credentials: "include",
-      ...options,
+      ...requestOptions,
       headers,
       signal,
     });
@@ -199,14 +200,14 @@ async function fetchAPI(endpoint, options = {}) {
   const retryAfter = parseRetryAfter(res.headers.get("Retry-After"));
 
   if (res.status === 401) {
-    if (typeof window !== "undefined") {
+    if (authPolicy !== "public" && typeof window !== "undefined") {
       clearAuthStateAndCache();
-      window.location.href = "/login";
+      if (authPolicy === "seller") window.location.href = "/login";
     }
     throw new ApiError({
       status: 401,
-      code: "authentication_required",
-      message: "Session expired",
+      code: authPolicy === "public" ? "capability_required" : "authentication_required",
+      message: authPolicy === "public" ? "Payment session required" : "Session expired",
       detail: null,
       requestId,
       retryAfter,
@@ -352,7 +353,7 @@ export const api = {
   },
   refreshAuth: () => fetchAPI("/api/auth/refresh", { method: "POST" }),
   logout: () => fetchAPI("/api/auth/logout", { method: "POST" }),
-  getMe: () => fetchAPI("/api/auth/me"),
+  getMe: () => fetchAPI("/api/auth/me", { authPolicy: "session-check" }),
   updateSettings: (body) =>
     fetchAPI("/api/auth/settings", { method: "PATCH", body: JSON.stringify(body) }),
 
@@ -508,28 +509,33 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ bootstrap_token: bootstrapToken }),
       credentials: "include",
+      authPolicy: "public",
     }),
   getPublicPaymentStatusViaSession: (orderId) =>
     fetchAPI(`/api/public/payments/${orderId}/status`, {
       method: "GET",
       credentials: "include",
+      authPolicy: "public",
     }),
   getPublicPaymentMethodsViaSession: (orderId) =>
     fetchAPI(`/api/public/payments/${orderId}/methods`, {
       method: "GET",
       credentials: "include",
+      authPolicy: "public",
     }),
   createPublicPaymentViaSession: (body) =>
     fetchAPI(`/api/public/payments/${body.order_id}/create-via-session`, {
       method: "POST",
       body: JSON.stringify(body),
       credentials: "include",
+      authPolicy: "public",
     }),
   grantReminderConsent: (orderId, granted, copyVersion) =>
     fetchAPI(`/api/public/payments/${orderId}/reminder-consent`, {
       method: "POST",
       body: JSON.stringify({ granted, copy_version: copyVersion }),
       credentials: "include",
+      authPolicy: "public",
     }),
 
   // Utility

@@ -9,6 +9,8 @@ on:
 # Prefer Node 24 for JS-based actions (checkout/setup/upload) on current runners.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  JUALIN_EVIDENCE_RUN_ID: "${{ github.run_id }}-${{ github.run_attempt }}"
+  JUALIN_PROOF_SEED: "42"
 
 jobs:
   validate-backend:
@@ -38,26 +40,18 @@ jobs:
 
       - name: Offline Proof Mode (backend suite)
         run: |
+          rm -f artifacts/proof-backend.json artifacts/competition-evidence-status.json
           mkdir -p artifacts
           cd backend
           python -m scripts.proof_mode run-all --suite backend --seed 42 --output ../artifacts/proof-backend.json
-          python -c "import json,sys; p=json.load(open('../artifacts/proof-backend.json')); print(p['status'], p.get('dimensions'), p['summary']); sys.exit(0 if p['status']=='passed' and p.get('dimensions',{}).get('browser_e2e')!='passed' or True else 1)"
+          python -c "import json,sys; p=json.load(open('../artifacts/proof-backend.json')); print(p['status'], p.get('dimensions'), p['summary']); sys.exit(0 if p['status']=='passed' else 1)"
           python -c "import json,sys; p=json.load(open('../artifacts/proof-backend.json')); d=p.get('dimensions',{}); assert d.get('backend_invariants')=='passed'; assert d.get('browser_e2e') in ('not_run','not_in_this_artifact'); assert d.get('staging_provider')=='blocked'; print('dimensions ok')"
 
       - name: Evidence collector
         run: |
           cd backend
           python -c "from services.payment_recovery.evidence_collector import write_competition_evidence_report; p=write_competition_evidence_report(); print(p)"
-
-      - name: Upload Proof Mode artifact
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: proof-backend
-          path: |
-            artifacts/proof-backend.json
-            artifacts/competition-evidence-status.json
-          if-no-files-found: warn
+          python -c "import json; p=json.load(open('../artifacts/competition-evidence-status.json')); claims={c['claim_id']:c for c in p['claims']}; assert claims['proof_backend']['status']=='verified', claims['proof_backend']; print('backend evidence verified')"
 
       - name: Python dependency audit
         run: |
@@ -66,6 +60,16 @@ jobs:
 
       - name: Docker Compose config validation
         run: docker compose config --quiet
+
+      - name: Upload Proof Mode artifact
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: proof-backend
+          path: |
+            artifacts/proof-backend.json
+            artifacts/competition-evidence-status.json
+          if-no-files-found: warn
 
   build-and-e2e-frontend:
     runs-on: ubuntu-latest
@@ -83,7 +87,7 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm audit --audit-level=high || true
+          npm audit --audit-level=high
           npm test
           npm run lint
           npm run build
@@ -98,17 +102,97 @@ jobs:
           PLAYWRIGHT_CHANNEL: ""
           CI: "true"
         run: |
+          rm -f artifacts/proof-browser.json
           cd frontend
           # Prefer bundled chromium in CI; channel empty uses default
           npx playwright test e2e/auth-cache-and-proof.spec.js --reporter=list
 
-      - name: Upload browser proof artifact
-        if: always()
+      - name: Validate mocked browser artifact policy
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const artifact = JSON.parse(fs.readFileSync("artifacts/proof-browser.json", "utf8"));
+          const sensitive = new Set(["access_token", "api_key", "authorization", "capability_token", "cookie", "database_url", "dsn", "password", "password_hash", "private_key", "refresh_token", "secret", "secret_key", "set_cookie"]);
+          const scan = (value) => {
+            if (Array.isArray(value)) return value.forEach(scan);
+            if (!value || typeof value !== "object") return;
+            for (const [rawKey, nested] of Object.entries(value)) {
+              const key = rawKey.toLowerCase().replaceAll("-", "_");
+              if (sensitive.has(key) || [...sensitive].some((suffix) => key.endsWith(`_${suffix}`))) throw new Error("mocked artifact contains a sensitive field");
+              scan(nested);
+            }
+          };
+          scan(artifact);
+          const serialized = JSON.stringify(artifact);
+          if (/Bearer\s+[A-Za-z0-9._-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/.test(serialized)) throw new Error("mocked artifact failed redaction scan");
+          if (artifact.schema_version !== "proof-artifact-v1" || artifact.suite !== "browser" || artifact.redaction_status !== "passed" || artifact.status !== "unverified" || artifact.api_mocking !== true || artifact.dimensions?.browser_e2e !== "mocked_unverified") throw new Error("mocked artifact policy mismatch");
+          console.log("mocked browser artifact remains unverified and redacted");
+          NODE
+
+      - name: Upload mocked browser artifact (unverified only)
+        if: success()
         uses: actions/upload-artifact@v6
         with:
-          name: proof-browser
+          name: proof-browser-mocked-unverified
           path: artifacts/proof-browser.json
-          if-no-files-found: warn
+          if-no-files-found: error
+
+  real-browser-e2e:
+    needs: [validate-backend, build-and-e2e-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.15"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install isolated integration dependencies
+        run: |
+          cd backend
+          pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          cd ../frontend
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run real browser/backend/PostgreSQL/Redis proof
+        env:
+          CI: "true"
+        run: |
+          rm -f artifacts/proof-browser.json artifacts/competition-evidence-status.json
+          cd backend
+          python -m scripts.run_with_disposable_database -- python -m scripts.run_disposable_browser_e2e
+
+      - name: Download backend proof
+        uses: actions/download-artifact@v6
+        with:
+          name: proof-backend
+          path: artifacts
+
+      - name: Collect combined evidence and enforce real browser claim
+        run: |
+          cd backend
+          python -c "from services.payment_recovery.evidence_collector import write_competition_evidence_report; write_competition_evidence_report()"
+          python -c "import json; p=json.load(open('../artifacts/competition-evidence-status.json')); claims={c['claim_id']:c for c in p['claims']}; assert claims['proof_backend']['status']=='verified', claims['proof_backend']; assert claims['proof_browser']['status']=='verified', claims['proof_browser']; assert p['aggregate_status']=='verified_offline', p['aggregate_status']; print('correlated offline browser evidence verified')"
+
+      - name: Upload real browser evidence
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: proof-browser-real
+          path: |
+            artifacts/proof-browser.json
+            artifacts/competition-evidence-status.json
+          if-no-files-found: error
 
   # Deploy remains manual. Quality gates above must pass before operators run:
   #   ssh ... ; jualin update

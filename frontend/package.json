@@ -12,6 +12,8 @@
     "lint": "eslint app components lib next.config.mjs eslint.config.mjs",
     "test": "vitest --run",
     "test:e2e": "playwright test",
+    "test:e2e:mocked": "playwright test e2e/auth-cache-and-proof.spec.js",
+    "test:e2e:real": "playwright test e2e/auth-cache-and-proof.real.spec.js",
     "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
@@ -23,7 +25,7 @@
     "postcss": "8.5.15"
   },
   "devDependencies": {
-    "@playwright/test": "^1.51.1",
+    "@playwright/test": "1.55.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "eslint": "^9",

@@ -119,8 +119,6 @@ class UserResponse(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
     user: UserResponse
 
 
@@ -147,11 +145,12 @@ def create_access_token(
     user_id: int,
     *,
     expires_delta: timedelta | None = None,
+    session_id: uuid_module.UUID | None = None,
     impersonation: bool = False,
     impersonated_by: int | None = None,
     target_seller_id: int | None = None,
 ) -> str:
-    expire_delta = expires_delta or timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
+    expire_delta = expires_delta or timedelta(minutes=15)
     expire = datetime.now(timezone.utc) + expire_delta
     payload = {
         "sub": str(user_id),
@@ -159,12 +158,16 @@ def create_access_token(
         "token_type": "access",
         "jti": uuid_module.uuid4().hex,
     }
+    if session_id:
+        payload["sid"] = str(session_id)
     if impersonation:
         payload.update({
             "impersonation": True,
             "impersonated_by": impersonated_by,
             "target_seller_id": target_seller_id or user_id,
         })
+    elif not session_id:
+        raise ValueError("browser access tokens must be bound to an active session")
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
@@ -301,6 +304,31 @@ async def get_current_user(
     except (ValueError, TypeError):
         raise HTTPException(status_code=401, detail="Token tidak valid")
 
+    session_id = token_payload.get("sid")
+    if not token_payload.get("impersonation"):
+        if not session_id:
+            raise HTTPException(status_code=401, detail="Sesi tidak terikat")
+        try:
+            parsed_session_id = uuid_module.UUID(str(session_id))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=401, detail="Sesi tidak valid")
+
+        from models.auth_session import AuthSession
+
+        now = datetime.now(timezone.utc)
+        session_result = await db.execute(
+            select(AuthSession).where(
+                AuthSession.id == parsed_session_id,
+                AuthSession.user_id == user_id,
+                AuthSession.is_current.is_(True),
+                AuthSession.revoked_at.is_(None),
+                AuthSession.expires_at > now,
+                AuthSession.absolute_expires_at > now,
+            )
+        )
+        if not session_result.scalar_one_or_none():
+            raise HTTPException(status_code=401, detail="Sesi telah berakhir")
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
@@ -309,6 +337,7 @@ async def get_current_user(
 
     request.state.auth_context = {
         "jti": token_payload.get("jti", ""),
+        "session_id": session_id,
         "impersonation": bool(token_payload.get("impersonation", False)),
         "impersonated_by": token_payload.get("impersonated_by"),
         "target_seller_id": token_payload.get("target_seller_id"),
@@ -377,14 +406,20 @@ async def register(req: RegisterRequest, request: Request, response: Response, d
     )
     
     db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    await _record_auth_audit(db, "auth.register.success", request, user=user, email=email, success=True)
-    await db.commit()
-    
-    # Generate token + session family (P3.2)
-    token = create_access_token(user.id)
+
+    # User, success audit, and initial session are one transaction. A failed
+    # session creation must not leave an account that the caller was told failed.
     try:
+        await db.flush()
+        await db.refresh(user)
+        await _record_auth_audit(
+            db,
+            "auth.register.success",
+            request,
+            user=user,
+            email=email,
+            success=True,
+        )
         session, raw_refresh, raw_csrf = await create_session_family(
             db,
             user_id=user.id,
@@ -392,16 +427,17 @@ async def register(req: RegisterRequest, request: Request, response: Response, d
             actor_user_id=user.id,
             effective_seller_id=user.id,
         )
+        token = create_access_token(user.id, session_id=session.id)
         await db.commit()
-        _set_auth_cookies(response, token, raw_refresh, raw_csrf)
     except Exception:
-        # If session creation fails, still return token for transitional Bearer path
-        pass
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "session_unavailable", "message": "Sesi belum dapat dibuat. Silakan login kembali."},
+        )
 
-    return TokenResponse(
-        access_token=token,
-        user=build_user_response(user, request),
-    )
+    _set_auth_cookies(response, token, raw_refresh, raw_csrf)
+    return TokenResponse(user=build_user_response(user, request))
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -436,8 +472,7 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
     
     await _record_auth_audit(db, "auth.login.success", request, user=user, email=email, success=True)
 
-    # Create session family and set HttpOnly cookies (P3.2)
-    token = create_access_token(user.id)
+    # Browser auth is cookie-only and tied to the durable session row.
     try:
         session, raw_refresh, raw_csrf = await create_session_family(
             db,
@@ -446,62 +481,82 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
             actor_user_id=user.id,
             effective_seller_id=user.id,
         )
+        token = create_access_token(user.id, session_id=session.id)
         await db.commit()
         _set_auth_cookies(response, token, raw_refresh, raw_csrf)
-    except Exception as e:
+    except Exception:
         await db.rollback()
-        # Still return Bearer token for transitional path
-        await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "session_unavailable", "message": "Sesi belum dapat dibuat. Coba lagi nanti."},
+        )
 
-    return TokenResponse(
-        access_token=token,
-        user=build_user_response(user, request),
-    )
+    return TokenResponse(user=build_user_response(user, request))
 
 
 @router.post("/refresh")
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    """
-    P3.2 — Refresh rotates refresh token transactionally, old token replay revokes family.
-    Uses HttpOnly refresh cookie.
-    """
+    """Rotate the HttpOnly refresh token under a row lock."""
     from services.auth_session_service import rotate_refresh_token
 
     cookie_names = _get_cookie_names()
-    raw_refresh = None
-    for name in [cookie_names["refresh"], "__Host-jualin_refresh", "jualin_refresh"]:
-        if name in request.cookies:
-            raw_refresh = request.cookies.get(name)
-            break
-
+    raw_refresh = next(
+        (
+            request.cookies.get(name)
+            for name in (cookie_names["refresh"], "__Host-jualin_refresh", "jualin_refresh")
+            if request.cookies.get(name)
+        ),
+        None,
+    )
     if not raw_refresh:
         raise HTTPException(status_code=401, detail="Refresh token missing")
 
     try:
-        new_session, new_raw_refresh, new_raw_csrf = await rotate_refresh_token(db, old_refresh_token=raw_refresh)
+        new_session, new_raw_refresh, new_raw_csrf, rotation_error = (
+            await rotate_refresh_token(db, old_refresh_token=raw_refresh)
+        )
         if not new_session:
-            # Reuse detected or invalid — revoke family and clear cookies
+            await db.commit()
+            if rotation_error == "already_rotated":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "refresh_already_rotated",
+                        "message": "Sesi sudah diperbarui oleh tab lain",
+                    },
+                )
             _clear_auth_cookies(response)
-            raise HTTPException(status_code=401, detail={"error": "reuse_detected", "message": "Sesi telah dicabut, silakan login kembali"})
+            error_code = (
+                "reuse_detected"
+                if rotation_error == "reuse_detected"
+                else "session_invalid"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": error_code,
+                    "message": "Sesi telah berakhir, silakan login kembali",
+                },
+            )
 
-        # Create new access token
-        new_access = create_access_token(new_session.user_id)
-        await db.commit()
-
-        _set_auth_cookies(response, new_access, new_raw_refresh, new_raw_csrf)
-
-        # Return user
         result = await db.execute(select(User).where(User.id == new_session.user_id))
         user = result.scalar_one_or_none()
         if not user:
+            await db.rollback()
+            _clear_auth_cookies(response)
             raise HTTPException(status_code=401, detail="User tidak ditemukan")
 
-        return TokenResponse(access_token=new_access, user=build_user_response(user, request))
-
+        new_access = create_access_token(
+            new_session.user_id, session_id=new_session.id
+        )
+        await db.commit()
+        _set_auth_cookies(response, new_access, new_raw_refresh, new_raw_csrf)
+        return TokenResponse(user=build_user_response(user, request))
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         await db.rollback()
+        _clear_auth_cookies(response)
         raise HTTPException(status_code=401, detail="Refresh gagal")
 
 

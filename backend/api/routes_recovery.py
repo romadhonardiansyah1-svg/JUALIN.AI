@@ -281,11 +281,22 @@ async def get_opportunity_detail(
         return JSONResponse(status_code=404, content={"error": "opportunity_not_found", "message": "Peluang tidak ditemukan"})
 
     # Load order for reference (masked)
-    order_q = await db.execute(select(Order).where(Order.id == opp.order_id))
+    order_q = await db.execute(
+        select(Order).where(
+            Order.id == opp.order_id,
+            Order.seller_id == current_user.id,
+        )
+    )
     order = order_q.scalar_one_or_none()
 
     # Load payment attempt for expiry
-    attempt_q = await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == opp.payment_attempt_id))
+    attempt_q = await db.execute(
+        select(PaymentAttempt).where(
+            PaymentAttempt.id == opp.payment_attempt_id,
+            PaymentAttempt.order_id == opp.order_id,
+            PaymentAttempt.seller_id == current_user.id,
+        )
+    )
     attempt = attempt_q.scalar_one_or_none()
 
     # Load pending recovery approval for exact digest (read-only; no materialization).
@@ -377,6 +388,18 @@ async def get_opportunity_detail(
     )
 
 
+def _deny_impersonated_mutation(request: Request) -> None:
+    auth_context = getattr(request.state, "auth_context", {}) or {}
+    if auth_context.get("impersonation"):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "impersonation_read_only",
+                "message": "Impersonation hanya dapat melihat data.",
+            },
+        )
+
+
 @router.post("/opportunities/{opportunity_id}/approve")
 async def approve_opportunity(
     opportunity_id: uuid.UUID,
@@ -389,6 +412,8 @@ async def approve_opportunity(
     P4.1 — Approve exact recovery action atomically.
     Returns 202 accepted for processing, idempotent replay via idempotency_key.
     """
+    _deny_impersonated_mutation(request)
+
     # Check capability: must be in approval mode
     from config import get_settings
 
@@ -420,8 +445,14 @@ async def approve_opportunity(
     except HTTPException as he:
         # Return typed error contract
         raise he
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": "internal_error", "message": str(e)})
+    except Exception:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "internal_error",
+                "message": "Keputusan belum dapat diproses.",
+            },
+        )
 
 
 @router.post("/opportunities/{opportunity_id}/reject")
@@ -435,6 +466,8 @@ async def reject_opportunity(
     """
     P4.1 — Reject pending recovery approval.
     """
+    _deny_impersonated_mutation(request)
+
     from config import get_settings
 
     settings = get_settings()

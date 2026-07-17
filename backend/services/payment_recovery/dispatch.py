@@ -94,74 +94,156 @@ async def revalidate_before_send(
     seller_id: int,
     dispatch_id: uuid.UUID,
 ) -> tuple[bool, str | None]:
-    """
-    Re-validate all INV-04 conditions before provider call.
-    Returns (allowed, suppression_code)
-    """
-    # Load dispatch with seller_id
-    d_q = await db.execute(select(OutboundDispatch).where(OutboundDispatch.id == dispatch_id, OutboundDispatch.seller_id == seller_id))
-    dispatch = d_q.scalar_one_or_none()
+    """Revalidate the exact seller-bound action before crossing the network."""
+    import hmac
+
+    from config import get_settings
+    from models.agent_os import AgentPolicy
+    from models.inbox import Channel
+    from models.payment_recovery import ContactSuppression, PaymentRecoveryControl
+    from models.wa_template import WhatsAppMessageTemplate
+    from services.payment_recovery.actions import action_digest
+    from services.payment_recovery.approval_materializer import (
+        build_bound_recovery_action,
+    )
+    from sqlalchemy import or_
+
+    dispatch_q = await db.execute(
+        select(OutboundDispatch).where(
+            OutboundDispatch.id == dispatch_id,
+            OutboundDispatch.seller_id == seller_id,
+        )
+    )
+    dispatch = dispatch_q.scalar_one_or_none()
     if not dispatch:
         return False, "opportunity_not_found"
 
-    # Load opportunity
-    opp_q = await db.execute(select(RevenueOpportunity).where(RevenueOpportunity.id == dispatch.opportunity_id))
-    opp = opp_q.scalar_one_or_none()
-    if not opp or opp.seller_id != seller_id:
+    opportunity_q = await db.execute(
+        select(RevenueOpportunity).where(
+            RevenueOpportunity.id == dispatch.opportunity_id,
+            RevenueOpportunity.seller_id == seller_id,
+        )
+    )
+    opportunity = opportunity_q.scalar_one_or_none()
+    if not opportunity:
         return False, "opportunity_not_found"
-
-    # Check opportunity status still dispatch_pending
-    if opp.status != "dispatch_pending":
+    if opportunity.status != "dispatch_pending":
         return False, "state_changed_before_execution"
 
-    # Load approval
-    appr_q = await db.execute(select(AgentApproval).where(AgentApproval.id == dispatch.approval_id))
-    approval = appr_q.scalar_one_or_none()
-    if not approval or approval.seller_id != seller_id or approval.status != "approved":
+    approval_q = await db.execute(
+        select(AgentApproval).where(
+            AgentApproval.id == dispatch.approval_id,
+            AgentApproval.seller_id == seller_id,
+            AgentApproval.status == "approved",
+            AgentApproval.action_digest == dispatch.action_digest,
+        )
+    )
+    approval = approval_q.scalar_one_or_none()
+    if not approval:
         return False, "approval_stale"
 
-    # Load order still pending and not paid
-    order_q = await db.execute(select(Order).where(Order.id == opp.order_id))
+    approval_detail = approval.detail_json or {}
+    approved_action = approval_detail.get("action")
+    if not isinstance(approved_action, dict):
+        return False, "approval_stale"
+    if (
+        approved_action.get("channel_id") != dispatch.channel_id
+        or approved_action.get("channel_type") != dispatch.channel_type
+        or approved_action.get("provider_template_name") != dispatch.template_code
+    ):
+        return False, "approval_stale"
+
+    order_q = await db.execute(
+        select(Order).where(Order.id == opportunity.order_id, Order.seller_id == seller_id)
+    )
     order = order_q.scalar_one_or_none()
-    if not order or order.seller_id != seller_id or order.status != OrderStatus.PENDING or order.paid_at:
+    if not order or order.status != OrderStatus.PENDING or order.paid_at:
         return False, "already_paid" if order and order.paid_at else "order_not_pending"
 
-    # Load payment attempt still current and not expired
-    attempt_q = await db.execute(select(PaymentAttempt).where(PaymentAttempt.id == opp.payment_attempt_id))
+    now = datetime.now(timezone.utc)
+    attempt_q = await db.execute(
+        select(PaymentAttempt).where(
+            PaymentAttempt.id == opportunity.payment_attempt_id,
+            PaymentAttempt.order_id == order.id,
+            PaymentAttempt.seller_id == seller_id,
+            PaymentAttempt.is_current.is_(True),
+        )
+    )
     attempt = attempt_q.scalar_one_or_none()
-    if not attempt or not attempt.is_current or (attempt.payment_expires_at and attempt.payment_expires_at <= datetime.now(timezone.utc)):
+    if not attempt or (attempt.payment_expires_at and attempt.payment_expires_at <= now):
         return False, "payment_expired"
 
-    # Load permission active
-    perm_q = await db.execute(
+    permission_q = await db.execute(
         select(ContactPermission).where(
             ContactPermission.id == dispatch.contact_permission_id,
             ContactPermission.seller_id == seller_id,
+            ContactPermission.order_id == order.id,
+            ContactPermission.payment_attempt_id == attempt.id,
+            ContactPermission.contact_subject_id == dispatch.contact_subject_id,
+            ContactPermission.address_fingerprint == dispatch.recipient_fingerprint,
+            ContactPermission.channel == dispatch.channel_type,
+            ContactPermission.purpose == "transactional_payment_reminder",
+            ContactPermission.scope_type == "order_payment_cycle",
             ContactPermission.status == "active",
+            or_(ContactPermission.expires_at.is_(None), ContactPermission.expires_at > now),
         )
     )
-    perm = perm_q.scalar_one_or_none()
-    if not perm:
+    permission = permission_q.scalar_one_or_none()
+    if not permission:
         return False, "consent_missing"
 
-    # Check suppression active (STOP)
-    from models.payment_recovery import ContactSuppression
+    channel_q = await db.execute(
+        select(Channel).where(
+            Channel.id == dispatch.channel_id,
+            Channel.seller_id == seller_id,
+            Channel.type == dispatch.channel_type,
+            Channel.provider == dispatch.provider,
+            Channel.status == "active",
+        )
+    )
+    channel = channel_q.scalar_one_or_none()
+    if not channel:
+        return False, "provider_unavailable"
 
-    supp_q = await db.execute(
+    template_q = await db.execute(
+        select(WhatsAppMessageTemplate).where(
+            WhatsAppMessageTemplate.id == approval_detail.get("template_id"),
+            WhatsAppMessageTemplate.seller_id == seller_id,
+            WhatsAppMessageTemplate.status == "approved",
+        )
+    )
+    template = template_q.scalar_one_or_none()
+    if not template:
+        return False, "approval_stale"
+
+    fresh_action, _ = build_bound_recovery_action(
+        opportunity=opportunity,
+        order=order,
+        attempt=attempt,
+        permission=permission,
+        channel=channel,
+        template=template,
+        scheduled_at=approved_action.get("scheduled_at_utc"),
+        policy_version=approval.policy_version,
+    )
+    fresh_digest = action_digest(fresh_action)
+    if not (
+        isinstance(approval.action_digest, str)
+        and isinstance(dispatch.action_digest, str)
+        and hmac.compare_digest(fresh_digest, approval.action_digest)
+        and hmac.compare_digest(fresh_digest, dispatch.action_digest)
+    ):
+        return False, "approval_stale"
+
+    suppression_q = await db.execute(
         select(ContactSuppression).where(
             ContactSuppression.seller_id == seller_id,
-            ContactSuppression.contact_subject_id == perm.contact_subject_id,
+            ContactSuppression.contact_subject_id == permission.contact_subject_id,
             ContactSuppression.status == "active",
         )
     )
-    supp = supp_q.scalar_one_or_none()
-    if supp:
+    if suppression_q.scalar_one_or_none():
         return False, "consent_withdrawn"
-
-    # Env + global DB kill switch + tenant pause (authoritative before side effect)
-    from config import get_settings
-    from models.payment_recovery import PaymentRecoveryControl
-    from models.agent_os import AgentPolicy
 
     settings = get_settings()
     if not getattr(settings, "ENABLE_PAYMENT_RECOVERY", False):
@@ -174,14 +256,11 @@ async def revalidate_before_send(
     if not control or not control.enabled or control.paused:
         return False, "global_paused" if (control and control.paused) else "feature_disabled"
 
-    policy_q = await db.execute(
-        select(AgentPolicy).where(AgentPolicy.seller_id == seller_id)
-    )
+    policy_q = await db.execute(select(AgentPolicy).where(AgentPolicy.seller_id == seller_id))
     policy = policy_q.scalar_one_or_none()
     if not policy or getattr(policy, "payment_recovery_paused", True):
         return False, "tenant_paused"
 
-    # All checks pass
     return True, None
 
 
@@ -296,7 +375,15 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
 
     # 3. Call provider outside transaction
     # Load channel
-    channel_q = await db.execute(select(Channel).where(Channel.id == dispatch.channel_id))
+    channel_q = await db.execute(
+        select(Channel).where(
+            Channel.id == dispatch.channel_id,
+            Channel.seller_id == dispatch.seller_id,
+            Channel.type == dispatch.channel_type,
+            Channel.provider == dispatch.provider,
+            Channel.status == "active",
+        )
+    )
     channel = channel_q.scalar_one_or_none()
     await db.commit()
 
@@ -325,7 +412,10 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
             from services.contact_identity import decrypt_address
 
             subj_q = await db.execute(
-                select(ContactSubject).where(ContactSubject.id == dispatch.contact_subject_id)
+                select(ContactSubject).where(
+                    ContactSubject.id == dispatch.contact_subject_id,
+                    ContactSubject.seller_id == dispatch.seller_id,
+                )
             )
             subj = subj_q.scalar_one_or_none()
             if subj and subj.address_ciphertext:

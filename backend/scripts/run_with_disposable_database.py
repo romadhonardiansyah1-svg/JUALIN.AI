@@ -382,8 +382,13 @@ def _start_container(authority: DisposableAuthority) -> DisposableAuthority:
                     return runtime
             time.sleep(1)
         raise SafetyError("Disposable PostgreSQL did not become healthy within 90 seconds")
-    except BaseException:
-        _remove_preprovisioned_project(authority)
+    except BaseException as primary_error:
+        try:
+            _remove_preprovisioned_project(authority)
+        except BaseException:
+            primary_error.add_note(
+                "Disposable database startup cleanup also failed; details withheld"
+            )
         raise
 
 
@@ -711,6 +716,7 @@ def run_command(
     authority = new_authority()
     runtime: DisposableAuthority | None = None
     provisioned = False
+    target_result: int | None = None
     try:
         runtime = _start_container(authority)
         _provision_database(runtime)
@@ -719,13 +725,29 @@ def run_command(
             "[DISPOSABLE DB] exact database/role/sentinel provisioned: "
             f"run_id={runtime.run_id}"
         )
-        return run_target(runtime, command, cwd=cwd)
+        target_result = run_target(runtime, command, cwd=cwd)
+        return target_result
     finally:
+        primary_error = sys.exc_info()[1]
         if runtime is not None:
-            if provisioned:
-                verify_and_remove(runtime)
-            else:
-                _remove_preprovisioned_project(runtime)
+            try:
+                if provisioned:
+                    verify_and_remove(runtime)
+                else:
+                    _remove_preprovisioned_project(runtime)
+            except Exception as cleanup_error:
+                if primary_error is not None:
+                    primary_error.add_note(
+                        "Disposable database cleanup also failed; details withheld"
+                    )
+                elif target_result is not None:
+                    raise SafetyError(
+                        f"Target exited with code {target_result}; verified teardown also failed"
+                    ) from cleanup_error
+                else:
+                    raise SafetyError(
+                        "Verified disposable database cleanup failed"
+                    ) from cleanup_error
 
 
 def main() -> None:
@@ -742,6 +764,11 @@ def main() -> None:
         raise SystemExit(130)
     except SafetyError as exc:
         print(f"[DISPOSABLE DB FAIL] {exc}", file=sys.stderr)
+        if getattr(exc, "__notes__", None):
+            print(
+                "[DISPOSABLE DB CLEANUP] an additional sanitized cleanup failure occurred",
+                file=sys.stderr,
+            )
         raise SystemExit(2)
     raise SystemExit(result)
 

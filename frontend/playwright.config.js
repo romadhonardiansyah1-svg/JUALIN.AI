@@ -11,7 +11,17 @@ module.exports = defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
-  reporter: [["list"], ["json", { outputFile: "test-results/playwright-report.json" }]],
+  reporter: [
+    ["list"],
+    [
+      "json",
+      {
+        outputFile:
+          process.env.PLAYWRIGHT_JSON_OUTPUT_FILE ||
+          "test-results/playwright-report.json",
+      },
+    ],
+  ],
   timeout: 60_000,
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000",
@@ -24,8 +34,8 @@ module.exports = defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        // Prefer system Chrome when Playwright browser download is unavailable.
-        channel: process.env.PLAYWRIGHT_CHANNEL || "chrome",
+        // Omit channel to use Playwright's installed Chromium; opt into system Chrome explicitly.
+        channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
       },
     },
   ],

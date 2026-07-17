@@ -694,6 +694,55 @@ class FollowupWorkerFinalizationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(retry_updates[0].args[1], {"job_id": 77})
 
 
+    async def test_preclaimed_job_executes_with_the_pollers_fencing_token(self):
+        import worker
+
+        claim_token = "poller-claim-token"
+        handler_result = {"success": True, "outcome": "accepted"}
+        job = SimpleNamespace(
+            id=78,
+            job_type="pending_payment_followup",
+            attempts=1,
+            max_attempts=3,
+            claim_token=claim_token,
+            status="running",
+        )
+        db = AsyncMock()
+        claimed_job_result = MagicMock()
+        claimed_job_result.scalar_one_or_none.return_value = job
+        fresh_result = MagicMock()
+        fresh_result.scalar_one_or_none.return_value = job
+        finalize_result = MagicMock()
+        finalize_result.fetchone.return_value = (78,)
+        db.execute.side_effect = (claimed_job_result, fresh_result, finalize_result)
+        handler = AsyncMock(return_value=handler_result)
+
+        @asynccontextmanager
+        async def fake_session():
+            yield db
+
+        with (
+            patch.object(worker, "async_session", fake_session),
+            patch(
+                "services.job_handlers.handle_pending_payment_followup",
+                new=handler,
+            ),
+        ):
+            result = await worker.process_recorded_job(
+                {}, 78, claim_token=claim_token
+            )
+
+        self.assertEqual(result, handler_result)
+        handler.assert_awaited_once_with(db, job)
+        self.assertFalse(
+            any(
+                "SET status='running'" in str(call.args[0])
+                for call in db.execute.await_args_list
+            ),
+            "a poller-owned claim must not be claimed a second time",
+        )
+
+
 class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestCase):
     async def _run_dispatch(self, send_result, *, commit_side_effect=None):
         from services.payment_recovery import dispatch as dispatch_module
@@ -708,6 +757,8 @@ class PaymentRecoverySendOutcomeCompatibilityTests(unittest.IsolatedAsyncioTestC
             opportunity_id=opportunity_id,
             contact_subject_id=contact_subject_id,
             channel_id=12,
+            channel_type="whatsapp",
+            provider="whatsapp_cloud",
             template_code="payment_reminder_v1",
             template_params_json={"language": "id", "body": ["ORD-1"]},
             status="pending",

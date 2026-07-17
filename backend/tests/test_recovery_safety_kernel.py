@@ -2,12 +2,15 @@
 P2.2 — Pure safety kernel tests (phone, canonical action, policy).
 """
 import unittest
+import uuid
+from types import SimpleNamespace
 from datetime import datetime, timezone, time
 from decimal import Decimal
 import unicodedata
 
 from services.payment_recovery.phone import normalize_indonesian_phone
 from services.payment_recovery.actions import action_digest, canonical_scalar, build_canonical_action
+from services.payment_recovery.approval_materializer import build_bound_recovery_action
 from services.payment_recovery.policy import evaluate_policy, PolicyFact, parse_legacy_expiry
 
 
@@ -133,6 +136,61 @@ class CanonicalActionTests(unittest.TestCase):
         self.assertEqual(digest, action_digest(action))
 
 
+    def test_bound_recovery_action_uses_exact_current_facts(self):
+        scheduled_at = datetime(2026, 7, 17, 7, 0, tzinfo=timezone.utc)
+        opportunity = SimpleNamespace(
+            id=uuid.uuid4(), seller_id=7, amount_snapshot=Decimal("125000.00"), currency="IDR"
+        )
+        order = SimpleNamespace(id=42)
+        attempt = SimpleNamespace(
+            id=uuid.uuid4(), amount=Decimal("125000.00"),
+            payment_expires_at=scheduled_at.replace(hour=9),
+            trusted_link_reference="payment-reference", external_attempt_id="attempt-1",
+        )
+        permission = SimpleNamespace(
+            id=uuid.uuid4(), contact_subject_id=uuid.uuid4(),
+            address_fingerprint="recipient-fingerprint",
+        )
+        channel = SimpleNamespace(
+            id=77, type="whatsapp", provider="whatsapp_cloud", external_id="phone-number-id"
+        )
+        template = SimpleNamespace(
+            id=8, name="payment_reminder_v1", language="id", body="Bayar {{1}} {{2}}",
+            variables_json=[{"key": "order"}, {"key": "amount"}],
+            provider_template_id="provider-template-8",
+        )
+
+        action, params = build_bound_recovery_action(
+            opportunity=opportunity,
+            order=order,
+            attempt=attempt,
+            permission=permission,
+            channel=channel,
+            template=template,
+            scheduled_at=scheduled_at,
+            policy_version=3,
+        )
+
+        self.assertEqual(action["seller_id"], 7)
+        self.assertEqual(action["channel_id"], 77)
+        self.assertEqual(action["provider_template_name"], "payment_reminder_v1")
+        self.assertEqual(params["body"], ["42", "125000.00"])
+        self.assertNotIn("placeholder", str(action).lower())
+
+        other_channel = SimpleNamespace(**{**channel.__dict__, "id": 78})
+        changed, _ = build_bound_recovery_action(
+            opportunity=opportunity,
+            order=order,
+            attempt=attempt,
+            permission=permission,
+            channel=other_channel,
+            template=template,
+            scheduled_at=scheduled_at,
+            policy_version=3,
+        )
+        self.assertNotEqual(action_digest(action), action_digest(changed))
+
+
 class PolicyEvaluationTests(unittest.TestCase):
     def _base_fact(self):
         return PolicyFact(
@@ -165,6 +223,17 @@ class PolicyEvaluationTests(unittest.TestCase):
         decision = evaluate_policy(fact)
         self.assertTrue(decision.allowed)
         self.assertEqual(decision.suppression_code, None)
+
+    def test_quiet_hours_fail_closed_before_authorization(self):
+        fact = self._base_fact()
+        quiet_time = datetime(2026, 7, 12, 15, 0, 0, tzinfo=timezone.utc)
+        fact = fact.__class__(**{**fact.__dict__, "current_time_utc": quiet_time})
+
+        decision = evaluate_policy(fact)
+
+        self.assertFalse(decision.allowed)
+        self.assertTrue(decision.eligible)
+        self.assertEqual(decision.suppression_code, "quiet_hours_deferred")
 
     def test_feature_disabled(self):
         fact = self._base_fact()

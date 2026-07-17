@@ -115,12 +115,7 @@ async def exchange_capability(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Fragment exchange: bootstrap token from URL fragment POST -> HttpOnly session cookie.
-    - Token in body, not query, not Authorization, not stored in browser storage
-    - Same-origin, no third-party script/service worker reading fragment (frontend handles replaceState)
-    - Sets Secure HttpOnly SameSite Lax/Strict session cookie
-    """
+    """Exchange a one-use bootstrap capability for an HttpOnly order session."""
     _verify_origin(request)
     await _rate_limit_public(request)
 
@@ -128,7 +123,6 @@ async def exchange_capability(
     if not raw_token or len(raw_token) < 20:
         raise HTTPException(status_code=400, detail={"error": "invalid_token", "message": "Token tidak valid"})
 
-    # Verify capability
     cap = await verify_and_use_capability(
         db,
         raw_token=raw_token,
@@ -138,49 +132,36 @@ async def exchange_capability(
     if not cap:
         raise HTTPException(status_code=403, detail={"error": "token_invalid", "message": "Token tidak valid atau kedaluwarsa"})
 
-    # Check order exists and matches
     order_q = await db.execute(select(Order).where(Order.id == order_id))
-    order = order_q.scalar_one_or_none()
-    if not order:
+    if not order_q.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Order tidak ditemukan")
 
-    # Create session
-    session, raw_session_token = await create_capability_session(db, capability=cap)
+    _, raw_session_token = await create_capability_session(db, capability=cap)
     await db.commit()
 
-    # Set HttpOnly cookie
-    # Secure only in production (https)
-    is_secure = not settings.DEBUG
-    response.set_cookie(
-        key="payment_capability_session",
-        value=raw_session_token,
-        max_age=settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60,
-        expires=settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60,
-        path=f"/api/public/payments/{order_id}",
-        secure=is_secure,
-        httponly=True,
-        samesite="lax",
-    )
-    # Also set for broader /api/public/payments/ path? For simplicity, set for specific order path and also root public path
-    # Second cookie for general public payments path
-    response.set_cookie(
-        key="payment_capability_session",
-        value=raw_session_token,
-        max_age=settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60,
-        path="/api/public/payments",
-        secure=is_secure,
-        httponly=True,
-        samesite="lax",
-    )
-
-    return JSONResponse(
-        content={"status": "exchanged", "order_id": order_id, "expires_in": settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60},
+    response = JSONResponse(
+        content={
+            "status": "exchanged",
+            "order_id": order_id,
+            "expires_in": settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60,
+        },
         headers={
             "Cache-Control": "private, no-store",
             "Pragma": "no-cache",
             "Referrer-Policy": "no-referrer",
         },
     )
+    response.set_cookie(
+        key="payment_capability_session",
+        value=raw_session_token,
+        max_age=settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60,
+        expires=settings.PAYMENT_CAPABILITY_SESSION_TTL_MINUTES * 60,
+        path=f"/api/public/payments/{order_id}",
+        secure=not settings.DEBUG,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 @router.get("/{order_id}/status")

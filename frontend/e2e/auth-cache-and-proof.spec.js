@@ -248,26 +248,23 @@ test.describe("P7.1a recovery browser gate (mocked API)", () => {
       run_id: runId,
       commit_sha: commit,
       seed: null,
-      status: assertions.every((a) => a.ok) ? "passed" : "failed",
+      status: assertions.every((a) => a.ok) ? "unverified" : "failed",
       started_at: new Date().toISOString(),
       finished_at: new Date().toISOString(),
       command: "npx playwright test e2e/auth-cache-and-proof.spec.js",
       environment: process.env.CI ? "ci" : "local",
       watermark: "DATA SIMULASI",
       redaction_status: "passed",
+      api_mocking: true,
       dimensions: {
         backend_invariants: "not_in_this_artifact",
-        browser_e2e: assertions.every((a) => a.ok) ? "passed" : "failed",
+        browser_e2e: assertions.every((a) => a.ok) ? "mocked_unverified" : "failed",
         staging_provider: "blocked",
       },
       scenarios: [
         {
           scenario_id: "cache-tenant-switch-browser",
-          status: assertions.some((a) => a.message.includes("legacy token"))
-            ? assertions.find((a) => a.message.includes("legacy token"))?.ok
-              ? "passed"
-              : "failed"
-            : "passed",
+          status: assertions.every((a) => a.ok) ? "unverified" : "failed",
           assertions,
           invariants: ["INV-01", "BUG-025"],
           provider_calls: 0,
