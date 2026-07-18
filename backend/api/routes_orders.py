@@ -75,22 +75,19 @@ async def _record_status_change(
 
 
 async def _restore_order_stock(order: Order, db: AsyncSession):
-    """Restore product stock when an order is cancelled or refunded."""
-    from models.product import Product
+    """Restore only quantities this order actually consumed."""
+    from services.payments.factory import (
+        _adjust_order_stock_for_payment,
+        _get_late_paid_consumed_quantities,
+    )
 
-    items = order.items if isinstance(order.items, list) else []
-    for item in items:
-        if "product_id" in item:
-            result = await db.execute(
-                select(Product).where(Product.id == item["product_id"])
-            )
-            product = result.scalar_one_or_none()
-            if product:
-                product.stok += item.get("qty", 1)
-                logger.info(
-                    f"Stock restored: {product.nama} +{item.get('qty', 1)}",
-                    extra={"product_id": product.id, "order_id": order.id},
-                )
+    consumed_quantities = await _get_late_paid_consumed_quantities(db, order.id)
+    await _adjust_order_stock_for_payment(
+        db,
+        order,
+        restore=True,
+        quantities_by_product=consumed_quantities,
+    )
 
 
 # ══════════════════════════════════════════════════
@@ -337,16 +334,12 @@ async def update_order_status(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Update order status with validation.
-    - Enforces valid state transitions (e.g., can't go shipped → pending)
-    - Records history entry for every change
-    - Restores product stock on cancellation/refund
-    """
+    """Update an order under a row lock and restore stock exactly once."""
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
         .where(Order.seller_id == current_user.id)
+        .with_for_update()
     )
     order = result.scalar_one_or_none()
 
@@ -354,7 +347,6 @@ async def update_order_status(
         raise NotFoundError("Order", order_id)
 
     if req.status:
-        # Validate the new status value
         try:
             new_status = OrderStatus(req.status)
         except ValueError:
@@ -363,7 +355,6 @@ async def update_order_status(
                 fields={"status": req.status},
             )
 
-        # Validate the transition
         if not is_valid_transition(order.status, new_status):
             raise OrderTransitionError(
                 from_status=order.status.value,
@@ -371,8 +362,6 @@ async def update_order_status(
             )
 
         old_status = order.status
-
-        # Handle special transitions
         if new_status in (OrderStatus.CANCELLED, OrderStatus.REFUNDED):
             if old_status not in (OrderStatus.CANCELLED, OrderStatus.REFUNDED):
                 await _restore_order_stock(order, db)
@@ -381,10 +370,7 @@ async def update_order_status(
                     extra={"order_id": order_id, "new_status": new_status.value},
                 )
 
-        # Apply the status change
         order.status = new_status
-
-        # Record the change in history
         await _record_status_change(
             order=order,
             from_status=old_status.value,

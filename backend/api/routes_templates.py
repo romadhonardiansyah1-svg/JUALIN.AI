@@ -4,7 +4,7 @@ Templates are internal curated; installed copies are seller-owned.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 
@@ -64,7 +64,12 @@ async def install_template(
     db: AsyncSession = Depends(get_db),
 ):
     """Install a template by creating a seller-owned copy."""
-    result = await db.execute(select(Template).where(Template.id == template_id))
+    result = await db.execute(
+        select(Template).where(
+            Template.id == template_id,
+            or_(Template.is_public.is_(True), Template.created_by == current_user.id),
+        )
+    )
     template = result.scalar_one_or_none()
     if not template:
         raise HTTPException(status_code=404, detail="Template tidak ditemukan")
@@ -116,7 +121,12 @@ async def duplicate_template(
     db: AsyncSession = Depends(get_db),
 ):
     """Duplicate a template as a new seller-created template."""
-    result = await db.execute(select(Template).where(Template.id == template_id))
+    result = await db.execute(
+        select(Template).where(
+            Template.id == template_id,
+            or_(Template.is_public.is_(True), Template.created_by == current_user.id),
+        )
+    )
     original = result.scalar_one_or_none()
     if not original:
         raise HTTPException(status_code=404, detail="Template tidak ditemukan")

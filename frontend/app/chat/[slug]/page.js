@@ -103,47 +103,6 @@ export default function PublicChatPage() {
     }
   }
 
-  const handleSendFallback = useCallback(async (userMessage) => {
-    try {
-      const data = await api.sendChat({
-        message: userMessage,
-        session_id: sessionId,
-        seller_slug: slug,
-      });
-
-      setMessages((prev) => {
-        const updated = [...prev];
-        const lastAi = updated[updated.length - 1];
-        if (lastAi && lastAi.role === "ai") {
-          updated[updated.length - 1] = {
-            ...lastAi,
-            content: data.response,
-            isStreaming: false,
-          };
-        }
-        return updated;
-      });
-
-      if (data.quota_exceeded) setQuotaExceeded(true);
-    } catch (e) {
-      setMessages((prev) => {
-        const updated = [...prev];
-        const lastAi = updated[updated.length - 1];
-        if (lastAi && lastAi.role === "ai") {
-          updated[updated.length - 1] = {
-            ...lastAi,
-            content: "Maaf kak, terjadi gangguan. Coba kirim lagi ya.",
-            isStreaming: false,
-          };
-        }
-        return updated;
-      });
-    }
-    setSending(false);
-    setStreaming(false);
-    abortRef.current = null;
-  }, [sessionId, slug]);
-
   const handleSend = useCallback(
     async (e) => {
       e?.preventDefault();
@@ -230,14 +189,27 @@ export default function PublicChatPage() {
         },
         onError: (err) => {
           console.error("Stream error:", err);
-          // Fallback to non-streaming
-          handleSendFallback(userMessage);
+          setMessages((prev) => {
+            const updated = [...prev];
+            const lastAi = updated[updated.length - 1];
+            if (lastAi?.role === "ai") {
+              updated[updated.length - 1] = {
+                ...lastAi,
+                content: lastAi.content || "Terjadi gangguan. Jangan kirim ulang dulu; periksa riwayat chat.",
+                isStreaming: false,
+              };
+            }
+            return updated;
+          });
+          setSending(false);
+          setStreaming(false);
+          abortRef.current = null;
         },
       });
 
       abortRef.current = abort;
     },
-    [input, sending, streaming, quotaExceeded, sessionId, slug, handleSendFallback]
+    [input, sending, streaming, quotaExceeded, sessionId, slug]
   );
 
   // Quick reply suggestions

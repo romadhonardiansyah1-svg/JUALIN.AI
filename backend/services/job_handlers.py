@@ -675,57 +675,223 @@ async def handle_payment_recovery_dispatch(db: AsyncSession, job: BackgroundJob)
 # ════════════════════════════════════════════════
 
 async def handle_payment_reconciliation(db: AsyncSession, job: BackgroundJob) -> dict:
-    """
-    Reconcile payment status from provider — durable job for refresh.
-    For MVP, just calls _sync_payment_status logic.
-    """
+    """Apply a provider status only for the exact current payment attempt."""
     order_id = job.payload.get("order_id")
     if not order_id:
         return {"success": False, "error": "missing order_id", "permanent": True}
 
-    from models.order import Order
+    from decimal import Decimal, InvalidOperation
+    from datetime import datetime, timezone
     from sqlalchemy import select
-    from api.routes_payments import _sync_payment_status as sync_fn
-
-    # Need to handle _sync_payment_status which is async and expects order and db
-    # For MVP, we load order and call sync
-    result = await db.execute(select(Order).where(Order.id == order_id))
-    order = result.scalar_one_or_none()
-    if not order:
-        return {"success": False, "error": "order not found", "permanent": True}
+    from models.order import Order, OrderStatus
+    from models.payment_recovery import PaymentAttempt
+    from services.payments.base import PaymentStatus
+    from services.payments.factory import (
+        _adjust_order_stock_for_payment,
+        _get_late_paid_consumed_quantities,
+        get_payment_gateway,
+    )
 
     try:
-        # Use the same logic as _sync_payment_status but we need to import inside to avoid circular
-        # For now, just call the factory's check_status via gateway
-        from services.payments.factory import get_payment_gateway
-
+        result = await db.execute(select(Order).where(Order.id == order_id))
+        order = result.scalar_one_or_none()
+        if not order:
+            return {"success": False, "error": "order not found", "permanent": True}
         if not order.payment_provider or not order.payment_invoice_id:
             return {"success": False, "error": "no payment", "permanent": True}
 
-        gateway = get_payment_gateway(order.payment_provider)
-        status_result = await gateway.check_status(order.payment_invoice_id)
+        provider = order.payment_provider
+        invoice_id = order.payment_invoice_id
+        gateway = get_payment_gateway(provider)
+        status_result = await gateway.check_status(invoice_id)
+        if not getattr(status_result, "verified", True):
+            return {"success": False, "error": "payment status could not be verified"}
 
-        # Map status to order as in _sync_payment_status (simplified)
-        from models.order import OrderStatus
-        from datetime import datetime, timezone
+        attempt_result = await db.execute(
+            select(PaymentAttempt).where(
+                PaymentAttempt.order_id == order.id,
+                PaymentAttempt.seller_id == order.seller_id,
+                PaymentAttempt.provider == provider,
+                PaymentAttempt.external_attempt_id == invoice_id,
+                PaymentAttempt.is_current.is_(True),
+            )
+        )
+        payment_attempt = attempt_result.scalar_one_or_none()
+        if not payment_attempt:
+            return {
+                "success": False,
+                "error": "current payment attempt not found",
+                "permanent": True,
+            }
+
+        observed_amount = None
+        if status_result.status in (PaymentStatus.PAID, PaymentStatus.REFUNDED):
+            try:
+                observed_amount = Decimal(str(status_result.amount))
+            except (InvalidOperation, TypeError, ValueError):
+                return {"success": False, "error": "payment amount could not be verified"}
+            if observed_amount != payment_attempt.amount:
+                return {"success": False, "error": "payment attempt amount mismatch"}
+
+        locked_result = await db.execute(
+            select(Order)
+            .where(Order.id == order_id, Order.seller_id == payment_attempt.seller_id)
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+        order = locked_result.scalar_one_or_none()
+        if not order:
+            return {"success": False, "error": "order not found", "permanent": True}
+        await db.refresh(payment_attempt)
+        if not payment_attempt.is_current:
+            return {"success": False, "error": "stale payment attempt", "permanent": True}
+        if order.payment_provider != provider or order.payment_invoice_id != invoice_id:
+            return {"success": False, "error": "payment identity changed", "permanent": True}
 
         old_status = order.status.value if hasattr(order.status, "value") else str(order.status)
         new_status = old_status
+        paid_lineage = {"paid", "processing", "shipped", "delivered", "done"}
+        restore_stock = False
+        consume_restored_stock = False
 
-        if old_status in {"paid", "shipped", "done"} and status_result.status.value in ("pending", "expired", "cancelled", "failed"):
+        if old_status == "refunded":
             new_status = old_status
-        elif str(status_result.status.value) == "paid":
-            order.status = OrderStatus.PAID
-            order.paid_at = datetime.now(timezone.utc)
-            new_status = "paid"
+        elif old_status in paid_lineage and status_result.status in (
+            PaymentStatus.PENDING,
+            PaymentStatus.EXPIRED,
+            PaymentStatus.FAILED,
+            PaymentStatus.CANCELLED,
+        ):
+            new_status = old_status
+        elif status_result.status == PaymentStatus.PAID:
+            if old_status not in paid_lineage:
+                consume_restored_stock = old_status == "cancelled"
+                order.status = OrderStatus.PAID
+                order.paid_at = datetime.now(timezone.utc)
+                new_status = "paid"
+        elif status_result.status in (PaymentStatus.EXPIRED, PaymentStatus.CANCELLED):
+            if old_status not in paid_lineage and old_status != "cancelled":
+                order.status = OrderStatus.CANCELLED
+                new_status = "cancelled"
+                restore_stock = True
+        elif status_result.status == PaymentStatus.REFUNDED:
+            if old_status in paid_lineage or old_status == "cancelled":
+                order.status = OrderStatus.REFUNDED
+                new_status = "refunded"
+                restore_stock = old_status in paid_lineage
+
+        stock_shortage_product_ids: list[int] = []
+        late_paid_consumed_quantities: dict[int, int] = {}
+        if restore_stock:
+            consumed_quantities = await _get_late_paid_consumed_quantities(db, order.id)
+            await _adjust_order_stock_for_payment(
+                db,
+                order,
+                restore=True,
+                quantities_by_product=consumed_quantities,
+            )
+        elif consume_restored_stock:
+            stock_shortage_product_ids = await _adjust_order_stock_for_payment(
+                db,
+                order,
+                restore=False,
+                consumed_quantities=late_paid_consumed_quantities,
+            )
+            if stock_shortage_product_ids:
+                shortage_ids = ",".join(
+                    str(product_id) for product_id in stock_shortage_product_ids
+                )
+                shortage_note = (
+                    "[Pembayaran terlambat terverifikasi; stok tidak cukup untuk produk: "
+                    + shortage_ids
+                    + "]"
+                )
+                order.notes = f"{getattr(order, 'notes', '') or ''} {shortage_note}".strip()
+                logger.warning(
+                    "Reconciled late payment has insufficient stock",
+                    extra={"order_id": order.id, "product_ids": stock_shortage_product_ids},
+                )
+
+        late_paid_consumed_marker = ""
+        if consume_restored_stock:
+            consumed_entries = ",".join(
+                f"{product_id}:{quantity}"
+                for product_id, quantity in sorted(late_paid_consumed_quantities.items())
+            )
+            late_paid_consumed_marker = f"; late_paid_consumed={consumed_entries};"
 
         if new_status != old_status:
             from models.order_status_history import OrderStatusHistory
+            from core.audit import record_audit
 
-            db.add(OrderStatusHistory(order_id=order.id, from_status=old_status, to_status=new_status, changed_by="reconciliation"))
+            db.add(OrderStatusHistory(
+                order_id=order.id,
+                from_status=old_status,
+                to_status=new_status,
+                changed_by="reconciliation",
+                note=(
+                    f"Payment {status_result.status.value} via provider status check"
+                    + late_paid_consumed_marker
+                ),
+            ))
+            await record_audit(
+                db,
+                action="payment.status.changed",
+                entity_type="order",
+                entity_id=order.id,
+                seller_id=order.seller_id,
+                actor_type="reconciliation",
+                before={"status": old_status},
+                after={"status": new_status},
+                metadata={
+                    "provider": provider,
+                    "invoice_id": invoice_id,
+                    "stock_shortage_product_ids": stock_shortage_product_ids,
+                    "late_paid_consumed_quantities": late_paid_consumed_quantities,
+                },
+            )
+
+        recovery_outcome = None
+        if new_status == "paid":
+            from services.payment_recovery.outcomes import on_verified_payment
+
+            recovery_outcome = await on_verified_payment(
+                db,
+                seller_id=order.seller_id,
+                order_id=order.id,
+                amount=observed_amount,
+                observed_at=order.paid_at or datetime.now(timezone.utc),
+                payment_attempt_id=payment_attempt.id,
+                provider=provider,
+                invoice_id=invoice_id,
+                currency="IDR",
+            )
+        elif new_status == "refunded" and old_status != "refunded":
+            from services.payment_recovery.outcomes import record_payment_reversal
+
+            recovery_outcome = await record_payment_reversal(
+                db,
+                seller_id=order.seller_id,
+                order_id=order.id,
+                amount=observed_amount,
+                observed_at=datetime.now(timezone.utc),
+                provider=provider,
+                invoice_id=invoice_id,
+                currency="IDR",
+            )
+
+        if new_status != old_status or recovery_outcome is not None:
             await db.commit()
 
-        return {"success": True, "order_id": order_id, "old_status": old_status, "new_status": new_status}
-
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+        return {
+            "success": True,
+            "order_id": order_id,
+            "old_status": old_status,
+            "new_status": new_status,
+            "recovery_outcome": recovery_outcome,
+            "stock_shortage_product_ids": stock_shortage_product_ids,
+        }
+    except Exception as exc:
+        await db.rollback()
+        logger.exception("Payment reconciliation failed", extra={"order_id": order_id})
+        return {"success": False, "error": str(exc)}

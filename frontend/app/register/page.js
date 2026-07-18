@@ -15,6 +15,7 @@ function RegisterForm() {
     password: "",
     nama_toko: "",
     no_hp: "",
+    referral_code: searchParams.get("ref") || "",
   });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);

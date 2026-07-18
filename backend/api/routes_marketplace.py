@@ -3,6 +3,7 @@ Marketplace/file import endpoints.
 """
 import csv
 import io
+import math
 import secrets
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
@@ -26,6 +27,56 @@ class ImportRequest(BaseModel):
     mode: str = Field(default="skip_duplicates", pattern="^(skip_duplicates|update_duplicates)$")
 
 
+def _validate_import_row(
+    row: dict,
+    *,
+    row_number: int,
+    seen_names: set[str],
+    existing_names: set[str],
+) -> tuple[dict | None, list[dict]]:
+    """Parse one CSV row; invalid values are never replaced with zero."""
+    errors: list[dict] = []
+    nama = str(row.get("nama") or row.get("name") or row.get("produk") or "").strip()
+    normalized_name = nama.lower()
+    if not nama:
+        errors.append({"row": row_number, "field": "nama", "message": "Nama produk wajib diisi"})
+    elif normalized_name in seen_names:
+        errors.append({"row": row_number, "field": "nama", "message": "Duplikat nama produk di file"})
+    seen_names.add(normalized_name)
+
+    raw_harga = str(row.get("harga") or row.get("price") or "").strip()
+    try:
+        harga = float(raw_harga)
+        if not math.isfinite(harga) or harga < 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        harga = None
+        errors.append({"row": row_number, "field": "harga", "message": "Harga harus angka non-negatif"})
+
+    raw_stok = str(row.get("stok") or row.get("stock") or "").strip()
+    try:
+        stok_value = float(raw_stok)
+        if not math.isfinite(stok_value) or stok_value < 0 or not stok_value.is_integer():
+            raise ValueError
+        stok = int(stok_value)
+    except (TypeError, ValueError):
+        stok = None
+        errors.append({"row": row_number, "field": "stok", "message": "Stok harus bilangan bulat non-negatif"})
+
+    if errors:
+        return None, errors
+    return {
+        "row": row_number,
+        "nama": nama,
+        "deskripsi": row.get("deskripsi") or row.get("description") or "",
+        "harga": harga,
+        "stok": stok,
+        "kategori": row.get("kategori") or row.get("category") or "umum",
+        "existing": normalized_name in existing_names,
+        "valid": True,
+    }, []
+
+
 @router.post("/products/preview")
 async def preview_product_import(
     file: UploadFile = File(...),
@@ -34,60 +85,40 @@ async def preview_product_import(
 ):
     if not settings.ENABLE_MARKETPLACE_IMPORT:
         raise HTTPException(status_code=403, detail="Marketplace import belum diaktifkan")
-    if not file.filename.lower().endswith(".csv"):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="V1 hanya mendukung CSV")
     contents = await file.read()
     if len(contents) > 2 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File maksimal 2MB")
-    text = contents.decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(text))
-    rows = []
-    errors = []
-    seen_names = set()
+
+    reader = csv.DictReader(io.StringIO(contents.decode("utf-8-sig", errors="replace")))
     existing_result = await db.execute(
         select(Product.nama)
         .where(Product.seller_id == current_user.id)
         .where(Product.is_active == 1)
     )
     existing_names = {str(name or "").strip().lower() for name in existing_result.scalars().all()}
-    for idx, row in enumerate(reader, start=2):
-        nama = (row.get("nama") or row.get("name") or row.get("produk") or "").strip()
-        harga = (row.get("harga") or row.get("price") or "0").strip()
-        stok = (row.get("stok") or row.get("stock") or "0").strip()
-        if not nama:
-            errors.append({"row": idx, "field": "nama", "message": "Nama produk wajib diisi"})
-        if nama.lower() in seen_names:
-            errors.append({"row": idx, "field": "nama", "message": "Duplikat nama produk di file"})
-        if nama.lower() in existing_names:
-            errors.append({"row": idx, "field": "nama", "message": "Nama produk sudah ada di katalog"})
-        seen_names.add(nama.lower())
-        try:
-            harga_num = float(harga)
-        except ValueError:
-            harga_num = 0
-            errors.append({"row": idx, "field": "harga", "message": "Harga harus angka"})
-        try:
-            stok_num = int(float(stok))
-        except ValueError:
-            stok_num = 0
-            errors.append({"row": idx, "field": "stok", "message": "Stok harus angka"})
-        rows.append({
-            "row": idx,
-            "nama": nama,
-            "deskripsi": row.get("deskripsi") or row.get("description") or "",
-            "harga": harga_num,
-            "stok": stok_num,
-            "kategori": row.get("kategori") or row.get("category") or "umum",
-        })
-        if len(rows) >= 200:
+    seen_names: set[str] = set()
+    rows: list[dict] = []
+    errors: list[dict] = []
+    for row_number, raw_row in enumerate(reader, start=2):
+        parsed, row_errors = _validate_import_row(
+            raw_row,
+            row_number=row_number,
+            seen_names=seen_names,
+            existing_names=existing_names,
+        )
+        errors.extend(row_errors)
+        if parsed is not None:
+            rows.append(parsed)
+        if len(rows) + len({error["row"] for error in errors}) >= 200:
             break
 
-    # Store preview batch
     token = secrets.token_urlsafe(24)
     batch = ProductImportBatch(
         seller_id=current_user.id,
         preview_token=token,
-        filename=file.filename or "",
+        filename=file.filename,
         rows_json=rows,
         errors_json=errors,
         status="preview",
@@ -111,15 +142,15 @@ async def execute_product_import(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Execute a previously previewed product import."""
+    """Execute a validated preview exactly once."""
     if not settings.ENABLE_MARKETPLACE_IMPORT:
         raise HTTPException(status_code=403, detail="Marketplace import belum diaktifkan")
 
-    # Load batch
     result = await db.execute(
         select(ProductImportBatch)
         .where(ProductImportBatch.preview_token == req.preview_token)
         .where(ProductImportBatch.seller_id == current_user.id)
+        .with_for_update()
     )
     batch = result.scalar_one_or_none()
     if not batch:
@@ -128,81 +159,69 @@ async def execute_product_import(
         raise HTTPException(status_code=400, detail="Batch ini sudah diimport sebelumnya")
     if batch.expires_at and batch.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Preview sudah kedaluwarsa, upload ulang")
-    if batch.errors_json and len(batch.errors_json) > 0 and req.mode == "skip_duplicates":
-        pass  # Proceed, but only insert valid rows
 
-    rows = batch.rows_json or []
+    rows = [row for row in (batch.rows_json or []) if row.get("valid") is True]
     if not rows:
-        raise HTTPException(status_code=400, detail="Tidak ada data untuk diimport")
+        raise HTTPException(status_code=400, detail="Tidak ada baris valid untuk diimport")
 
-    # Check product limit
-    from core.quota import get_tier_limit
-    product_limit = get_tier_limit(current_user, "products")
-    active_count_result = await db.execute(
-        select(Product.id)
-        .where(Product.seller_id == current_user.id)
-        .where(Product.is_active == 1)
-    )
-    active_count = len(active_count_result.scalars().all())
-    if product_limit >= 0 and active_count + len(rows) > product_limit:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Melebihi batas produk ({active_count}/{product_limit}). Upgrade tier untuk menambah kapasitas."
-        )
+    from core.quota import lock_product_quota
+    await lock_product_quota(db, current_user.id)
 
-    # Get existing products for duplicate handling
     existing_result = await db.execute(
         select(Product)
         .where(Product.seller_id == current_user.id)
         .where(Product.is_active == 1)
     )
-    existing_map = {p.nama.strip().lower(): p for p in existing_result.scalars().all()}
+    active_products = existing_result.scalars().all()
+    existing_map = {p.nama.strip().lower(): p for p in active_products}
+    new_rows = [row for row in rows if row["nama"].strip().lower() not in existing_map]
 
-    inserted = 0
-    updated = 0
-    skipped = 0
-    errors = []
+    from core.quota import get_tier_limit
+    product_limit = get_tier_limit(current_user, "products")
+    active_count = len(active_products)
+    if product_limit >= 0 and active_count + len(new_rows) > product_limit:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Melebihi batas produk ({active_count}/{product_limit}). Upgrade tier untuk menambah kapasitas.",
+        )
 
+    inserted = updated = skipped = 0
     for row_data in rows:
-        nama = row_data.get("nama", "").strip()
-        if not nama:
-            skipped += 1
-            continue
-
+        nama = row_data["nama"].strip()
         existing = existing_map.get(nama.lower())
-
         if existing:
             if req.mode == "update_duplicates":
-                existing.harga = row_data.get("harga", existing.harga)
-                existing.stok = row_data.get("stok", existing.stok)
+                existing.harga = row_data["harga"]
+                existing.stok = row_data["stok"]
                 existing.deskripsi = row_data.get("deskripsi") or existing.deskripsi
                 existing.kategori = row_data.get("kategori") or existing.kategori
                 updated += 1
             else:
                 skipped += 1
-        else:
-            product = Product(
-                seller_id=current_user.id,
-                nama=nama,
-                deskripsi=row_data.get("deskripsi", ""),
-                harga=row_data.get("harga", 0),
-                stok=row_data.get("stok", 0),
-                kategori=row_data.get("kategori", "umum"),
-            )
-            db.add(product)
-            inserted += 1
+            continue
+
+        product = Product(
+            seller_id=current_user.id,
+            nama=nama,
+            deskripsi=row_data.get("deskripsi", ""),
+            harga=row_data["harga"],
+            stok=row_data["stok"],
+            kategori=row_data.get("kategori", "umum"),
+        )
+        db.add(product)
+        existing_map[nama.lower()] = product
+        inserted += 1
 
     batch.status = "imported"
     await db.commit()
 
-    # Invalidate product cache
     try:
         from cache import get_redis
-        r = await get_redis()
-        if r:
-            keys = await r.keys(f"products:{current_user.id}:*")
+        redis = await get_redis()
+        if redis:
+            keys = await redis.keys(f"products:{current_user.id}:*")
             if keys:
-                await r.delete(*keys)
+                await redis.delete(*keys)
     except Exception:
         pass
 
@@ -211,6 +230,6 @@ async def execute_product_import(
         "inserted": inserted,
         "updated": updated,
         "skipped": skipped,
-        "errors": errors,
+        "errors": batch.errors_json or [],
         "total_processed": inserted + updated + skipped,
     }

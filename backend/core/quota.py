@@ -28,6 +28,13 @@ def get_tier_limit(user: User, metric: str) -> int:
     return TIER_LIMITS.get(user.tier, TIER_LIMITS[UserTier.FREE]).get(metric, 0)
 
 
+async def lock_product_quota(db: AsyncSession, seller_id: int) -> None:
+    """Serialize all active-product quota writers for one seller."""
+    await db.execute(
+        select(User.id).where(User.id == seller_id).with_for_update()
+    )
+
+
 async def check_usage_quota(
     db: AsyncSession,
     *,

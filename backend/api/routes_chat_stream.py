@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from config import get_settings
@@ -36,9 +36,9 @@ logger = get_logger(__name__)
 
 
 class StreamChatRequest(BaseModel):
-    message: str
-    session_id: Optional[str] = None
-    seller_slug: str
+    message: str = Field(min_length=1, max_length=4000)
+    session_id: Optional[str] = Field(default=None, max_length=255)
+    seller_slug: str = Field(min_length=1, max_length=255)
 
 
 async def _check_quota_simple(seller_id: int, db: AsyncSession) -> tuple[bool, int, int]:
@@ -203,20 +203,19 @@ async def stream_chat(
                     "intent": os_result.get("intent", "order"),
                     "stage": os_result.get("stage", "negotiation"),
                 })
-                # pecah per kata biar terasa live — tanpa LLM, deterministik
-                for w in reply_text.split(" "):
-                    yield await _sse_event({"type": "token", "token": w + " "})
+                for word in reply_text.split(" "):
+                    yield await _sse_event({"type": "token", "token": word + " "})
                 yield await _sse_event({"type": "nego", **nego_meta})
-                yield await _sse_event({
-                    "type": "done", "done": True, "full_response": reply_text,
-                    "intent": os_result.get("intent", "order"),
-                    "stage": os_result.get("stage", "negotiation"),
-                    "session_id": session_id,
-                })
+
                 try:
-                    db.add(Message(conversation_id=conv_id_nego, role=MessageRole.AI, content=reply_text))
+                    db.add(Message(
+                        conversation_id=conv_id_nego,
+                        role=MessageRole.AI,
+                        content=reply_text,
+                    ))
                     db.add(ChatAnalytics(
-                        conversation_id=conv_id_nego, seller_id=seller_id_nego,
+                        conversation_id=conv_id_nego,
+                        seller_id=seller_id_nego,
                         intent=os_result.get("intent", "order"),
                         sales_stage=os_result.get("stage", "negotiation"),
                         response_time_ms=round((time.monotonic() - start_time) * 1000),
@@ -225,8 +224,27 @@ async def stream_chat(
                         converted_to_order=False,
                     ))
                     await db.commit()
-                except Exception as e:
-                    logger.error(f"Failed to save nego stream response: {e}", exc_info=True)
+                except Exception as exc:
+                    await db.rollback()
+                    logger.error(
+                        f"Failed to save nego stream response: {exc}",
+                        exc_info=True,
+                    )
+                    yield await _sse_event({
+                        "type": "error",
+                        "error": "response_persistence_failed",
+                        "message": "Respons belum tersimpan. Periksa riwayat chat sebelum mencoba lagi.",
+                    })
+                    return
+
+                yield await _sse_event({
+                    "type": "done",
+                    "done": True,
+                    "full_response": reply_text,
+                    "intent": os_result.get("intent", "order"),
+                    "stage": os_result.get("stage", "negotiation"),
+                    "session_id": session_id,
+                })
 
             return StreamingResponse(
                 nego_stream(),
@@ -246,15 +264,30 @@ async def stream_chat(
     seller_id = seller.id
 
     async def generate_stream():
-        """
-        Async generator that yields SSE events.
-        After streaming, saves AI response and analytics to DB.
-        """
+        """Stream tokens, but acknowledge completion only after durable persistence."""
         full_response = ""
         intent = "general"
         sales_stage = "greeting"
         duration_ms = 0
         order_created = False
+
+        async def persist_response():
+            db.add(Message(
+                conversation_id=conv_id,
+                role=MessageRole.AI,
+                content=full_response,
+            ))
+            db.add(ChatAnalytics(
+                conversation_id=conv_id,
+                seller_id=seller_id,
+                intent=intent,
+                sales_stage=sales_stage,
+                response_time_ms=duration_ms,
+                user_message_length=len(req.message),
+                ai_response_length=len(full_response),
+                converted_to_order=order_created,
+            ))
+            await db.commit()
 
         try:
             async for chunk in get_ai_response_stream(
@@ -269,79 +302,99 @@ async def stream_chat(
                     intent = chunk.get("intent", "general")
                     sales_stage = chunk.get("stage", "greeting")
                     yield await _sse_event(chunk)
+                    continue
 
-                elif chunk["type"] == "token":
+                if chunk["type"] == "token":
                     full_response += chunk["token"]
                     yield await _sse_event(chunk)
+                    continue
 
-                elif chunk["type"] == "done":
-                    full_response = chunk.get("full_response", full_response)
-                    intent = chunk.get("intent", intent)
-                    sales_stage = chunk.get("stage", sales_stage)
-                    duration_ms = chunk.get("duration_ms", 0)
+                if chunk["type"] != "done":
+                    continue
 
-                    try:
-                        from api.routes_chat import maybe_create_order_from_ai_response
-                        updated_response, order_created = await maybe_create_order_from_ai_response(
-                            ai_response_text=full_response,
-                            seller=seller,
-                            conversation=conversation,
-                            session_id=session_id,
-                            db=db,
+                full_response = chunk.get("full_response", full_response)
+                intent = chunk.get("intent", intent)
+                sales_stage = chunk.get("stage", sales_stage)
+                duration_ms = chunk.get("duration_ms", 0)
+
+                try:
+                    from api.routes_chat import maybe_create_order_from_ai_response
+                    updated_response, order_created = await maybe_create_order_from_ai_response(
+                        ai_response_text=full_response,
+                        seller=seller,
+                        conversation=conversation,
+                        session_id=session_id,
+                        db=db,
+                    )
+                    if updated_response != full_response:
+                        appended = (
+                            updated_response[len(full_response):]
+                            if updated_response.startswith(full_response)
+                            else updated_response
                         )
-                        if updated_response != full_response:
-                            appended = (
-                                updated_response[len(full_response):]
-                                if updated_response.startswith(full_response)
-                                else updated_response
-                            )
-                            full_response = updated_response
-                            if appended:
-                                yield await _sse_event({"type": "token", "token": appended})
-                    except Exception as e:
-                        logger.error(f"Stream order creation failed: {e}", exc_info=True)
+                        full_response = updated_response
+                        if appended:
+                            yield await _sse_event({"type": "token", "token": appended})
+                except Exception as exc:
+                    logger.error(f"Stream order creation failed: {exc}", exc_info=True)
 
+                try:
+                    await persist_response()
+                except Exception as exc:
+                    await db.rollback()
+                    logger.error(
+                        f"Failed to save stream response to DB: {exc}",
+                        exc_info=True,
+                    )
                     yield await _sse_event({
-                        "type": "done",
-                        "done": True,
-                        "full_response": full_response,
-                        "intent": intent,
-                        "stage": sales_stage,
-                        "session_id": session_id,
+                        "type": "error",
+                        "error": "response_persistence_failed",
+                        "message": "Respons belum tersimpan. Periksa riwayat chat sebelum mencoba lagi.",
                     })
+                    return
 
-        except Exception as e:
-            logger.error(f"Stream error: {e}", exc_info=True)
-            fallback = "Maaf kak, terjadi gangguan. Coba kirim lagi ya 🙏"
-            full_response = fallback
+                yield await _sse_event({
+                    "type": "done",
+                    "done": True,
+                    "full_response": full_response,
+                    "intent": intent,
+                    "stage": sales_stage,
+                    "session_id": session_id,
+                })
+                return
+
+            raise RuntimeError("AI stream ended without completion event")
+
+        except Exception as exc:
+            logger.error(f"Stream error: {exc}", exc_info=True)
+            fallback = "Maaf kak, terjadi gangguan. Jangan kirim ulang dulu; periksa riwayat chat ya 🙏"
+            full_response += fallback
             yield await _sse_event({"type": "token", "token": fallback})
-            yield await _sse_event({"type": "done", "done": True})
 
-        # Save AI response to DB (after stream completes)
-        try:
-            ai_msg = Message(
-                conversation_id=conv_id,
-                role=MessageRole.AI,
-                content=full_response,
-            )
-            db.add(ai_msg)
+            try:
+                await persist_response()
+            except Exception as persist_exc:
+                await db.rollback()
+                logger.error(
+                    f"Failed to save degraded stream response: {persist_exc}",
+                    exc_info=True,
+                )
+                yield await _sse_event({
+                    "type": "error",
+                    "error": "response_persistence_failed",
+                    "message": "Respons belum tersimpan. Periksa riwayat chat sebelum mencoba lagi.",
+                })
+                return
 
-            # Save analytics
-            analytics = ChatAnalytics(
-                conversation_id=conv_id,
-                seller_id=seller_id,
-                intent=intent,
-                sales_stage=sales_stage,
-                response_time_ms=duration_ms,
-                user_message_length=len(req.message),
-                ai_response_length=len(full_response),
-                converted_to_order=order_created,
-            )
-            db.add(analytics)
-
-            await db.commit()
-        except Exception as e:
-            logger.error(f"Failed to save stream response to DB: {e}", exc_info=True)
+            yield await _sse_event({
+                "type": "done",
+                "done": True,
+                "degraded": True,
+                "full_response": full_response,
+                "intent": intent,
+                "stage": sales_stage,
+                "session_id": session_id,
+            })
 
     return StreamingResponse(
         generate_stream(),

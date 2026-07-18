@@ -111,61 +111,35 @@ async def verify_and_use_capability(
     expected_order_id: int,
     purpose: str | None = None,
 ) -> PaymentCapability | None:
-    """
-    Verify HMAC, audience, expiry, revocation, one-use for legacy.
-    Returns capability if valid, None if invalid.
-    For one-use legacy tokens, marks used_at.
-    """
-    # Try current and previous key version for rotation (MVP: just current)
+    """Verify and atomically consume a bootstrap capability."""
     for version in [settings.PAYMENT_CAPABILITY_HMAC_KEY_VERSION]:
         token_hmac, _ = hmac_token(raw_token, version)
-        q = await db.execute(
-            select(PaymentCapability).where(PaymentCapability.token_hmac == token_hmac)
+        result = await db.execute(
+            select(PaymentCapability)
+            .where(PaymentCapability.token_hmac == token_hmac)
+            .with_for_update()
         )
-        cap = q.scalar_one_or_none()
-        if not cap:
+        capability = result.scalar_one_or_none()
+        if not capability:
             continue
-
-        # Constant-time already via HMAC compare implicit in lookup? We already did HMAC, but we should also verify via compare_digest
-        # (lookup by HMAC is okay because HMAC is not secret? Actually HMAC is stored, but we still want constant-time)
-        if not hmac.compare_digest(cap.token_hmac, token_hmac):
+        if not hmac.compare_digest(capability.token_hmac, token_hmac):
             continue
-
-        # Check audience
-        if cap.audience != expected_audience:
+        if capability.audience != expected_audience:
+            return None
+        if capability.order_id != expected_order_id:
+            return None
+        if purpose and capability.purpose != purpose:
             return None
 
-        # Check order binding
-        if cap.order_id != expected_order_id:
-            return None
-
-        # Check purpose if specified
-        if purpose and cap.purpose != purpose:
-            return None
-
-        # Check expiry
         now = datetime.now(timezone.utc)
-        if cap.expires_at and cap.expires_at < now:
+        if capability.expires_at and capability.expires_at < now:
+            return None
+        if capability.revoked_at or capability.used_at:
             return None
 
-        # Check revoked
-        if cap.revoked_at:
-            return None
-
-        # Check one-use for legacy: if used_at already set, replay same intent idempotent? For legacy query tokens, one-use
-        if cap.is_legacy_query_token and cap.used_at:
-            # For same valid exchange, allow replay same intent? But for legacy query, we treat as used and fail closed after first use
-            # However spec says safe replay same intent idempotent — for legacy, we can allow if same raw token reused?
-            # We'll allow replay: if used_at exists, still return cap (idempotent)
-            pass
-
-        # For legacy, mark used_at on first use
-        if cap.is_legacy_query_token and not cap.used_at:
-            cap.used_at = now
-            await db.flush()
-
-        return cap
-
+        capability.used_at = now
+        await db.flush()
+        return capability
     return None
 
 
@@ -212,30 +186,36 @@ async def verify_capability_session(
     raw_session_token: str,
     expected_order_id: int,
 ) -> PaymentCapabilitySession | None:
-    """Verify HttpOnly session cookie token."""
+    """Verify session, parent capability, and current payment attempt together."""
     for version in [settings.PAYMENT_CAPABILITY_HMAC_KEY_VERSION]:
         session_hmac, _ = hmac_token(raw_session_token, version)
-        q = await db.execute(
-            select(PaymentCapabilitySession).where(
-                PaymentCapabilitySession.session_token_hmac == session_hmac
-            )
+        result = await db.execute(
+            select(PaymentCapabilitySession, PaymentCapability, PaymentAttempt)
+            .join(PaymentCapability, PaymentCapability.id == PaymentCapabilitySession.capability_id)
+            .join(PaymentAttempt, PaymentAttempt.id == PaymentCapabilitySession.payment_attempt_id)
+            .where(PaymentCapabilitySession.session_token_hmac == session_hmac)
         )
-        sess = q.scalar_one_or_none()
-        if not sess:
+        row = result.first()
+        if not row:
             continue
-
-        if not hmac.compare_digest(sess.session_token_hmac, session_hmac):
+        session, capability, attempt = row
+        if not hmac.compare_digest(session.session_token_hmac, session_hmac):
             continue
-
-        if sess.order_id != expected_order_id:
+        if session.order_id != expected_order_id:
             return None
 
         now = datetime.now(timezone.utc)
-        if sess.expires_at and sess.expires_at < now:
+        if session.expires_at and session.expires_at < now:
             return None
-        if sess.revoked_at:
+        if session.revoked_at or capability.revoked_at:
             return None
-
-        return sess
-
+        if capability.expires_at and capability.expires_at < now:
+            return None
+        if capability.order_id != session.order_id or capability.payment_attempt_id != session.payment_attempt_id:
+            return None
+        if attempt.order_id != session.order_id or attempt.seller_id != session.seller_id:
+            return None
+        if not attempt.is_current:
+            return None
+        return session
     return None

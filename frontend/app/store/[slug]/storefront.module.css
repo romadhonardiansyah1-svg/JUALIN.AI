@@ -1,0 +1,144 @@
+.page {
+  width: min(1120px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 2rem 0 4rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 2rem;
+  margin-bottom: 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.eyebrow {
+  color: var(--primary-dark);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tagline,
+.description,
+.card p,
+.empty {
+  color: var(--text-secondary);
+}
+
+.tagline {
+  margin-top: 0.5rem;
+}
+
+.description {
+  max-width: 720px;
+  margin-bottom: 2rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.card strong {
+  color: var(--primary-dark);
+}
+
+.empty {
+  margin-top: 1rem;
+  padding: 1.25rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 640px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 1.25rem;
+  }
+}
+
+.section {
+  margin-top: 2rem;
+}
+
+.heroSection,
+.ctaSection {
+  padding: 1.5rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.sectionText {
+  max-width: 720px;
+  margin: 0.5rem 0 1rem;
+  color: var(--text-secondary);
+}
+
+.categoryList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.categoryList li {
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.testimonialGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.testimonial {
+  margin: 0;
+  padding: 1.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.testimonial cite {
+  display: block;
+  margin-top: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.ctaSection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .ctaSection {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

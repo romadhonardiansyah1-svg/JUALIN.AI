@@ -263,6 +263,7 @@ class CashiGateway(PaymentGateway):
                     headers=self._headers(),
                 )
 
+                response.raise_for_status()
                 data = response.json()
                 cashi_status = data.get("status", "pending")
 
@@ -279,7 +280,11 @@ class CashiGateway(PaymentGateway):
                     order_id=order_id,
                     status=status_map.get(cashi_status, PaymentStatus.PENDING),
                     provider="cashi",
-                    amount=int(data.get("amount", 0)),
+                    amount=(
+                        int(data["amount"])
+                        if data.get("amount") not in (None, "")
+                        else None
+                    ),
                     paid_at=data.get("paid_at"),
                     method=data.get("payment_method"),
                     raw_response=data,
@@ -291,10 +296,11 @@ class CashiGateway(PaymentGateway):
                 order_id=order_id,
                 status=PaymentStatus.PENDING,
                 provider="cashi",
-                amount=0,
+                amount=None,
                 paid_at=None,
                 method=None,
                 raw_response=None,
+                verified=False,
             )
 
     async def validate_webhook(self, payload: dict, headers: dict = None) -> WebhookResult:
@@ -336,8 +342,25 @@ class CashiGateway(PaymentGateway):
             "failed": PaymentStatus.FAILED,
         }
 
-        # Use API-verified status instead of webhook payload (more trustworthy)
+        # Use API-verified status and amount instead of webhook fields.
+        if not getattr(verified_status, "verified", True):
+            return WebhookResult(
+                valid=False,
+                order_id=order_id,
+                status=None,
+                amount=None,
+                error_message="Payment status could not be verified",
+            )
+
         final_status = verified_status.status
+        if final_status == PaymentStatus.PAID and verified_status.amount is None:
+            return WebhookResult(
+                valid=False,
+                order_id=order_id,
+                status=None,
+                amount=None,
+                error_message="Paid amount could not be verified",
+            )
 
         logger.info(
             f"Cashi webhook valid: {order_id} → {final_status.value}",
@@ -352,7 +375,7 @@ class CashiGateway(PaymentGateway):
             valid=True,
             order_id=order_id,
             status=final_status,
-            amount=int(amount) if amount else verified_status.amount,
+            amount=verified_status.amount,
             error_message=None,
         )
 

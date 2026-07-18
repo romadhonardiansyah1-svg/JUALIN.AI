@@ -145,9 +145,7 @@ export default function AuthProvider({ children }) {
   }, [fetchMe]);
 
   const logout = useCallback(async () => {
-    try {
-      await api.logout();
-    } catch {}
+    await api.logout();
     clearAndLogout();
     if (typeof window !== "undefined") window.location.href = "/login";
   }, [clearAndLogout]);

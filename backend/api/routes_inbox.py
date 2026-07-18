@@ -143,6 +143,7 @@ async def get_thread(
 
 
 @router.post("/threads/{thread_id}/reply")
+
 async def reply_thread(
     thread_id: int,
     req: ReplyRequest,
@@ -161,15 +162,19 @@ async def reply_thread(
         raise HTTPException(status_code=404, detail="Thread tidak ditemukan")
     thread, channel, contact = row
 
-    provider_result = None
-    if channel.provider == "whatsapp_cloud":
-        config = decrypt_config(channel.config_encrypted)
-        provider = WhatsAppCloudProvider(
-            access_token=config.get("access_token", ""),
-            phone_number_id=config.get("phone_number_id", channel.external_id),
-            app_secret=config.get("app_secret", ""),
+    if channel.provider != "whatsapp_cloud":
+        raise HTTPException(
+            status_code=409,
+            detail="Provider channel belum mendukung balasan manual",
         )
-        provider_result = await provider.send_message(contact.phone or contact.external_id, req.text)
+
+    config = decrypt_config(channel.config_encrypted)
+    provider = WhatsAppCloudProvider(
+        access_token=config.get("access_token", ""),
+        phone_number_id=config.get("phone_number_id", channel.external_id),
+        app_secret=config.get("app_secret", ""),
+    )
+    provider_result = await provider.send_message(contact.phone or contact.external_id, req.text)
 
     message = InboxMessage(
         seller_id=current_user.id,
@@ -177,9 +182,9 @@ async def reply_thread(
         direction="outbound",
         role="seller",
         content=req.text,
-        status="sent" if not provider_result or provider_result.success else "failed",
-        external_message_id=provider_result.provider_message_id if provider_result else "",
-        raw_payload=provider_result.raw if provider_result else {},
+        status="sent" if provider_result.success else "failed",
+        external_message_id=provider_result.provider_message_id,
+        raw_payload=provider_result.raw,
     )
     db.add(message)
     thread.last_message_preview = req.text[:500]
@@ -196,7 +201,7 @@ async def reply_thread(
         after={"message_id": message.external_message_id, "status": message.status},
     )
     await db.commit()
-    if provider_result and not provider_result.success:
+    if not provider_result.success:
         raise HTTPException(status_code=502, detail=provider_result.error_message)
     return {"message": "Reply sent", "thread_id": thread.id, "mode": thread.mode}
 

@@ -716,6 +716,7 @@ export function sendChatStream({ body, onToken, onMetadata, onNego, onDone, onEr
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let completed = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -741,14 +742,18 @@ export function sendChatStream({ body, onToken, onMetadata, onNego, onDone, onEr
               onToken(event.token);
             } else if (event.type === "nego" && onNego) {
               onNego(event);
-            } else if (event.type === "done" && onDone) {
-              onDone(event);
+            } else if (event.type === "done") {
+              completed = true;
+              if (onDone) onDone(event);
             }
           } catch (parseErr) {
             // Skip malformed events
             console.warn("SSE parse error:", parseErr);
           }
         }
+      }
+      if (!completed) {
+        throw new Error("Stream berakhir tanpa konfirmasi");
       }
     } catch (err) {
       if (err.name !== "AbortError") {

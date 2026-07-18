@@ -93,6 +93,7 @@ class RegisterRequest(BaseModel):
     password: str
     nama_toko: str
     no_hp: str = ""
+    referral_code: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -123,6 +124,16 @@ class TokenResponse(BaseModel):
 
 
 # ── Helpers ──
+
+def _referral_is_expired(referral, now: datetime) -> bool:
+    created_at = getattr(referral, "created_at", None)
+    if created_at is None:
+        return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    expiry_days = max(int(getattr(referral, "expiry_days", 30) or 0), 0)
+    return created_at + timedelta(days=expiry_days) < now
+
 
 def create_slug(nama_toko: str) -> str:
     """Convert store name to URL-safe slug."""
@@ -350,8 +361,7 @@ async def get_current_user(
 
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    """Register seller baru + auto-create toko."""
-    # Rate limit — fail closed 503 on dependency unavailable
+    """Register a seller and durably attribute an optional referral."""
     from core.rate_limit import check_rate_limit
 
     client_ip = get_client_ip(request)
@@ -372,20 +382,28 @@ async def register(req: RegisterRequest, request: Request, response: Response, d
     if not nama_toko:
         raise HTTPException(status_code=400, detail="Nama toko wajib diisi")
 
-    # Check email exists
     result = await db.execute(select(User).where(User.email == email))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email sudah terdaftar")
-    
-    # Validate password
     if len(req.password) < settings.MIN_PASSWORD_LENGTH:
         raise HTTPException(status_code=400, detail=f"Password minimal {settings.MIN_PASSWORD_LENGTH} karakter")
-    
-    # Create slug from store name
+
+    referral = None
+    referral_code = req.referral_code.strip().upper()
+    if referral_code:
+        from models.referral import ReferralCode
+
+        referral_result = await db.execute(
+            select(ReferralCode)
+            .where(ReferralCode.code == referral_code, ReferralCode.is_active.is_(True))
+            .with_for_update()
+        )
+        referral = referral_result.scalar_one_or_none()
+        if not referral or _referral_is_expired(referral, datetime.now(timezone.utc)):
+            raise HTTPException(status_code=400, detail="Kode referral tidak valid")
+
     base_slug = create_slug(nama_toko)
     slug = base_slug
-    
-    # Check slug uniqueness
     suffix = 2
     while True:
         result = await db.execute(select(User).where(User.slug == slug))
@@ -393,8 +411,7 @@ async def register(req: RegisterRequest, request: Request, response: Response, d
             break
         slug = f"{base_slug}-{suffix}"
         suffix += 1
-    
-    # Create user
+
     user = User(
         email=email,
         password_hash=hash_password(req.password),
@@ -404,14 +421,21 @@ async def register(req: RegisterRequest, request: Request, response: Response, d
         tier=UserTier.FREE,
         role=UserRole.SELLER,
     )
-    
     db.add(user)
 
-    # User, success audit, and initial session are one transaction. A failed
-    # session creation must not leave an account that the caller was told failed.
     try:
         await db.flush()
         await db.refresh(user)
+        if referral:
+            from models.referral import ReferralEvent
+
+            referral.total_conversions = (referral.total_conversions or 0) + 1
+            db.add(ReferralEvent(
+                referral_code_id=referral.id,
+                seller_id=referral.seller_id,
+                event_type="signup",
+                metadata_json={"referred_seller_id": user.id},
+            ))
         await _record_auth_audit(
             db,
             "auth.register.success",
@@ -561,38 +585,48 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
 
 
 @router.post("/logout")
-async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """
-    P3.2 — Logout revokes current session and clears exact cookie attributes.
-    """
-    from services.auth_session_service import revoke_session
-    import uuid as uuid_module
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke the refresh session even when the access token has expired."""
+    from services.auth_session_service import _hash_token, revoke_session
+    from models.auth_session import AuthSession
 
-    # Try to find session by refresh token hash
     cookie_names = _get_cookie_names()
-    raw_refresh = None
-    for name in [cookie_names["refresh"], "__Host-jualin_refresh", "jualin_refresh"]:
-        if name in request.cookies:
-            raw_refresh = request.cookies.get(name)
-            break
+    raw_refresh = next(
+        (
+            request.cookies.get(name)
+            for name in (cookie_names["refresh"], "__Host-jualin_refresh", "jualin_refresh")
+            if request.cookies.get(name)
+        ),
+        None,
+    )
 
     if raw_refresh:
         try:
-            from services.auth_session_service import _hash_token
-
             refresh_hash = _hash_token(raw_refresh)
-            from models.auth_session import AuthSession
-
-            q = await db.execute(select(AuthSession).where(AuthSession.refresh_token_hash == refresh_hash))
-            sess = q.scalar_one_or_none()
-            if sess:
-                await revoke_session(db, sess.id)
-                await db.commit()
+            result = await db.execute(
+                select(AuthSession)
+                .where(AuthSession.refresh_token_hash == refresh_hash)
+                .with_for_update()
+            )
+            session = result.scalar_one_or_none()
+            if session:
+                await revoke_session(db, session.id)
+            await db.commit()
         except Exception:
             await db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "logout_unavailable",
+                    "message": "Sesi belum berhasil dicabut. Coba lagi.",
+                },
+            )
 
     _clear_auth_cookies(response)
-
     return {"message": "Logout berhasil"}
 
 

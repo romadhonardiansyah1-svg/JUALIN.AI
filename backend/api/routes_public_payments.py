@@ -50,7 +50,7 @@ def _payment_payload(order):
         "expires_at": order.payment_expires_at,
         "amount": float(order.total) if hasattr(order, "total") else 0,
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
-        "payment_created": bool(order.payment_url),
+        "payment_created": bool(order.payment_provider and order.payment_invoice_id),
     }
 
 
@@ -64,24 +64,38 @@ class ConsentRequest(BaseModel):
 
 
 def _verify_origin(request: Request):
-    """Exact Origin allowlist per config."""
-    origin = request.headers.get("origin", "")
-    allowed = settings.PUBLIC_ORIGIN_ALLOWLIST + settings.CORS_ORIGINS
-    # For MVP, allow localhost and same-origin
+    """Validate Origin by exact normalized origin, never by substring."""
+    from urllib.parse import urlsplit
+
+    origin = request.headers.get("origin", "").strip()
     if not origin:
-        # Same-origin POST without Origin is okay if Referer same?
-        # For safety, require Origin for cross-origin, but allow same-origin without
         return True
-    # Exact match
-    if origin in allowed:
+
+    def normalized(value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return ""
+        return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+    candidate = normalized(origin)
+    allowed = {
+        normalized(value)
+        for value in (
+            *settings.PUBLIC_ORIGIN_ALLOWLIST,
+            *settings.CORS_ORIGINS,
+            settings.FRONTEND_URL,
+            settings.BASE_URL,
+        )
+        if value
+    }
+    if settings.DEBUG:
+        allowed.update({"http://localhost:3000", "http://127.0.0.1:3000"})
+    if candidate and candidate in allowed:
         return True
-    # Allow if origin is frontend URL
-    if origin == settings.FRONTEND_URL or origin == settings.BASE_URL:
-        return True
-    # For dev, allow http://localhost:3000
-    if "localhost" in origin or "127.0.0.1" in origin:
-        return True
-    raise HTTPException(status_code=403, detail={"error": "origin_forbidden", "message": "Origin tidak diizinkan"})
+    raise HTTPException(
+        status_code=403,
+        detail={"error": "origin_forbidden", "message": "Origin tidak diizinkan"},
+    )
 
 
 async def _rate_limit_public(request: Request):
@@ -128,6 +142,7 @@ async def exchange_capability(
         raw_token=raw_token,
         expected_audience="public_payment",
         expected_order_id=order_id,
+        purpose="payment_status",
     )
     if not cap:
         raise HTTPException(status_code=403, detail={"error": "token_invalid", "message": "Token tidak valid atau kedaluwarsa"})
@@ -246,30 +261,39 @@ async def create_via_session(
     if not session_token:
         raise HTTPException(status_code=401, detail={"error": "capability_required"})
 
-    sess = await verify_capability_session(db, raw_session_token=session_token, expected_order_id=order_id)
-    if not sess:
+    session = await verify_capability_session(
+        db, raw_session_token=session_token, expected_order_id=order_id
+    )
+    if not session:
         raise HTTPException(status_code=403, detail={"error": "session_invalid"})
 
     body = await request.json()
     method = body.get("method", "qris")
     provider = body.get("provider")
+    if provider == "manual" or method == "manual":
+        raise HTTPException(status_code=400, detail="Gateway pembayaran belum dikonfigurasi")
 
-    order_q = await db.execute(select(Order).where(Order.id == order_id))
-    order = order_q.scalar_one_or_none()
+    order_result = await db.execute(
+        select(Order).where(Order.id == order_id).with_for_update()
+    )
+    order = order_result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    # For MVP, reuse create_payment_for_order (same as public create)
+    from models.order import OrderStatus
+    if order.status not in (OrderStatus.PENDING, OrderStatus.CONFIRMED):
+        raise HTTPException(status_code=409, detail="Order tidak dapat dibayar pada status saat ini")
+    if order.payment_provider and order.payment_invoice_id:
+        return JSONResponse(
+            content={**_payment_payload(order), "already_exists": True},
+            headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
+        )
+
     from services.payments.factory import create_payment_for_order
-
     result = await create_payment_for_order(order=order, method=method, provider=provider, db=db)
-
     return JSONResponse(
         content=result,
-        headers={
-            "Cache-Control": "private, no-store",
-            "Referrer-Policy": "no-referrer",
-        },
+        headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},
     )
 
 

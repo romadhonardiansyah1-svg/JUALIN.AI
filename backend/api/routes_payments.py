@@ -266,7 +266,7 @@ async def create_payment(
         )
 
     # Don't create duplicate payments
-    if order.payment_url and order.payment_provider:
+    if order.payment_provider and order.payment_invoice_id:
         return {
             "message": "Pembayaran sudah dibuat sebelumnya",
             **_payment_payload(order, payment_created=True),
@@ -448,7 +448,7 @@ async def create_public_payment(
             fields={"status": order.status.value},
         )
 
-    if order.payment_url and order.payment_provider:
+    if order.payment_provider and order.payment_invoice_id:
         return {
             "message": "Pembayaran sudah dibuat sebelumnya",
             **_payment_payload(order, payment_created=True),

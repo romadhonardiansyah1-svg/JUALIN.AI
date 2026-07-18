@@ -96,6 +96,7 @@ class ProductUpdate(BaseModel):
     stok: Optional[int] = Field(default=None, ge=0)
     kategori: Optional[str] = None
     foto_url: Optional[str] = None
+    is_active: Optional[int] = Field(default=None, ge=0, le=1)
 
 
 class ProductResponse(BaseModel):
@@ -121,7 +122,7 @@ async def list_products(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List semua produk seller (cached 5 min, multi-tenant isolated)."""
+    """List all seller products, including onboarding drafts."""
     cache_key = f"products:{current_user.id}:list"
     cached = await cache_get(cache_key)
     if cached:
@@ -130,7 +131,6 @@ async def list_products(
     result = await db.execute(
         select(Product)
         .where(Product.seller_id == current_user.id)
-        .where(Product.is_active == 1)
         .order_by(Product.created_at.desc())
     )
     products = result.scalars().all()
@@ -146,6 +146,9 @@ async def create_product(
     db: AsyncSession = Depends(get_db),
 ):
     """Tambah produk baru + auto-generate embedding untuk semantic search."""
+    from core.quota import lock_product_quota
+    await lock_product_quota(db, current_user.id)
+
     # Check product limit per tier
     tier_limits = {
         "free": settings.PRODUCT_LIMIT_FREE,
@@ -209,23 +212,49 @@ async def update_product(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update produk + re-generate embedding jika deskripsi/nama berubah."""
+    """Update a seller product while enforcing active-product tier limits."""
+    update_data = req.model_dump(exclude_unset=True)
+    if update_data.get("is_active") == 1:
+        from core.quota import lock_product_quota
+        await lock_product_quota(db, current_user.id)
+
     result = await db.execute(
         select(Product)
         .where(Product.id == product_id)
         .where(Product.seller_id == current_user.id)
+        .with_for_update()
     )
     product = result.scalar_one_or_none()
-    
+
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-    
-    # Update fields
-    update_data = req.model_dump(exclude_unset=True)
+
+    if update_data.get("is_active") == 1 and product.is_active != 1:
+        tier_limits = {
+            "free": settings.PRODUCT_LIMIT_FREE,
+            "starter": settings.PRODUCT_LIMIT_STARTER,
+            "pro": settings.PRODUCT_LIMIT_PRO,
+            "bisnis": settings.PRODUCT_LIMIT_BISNIS,
+        }
+        limit = tier_limits.get(current_user.tier.value, 10)
+        count_result = await db.execute(
+            select(func.count(Product.id))
+            .where(Product.seller_id == current_user.id)
+            .where(Product.is_active == 1)
+        )
+        active_count = count_result.scalar() or 0
+        if active_count >= limit:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Batas produk tier {current_user.tier.value} ({limit} produk) "
+                    "sudah tercapai. Upgrade untuk mengaktifkan produk ini."
+                ),
+            )
+
     for field, value in update_data.items():
         setattr(product, field, value)
-    
-    # Re-generate embedding if text fields changed
+
     if any(f in update_data for f in ["nama", "deskripsi", "kategori"]):
         embed_text = build_embed_text({
             "nama": product.nama,
@@ -235,18 +264,17 @@ async def update_product(
         })
         product.embedding = generate_embedding(embed_text)
         product.summary = f"{product.nama} - {product.deskripsi}. Harga Rp {product.harga:,.0f}. Kategori: {product.kategori}."
-    
+
     await db.commit()
     await db.refresh(product)
     await cache_invalidate_products(current_user.id)
-    
-    # Invalidate AI catalog cache (BUG 5 FIX)
+
     try:
         from ai.agent import invalidate_catalog_cache
         invalidate_catalog_cache(current_user.id)
     except Exception:
         pass
-    
+
     return ProductResponse.model_validate(product)
 
 

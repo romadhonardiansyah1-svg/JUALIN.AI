@@ -101,44 +101,48 @@ async def mark_followup_sent(
 
 
 async def auto_cancel_expired(db: AsyncSession) -> int:
-    """
-    Auto-cancel orders that have been pending for > 48 hours
-    and have received all 3 follow-ups.
-    Returns number of cancelled orders.
-    """
+    """Auto-cancel eligible pending orders under row locks."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    
+
     result = await db.execute(
-        select(Order).where(
+        select(Order)
+        .where(
             and_(
                 Order.status == OrderStatus.PENDING,
                 Order.created_at < cutoff,
                 Order.followup_count >= 3,
             )
         )
+        .with_for_update(skip_locked=True)
     )
     orders = result.scalars().all()
-    
+
     from models.product import Product
     count = 0
     for order in orders:
         order.status = OrderStatus.CANCELLED
         order.notes = (order.notes or "") + " [Auto-cancelled: tidak ada pembayaran setelah 48 jam]"
-        
-        # restore stock
+
         items = order.items if isinstance(order.items, list) else []
         for item in items:
-            if "product_id" in item:
-                prod_result = await db.execute(
-                    select(Product).where(Product.id == item["product_id"])
+            product_id = item.get("product_id")
+            if not product_id:
+                continue
+            product_result = await db.execute(
+                select(Product)
+                .where(
+                    Product.id == product_id,
+                    Product.seller_id == order.seller_id,
                 )
-                product = prod_result.scalar_one_or_none()
-                if product:
-                    product.stok += item.get("qty", 1)
-        
+                .with_for_update()
+            )
+            product = product_result.scalar_one_or_none()
+            if product:
+                product.stok += int(item.get("qty", 1) or 1)
+
         count += 1
-    
+
     if count > 0:
         await db.commit()
-    
+
     return count

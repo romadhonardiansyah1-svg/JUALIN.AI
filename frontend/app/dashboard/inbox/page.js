@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, inboxManageLabel, inboxAddNote, inboxListNotes, listCannedReplies } from "@/lib/api";
 import styles from "../scale.module.css";
 
@@ -22,6 +22,9 @@ export default function InboxPage() {
   const [cannedReplies, setCannedReplies] = useState([]);
   const [showCanned, setShowCanned] = useState(false);
   const [labelInput, setLabelInput] = useState("");
+  const detailRequestRef = useRef(0);
+  const notesRequestRef = useRef(0);
+  const activeIdRef = useRef(null);
 
   const loadThreads = useCallback(async () => {
     setError("");
@@ -29,22 +32,27 @@ export default function InboxPage() {
       const params = searchQ ? `?q=${encodeURIComponent(searchQ)}&limit=50` : "?limit=50";
       const data = await api.getInboxThreads(params);
       setThreads(data);
-      if (!activeId && data.length) setActiveId(data[0].id);
+      setActiveId((current) => current || data[0]?.id || null);
     } catch (e) {
       setError(e.message);
     } finally {
       setLoading(false);
     }
-  }, [activeId, searchQ]);
+  }, [searchQ]);
 
   async function loadDetail(id) {
+    const requestId = ++detailRequestRef.current;
+    setDetail(null);
     if (!id) return;
     setError("");
     try {
-      setDetail(await api.getInboxThread(id));
+      const nextDetail = await api.getInboxThread(id);
+      if (requestId === detailRequestRef.current) setDetail(nextDetail);
     } catch (e) {
-      setError(e.message);
-      setDetail(null);
+      if (requestId === detailRequestRef.current) {
+        setError(e.message);
+        setDetail(null);
+      }
     }
   }
 
@@ -53,8 +61,12 @@ export default function InboxPage() {
   }, [loadThreads]);
 
   useEffect(() => {
+    activeIdRef.current = activeId;
+    setReply("");
+    setNoteText("");
+    setLabelInput("");
     loadDetail(activeId);
-    if (activeId) loadNotes(activeId);
+    loadNotes(activeId);
   }, [activeId]);
 
   useEffect(() => {
@@ -62,17 +74,26 @@ export default function InboxPage() {
   }, []);
 
   async function loadNotes(threadId) {
+    const requestId = ++notesRequestRef.current;
+    setNotes([]);
+    if (!threadId) return;
     try {
-      setNotes(await inboxListNotes(threadId));
-    } catch (e) { setNotes([]); }
+      const nextNotes = await inboxListNotes(threadId);
+      if (requestId === notesRequestRef.current) setNotes(nextNotes);
+    } catch {
+      if (requestId === notesRequestRef.current) setNotes([]);
+    }
   }
 
   async function addNote() {
     if (!noteText.trim() || !activeId) return;
+    const threadId = activeId;
     try {
-      await inboxAddNote(activeId, noteText.trim());
-      setNoteText("");
-      await loadNotes(activeId);
+      await inboxAddNote(threadId, noteText.trim());
+      if (activeIdRef.current === threadId) {
+        setNoteText("");
+        await loadNotes(threadId);
+      }
     } catch (e) { setError(e.message); }
   }
 
@@ -93,10 +114,11 @@ export default function InboxPage() {
   }
 
   async function changeMode(mode) {
-    if (!detail) return;
+    if (!activeId || detail?.id !== activeId) return;
+    const threadId = activeId;
     try {
-      await api.updateInboxThreadMode(detail.id, { mode });
-      await loadDetail(detail.id);
+      await api.updateInboxThreadMode(threadId, { mode });
+      if (activeIdRef.current === threadId) await loadDetail(threadId);
       await loadThreads();
     } catch (e) {
       setError(e.message);
@@ -105,13 +127,16 @@ export default function InboxPage() {
 
   async function sendReply(e) {
     e.preventDefault();
-    if (!detail || !reply.trim() || sending) return;
+    if (!activeId || detail?.id !== activeId || !reply.trim() || sending) return;
+    const threadId = activeId;
     setSending(true);
     setError("");
     try {
-      await api.replyInboxThread(detail.id, { text: reply.trim() });
-      setReply("");
-      await loadDetail(detail.id);
+      await api.replyInboxThread(threadId, { text: reply.trim() });
+      if (activeIdRef.current === threadId) {
+        setReply("");
+        await loadDetail(threadId);
+      }
       await loadThreads();
     } catch (e) {
       setError(e.message);

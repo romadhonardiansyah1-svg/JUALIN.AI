@@ -186,6 +186,7 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
         from models.order import Order, OrderStatus
 
         mock_db = AsyncMock()
+        mock_db.add = MagicMock()
         order = MagicMock(spec=Order)
         order.id = 9
         order.seller_id = 10

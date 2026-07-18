@@ -34,6 +34,7 @@ class PaymentStatus(str, Enum):
     EXPIRED = "expired"
     FAILED = "failed"
     REFUNDED = "refunded"
+    PARTIALLY_REFUNDED = "partially_refunded"
     CANCELLED = "cancelled"
 
 
@@ -59,10 +60,11 @@ class PaymentStatusResult:
     order_id: str
     status: PaymentStatus
     provider: str
-    amount: int
+    amount: Optional[int]
     paid_at: Optional[str]
     method: Optional[str]
     raw_response: Optional[dict]
+    verified: bool = True
 
 
 @dataclass

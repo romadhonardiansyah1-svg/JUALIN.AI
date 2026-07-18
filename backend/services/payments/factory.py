@@ -158,38 +158,211 @@ async def _get_or_create_payment_attempt_and_capability(
     return attempt, cap, raw_token
 
 
+async def _lock_order_for_payment(db: AsyncSession, order_id: int):
+    """Serialize invoice creation for an order and refresh stale identity-map state."""
+    from sqlalchemy import select
+    from models.order import Order
+
+    result = await db.execute(
+        select(Order)
+        .where(Order.id == order_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    return result.scalar_one_or_none()
+
+
+async def _adjust_order_stock_for_payment(
+    db: AsyncSession,
+    order,
+    *,
+    restore: bool,
+    quantities_by_product: dict[int, int] | None = None,
+    consumed_quantities: dict[int, int] | None = None,
+) -> list[int]:
+    """Adjust seller-scoped stock under locks and track actual consumption."""
+    from sqlalchemy import select
+    from models.product import Product
+
+    if quantities_by_product is None:
+        items = order.items if isinstance(order.items, list) else []
+    else:
+        items = [
+            {"product_id": product_id, "qty": quantity}
+            for product_id, quantity in quantities_by_product.items()
+        ]
+
+    shortage_product_ids: list[int] = []
+    for item in items:
+        product_id = item.get("product_id")
+        if not product_id:
+            continue
+        quantity = int(item.get("qty", 1) or 1)
+        product_result = await db.execute(
+            select(Product).where(
+                Product.id == product_id,
+                Product.seller_id == order.seller_id,
+            ).with_for_update()
+        )
+        product = product_result.scalar_one_or_none()
+        if not product:
+            shortage_product_ids.append(product_id)
+            continue
+        if restore:
+            product.stok += quantity
+        elif product.stok >= quantity:
+            product.stok -= quantity
+            if consumed_quantities is not None:
+                consumed_quantities[product_id] = (
+                    consumed_quantities.get(product_id, 0) + quantity
+                )
+        else:
+            shortage_product_ids.append(product_id)
+
+    return shortage_product_ids
+
+
+async def _get_late_paid_consumed_quantities(
+    db: AsyncSession,
+    order_id: int,
+) -> dict[int, int] | None:
+    """Load immutable stock consumption recorded for the latest late payment."""
+    from sqlalchemy import select
+    from models.order_status_history import OrderStatusHistory
+
+    marker = "late_paid_consumed="
+    result = await db.execute(
+        select(OrderStatusHistory.note)
+        .where(
+            OrderStatusHistory.order_id == order_id,
+            OrderStatusHistory.to_status == "paid",
+            OrderStatusHistory.note.like(f"%{marker}%"),
+        )
+        .order_by(OrderStatusHistory.created_at.desc())
+        .limit(1)
+    )
+    note = result.scalar_one_or_none()
+    if not isinstance(note, str) or marker not in note:
+        return None
+
+    raw_entries = note.rsplit(marker, 1)[1].split(";", 1)[0]
+    consumed: dict[int, int] = {}
+    for entry in raw_entries.split(","):
+        if not entry.strip() or ":" not in entry:
+            continue
+        raw_product_id, raw_quantity = entry.split(":", 1)
+        try:
+            product_id = int(raw_product_id.strip())
+            quantity = int(raw_quantity.strip())
+        except ValueError:
+            continue
+        if quantity > 0:
+            consumed[product_id] = consumed.get(product_id, 0) + quantity
+    return consumed
+
+
 async def create_payment_for_order(
     order,
     method: str = "qris",
     provider: str = None,
     db: AsyncSession = None,
 ) -> dict:
-    """
-    High-level helper: create a payment for an existing Order object.
-    Updates the Order with payment info and returns a response dict.
-    
-    Args:
-        order: Order model instance
-        method: Payment method ("qris", "snap", "va_bca", etc.)
-        provider: "midtrans" or "cashi" (auto-detected if not specified)
-        db: AsyncSession for saving order updates
-    
-    Returns:
-        dict with payment info for the frontend
-    """
-    # Auto-detect provider based on method if not specified
+    """Create at most one durable external invoice for an order."""
+    if db:
+        locked_order = await _lock_order_for_payment(db, order.id)
+        if not locked_order:
+            raise PaymentError(message="Order tidak ditemukan", provider=provider or "")
+        order = locked_order
+
+        from models.order import OrderStatus
+        if order.status not in (OrderStatus.PENDING, OrderStatus.CONFIRMED):
+            raise PaymentError(
+                message="Order tidak dalam status yang dapat dibayar",
+                provider=provider or "",
+            )
+        if order.payment_provider and order.payment_invoice_id:
+            capability_token = None
+            attempt = None
+            repaired_amount = None
+
+            # An external invoice may have been committed before capability setup
+            # failed. Repair that partial state without creating another invoice.
+            if not getattr(order, "payment_access_token_hmac", None):
+                gateway = get_payment_gateway(order.payment_provider)
+                status_result = await gateway.check_status(order.payment_invoice_id)
+                repaired_amount = _parse_decimal_amount(status_result.amount)
+                expected_amount = _parse_decimal_amount(order.total)
+                amount_is_valid = (
+                    repaired_amount is not None
+                    and expected_amount is not None
+                    and repaired_amount == repaired_amount.to_integral_value()
+                    and (
+                        repaired_amount >= expected_amount
+                        if order.payment_provider == "cashi"
+                        else repaired_amount == expected_amount
+                    )
+                )
+                if not getattr(status_result, "verified", True) or not amount_is_valid:
+                    raise PaymentError(
+                        message="Invoice ada, tetapi nominalnya tidak dapat diverifikasi dengan aman",
+                        provider=order.payment_provider,
+                    )
+                try:
+                    attempt, capability, capability_token = (
+                        await _get_or_create_payment_attempt_and_capability(
+                            db,
+                            order,
+                            order.payment_provider,
+                            order.payment_invoice_id,
+                            int(repaired_amount),
+                        )
+                    )
+                    order.payment_access_token_hmac = capability.token_hmac
+                    order.payment_access_token_key_version = capability.key_version
+                    order.payment_access_token_expires_at = capability.expires_at
+                    await db.commit()
+                except PaymentError:
+                    await db.rollback()
+                    raise
+                except Exception:
+                    await db.rollback()
+                    logger.exception(
+                        "Failed to repair payment capability",
+                        extra={"order_id": order.id},
+                    )
+                    raise PaymentError(
+                        message="Akses pembayaran belum dapat dipulihkan; coba lagi",
+                        provider=order.payment_provider,
+                    )
+
+            return {
+                "success": True,
+                "order_id": order.id,
+                "status": order.status.value if hasattr(order.status, "value") else str(order.status),
+                "invoice_id": order.payment_invoice_id,
+                "provider": order.payment_provider,
+                "method": order.payment_method,
+                "amount": repaired_amount if repaired_amount is not None else order.total,
+                "payment_url": order.payment_url,
+                "qr_data": order.payment_qr_data,
+                "snap_token": None,
+                "va_number": order.payment_va_number,
+                "expires_at": order.payment_expires_at,
+                "payment_created": True,
+                "already_exists": True,
+                "public_token": None,
+                "capability_token": capability_token,
+                "capability_link": (
+                    f"/pay/{order.id}#token={capability_token}"
+                    if capability_token else None
+                ),
+                "payment_attempt_id": str(attempt.id) if attempt else None,
+            }
+
     if not provider:
-        if method == "snap":
-            provider = "midtrans"
-        else:
-            provider = settings.DEFAULT_PAYMENT_PROVIDER
-
+        provider = "midtrans" if method == "snap" else settings.DEFAULT_PAYMENT_PROVIDER
     gateway = get_payment_gateway(provider)
-    # P2.4: stop minting plaintext payment_access_token for new writes
-    # Use a temporary token for gateway if needed, but don't store as plaintext long-term
-    gateway_token = secrets.token_urlsafe(16)  # short-lived for gateway only, not stored as public capability
-
-    # Create payment via gateway
+    gateway_token = secrets.token_urlsafe(16)
     result = await gateway.create_payment(
         order_id=order.id,
         amount=int(order.total),
@@ -200,24 +373,14 @@ async def create_payment_for_order(
         method=method,
         payment_token=gateway_token,
     )
-
     if not result.success:
         logger.error(
             f"Payment creation failed for order #{order.id}",
-            extra={
-                "provider": provider,
-                "method": method,
-                "error": result.error_message,
-            },
+            extra={"provider": provider, "method": method, "error": result.error_message},
         )
-        raise PaymentError(
-            message=result.error_message or "Gagal membuat pembayaran",
-            provider=provider,
-        )
+        raise PaymentError(message=result.error_message or "Gagal membuat pembayaran", provider=provider)
 
-    # Update order with payment info + create PaymentAttempt + capability (P2.4)
     capability_token = None
-    capability = None
     attempt = None
     if db:
         order.payment_method = result.method
@@ -228,42 +391,56 @@ async def create_payment_for_order(
         order.payment_va_number = result.token if result.method.startswith("va_") else None
         order.payment_expires_at = result.expires_at
 
-        # Create PaymentAttempt + capability for secure public link (fragment, not query)
+        # Persist the externally-created invoice identity first. If capability
+        # setup fails, a retry reloads and reuses this invoice instead of
+        # creating another remote charge target.
         try:
-            attempt, capability, capability_token = await _get_or_create_payment_attempt_and_capability(
-                db, order, provider, result.order_id, int(order.total)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception(
+                "Failed to persist external payment invoice",
+                extra={"order_id": order.id, "provider": result.provider},
             )
-            # Store HMAC in order for transition (dual-read)
+            raise PaymentError(
+                message="Invoice dibuat tetapi belum dapat dicatat dengan aman; hubungi dukungan",
+                provider=result.provider,
+            )
+
+        try:
+            order = await _lock_order_for_payment(db, order.id)
+            attempt, capability, capability_token = await _get_or_create_payment_attempt_and_capability(
+                db, order, result.provider, result.order_id, int(result.amount)
+            )
             order.payment_access_token_hmac = capability.token_hmac
             order.payment_access_token_key_version = capability.key_version
             order.payment_access_token_expires_at = capability.expires_at
-            # Do NOT set plaintext payment_access_token for new writes
-        except Exception as e:
-            logger.warning(f"Failed to create payment attempt/capability: {e}")
 
-        # Record status change
-        from models.order_status_history import OrderStatusHistory
+            from models.order_status_history import OrderStatusHistory
+            db.add(OrderStatusHistory(
+                order_id=order.id,
+                from_status=order.status.value if hasattr(order.status, "value") else str(order.status),
+                to_status="pending",
+                changed_by="payment_system",
+                note=f"Payment created via {result.provider} ({method})",
+            ))
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception(
+                "Failed to persist payment attempt and capability",
+                extra={"order_id": order.id},
+            )
+            raise PaymentError(
+                message="Invoice sudah dicatat, tetapi akses pembayaran belum dapat disiapkan; coba lagi",
+                provider=result.provider,
+            )
 
-        history = OrderStatusHistory(
-            order_id=order.id,
-            from_status=order.status.value if hasattr(order.status, 'value') else str(order.status),
-            to_status="pending",
-            changed_by="payment_system",
-            note=f"Payment created via {provider} ({method})",
-        )
-        db.add(history)
-        await db.commit()
-
-    # Build public URL with fragment (not query) per P2.4
-    public_fragment_url = None
-    if capability_token:
-        # Fragment bootstrap: /pay/{order_id}#token=xxx
-        public_fragment_url = f"/pay/{order.id}#token={capability_token}"
-
+    capability_link = f"/pay/{order.id}#token={capability_token}" if capability_token else None
     return {
         "success": True,
         "order_id": order.id,
-        "status": order.status.value if hasattr(order.status, 'value') else str(order.status),
+        "status": order.status.value if hasattr(order.status, "value") else str(order.status),
         "invoice_id": result.order_id,
         "provider": result.provider,
         "method": result.method,
@@ -274,9 +451,9 @@ async def create_payment_for_order(
         "va_number": result.token if method.startswith("va_") else None,
         "expires_at": result.expires_at,
         "payment_created": True,
-        "public_token": None,  # No longer mint plaintext
-        "capability_token": capability_token,  # Raw token only returned once, for fragment link
-        "capability_link": public_fragment_url,
+        "public_token": None,
+        "capability_token": capability_token,
+        "capability_link": capability_link,
         "payment_attempt_id": str(attempt.id) if attempt else None,
     }
 
@@ -319,15 +496,17 @@ async def process_webhook(
     try:
         from models.payment_recovery import PaymentAttempt
 
-        # Attempt to find exact current attempt by provider + external_attempt_id
+        # Resolve the exact attempt first, including stale attempts so they cannot
+        # fall through to legacy order-ID parsing.
         attempt_q = await db.execute(
             select(PaymentAttempt).where(
                 PaymentAttempt.provider == provider,
                 PaymentAttempt.external_attempt_id == invoice_id,
-                PaymentAttempt.is_current == True,
             )
         )
         payment_attempt = attempt_q.scalar_one_or_none()
+        if payment_attempt and not payment_attempt.is_current:
+            return {"success": False, "error": "stale payment attempt"}
         if payment_attempt:
             internal_order_id = payment_attempt.order_id
     except Exception:
@@ -345,13 +524,21 @@ async def process_webhook(
 
     # Find order — seller-scoped already via later checks, but for webhook we need order first
     order_result = await db.execute(
-        select(Order).where(Order.id == internal_order_id)
+        select(Order)
+        .where(Order.id == internal_order_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
     )
     order = order_result.scalar_one_or_none()
 
     if not order:
         logger.error(f"Webhook: order #{internal_order_id} not found")
         return {"success": False, "error": f"Order #{internal_order_id} not found"}
+
+    if payment_attempt:
+        await db.refresh(payment_attempt)
+        if not payment_attempt.is_current:
+            return {"success": False, "error": "stale payment attempt"}
 
     # If PaymentAttempt exists, verify seller_id matches order seller_id (tenant check)
     if payment_attempt and payment_attempt.seller_id != order.seller_id:
@@ -362,31 +549,42 @@ async def process_webhook(
         return {"success": False, "error": "seller mismatch"}
 
     # Decimal amount validation — never via float
-    incoming_amount = _parse_decimal_amount(getattr(result, "amount", None) or payload.get("gross_amount") or payload.get("amount"))
+    incoming_amount = _parse_decimal_amount(getattr(result, "amount", None))
     expected_amount = _parse_decimal_amount(order.total)
 
-    if incoming_amount is not None and expected_amount is not None:
-        # Allow small tolerance? For safety, require exact match or at least not drastically different
-        # For paid events, amount must match expected outstanding
-        if result.status == PaymentStatus.PAID and incoming_amount != expected_amount:
-            # If amount mismatch, log but do not mark paid — prevent wrong-invoice payment
-            logger.warning(
-                f"Payment amount mismatch: expected {expected_amount} got {incoming_amount} for order {internal_order_id}",
-                extra={"order_id": internal_order_id, "provider": provider},
-            )
-            # Still allow if gateway says paid? For safety, we require exact match for new flow
-            # If PaymentAttempt exists, compare to attempt.amount
-            if payment_attempt and payment_attempt.amount != incoming_amount:
-                return {"success": False, "error": f"Amount mismatch: {incoming_amount} vs {payment_attempt.amount}"}
+    if result.status == PaymentStatus.PAID and incoming_amount is None:
+        return {"success": False, "error": "Paid amount could not be verified"}
+
+    legacy_amount_mismatch = (
+        payment_attempt is None
+        and result.status == PaymentStatus.PAID
+        and incoming_amount is not None
+        and expected_amount is not None
+        and (
+            incoming_amount < expected_amount
+            if provider == "cashi"
+            else incoming_amount != expected_amount
+        )
+    )
+    if legacy_amount_mismatch:
+        logger.warning(
+            f"Payment amount mismatch: expected {expected_amount} got {incoming_amount} for order {internal_order_id}",
+            extra={"order_id": internal_order_id, "provider": provider},
+        )
+        return {"success": False, "error": f"Amount mismatch: {incoming_amount} vs {expected_amount}"}
+    if payment_attempt and incoming_amount is not None and payment_attempt.amount != incoming_amount:
+        return {"success": False, "error": f"Amount mismatch: {incoming_amount} vs {payment_attempt.amount}"}
 
     old_status = order.status.value if hasattr(order.status, 'value') else str(order.status)
 
-    # Monotonic precedence: paid and refunded are terminal, old paid should not be downgraded by older pending/expired
-    terminal_paid = {"paid", "shipped", "done", "refunded"}
-    is_old_paid = old_status in {"paid", "shipped", "done"}
+    # Once payment has been accepted, gateway retries must not move the order
+    # backward from any paid-lineage fulfilment state.
+    paid_lineage = {"paid", "processing", "shipped", "delivered", "done"}
+    is_old_paid = old_status in paid_lineage
     is_refunded = old_status == "refunded"
 
     restore_stock = False
+    consume_restored_stock = False
     new_status = old_status
 
     # Refund precedence: refunded fact never downgrades paid to paid, but refunded stays refunded
@@ -401,12 +599,12 @@ async def process_webhook(
     ):
         new_status = old_status
     elif result.status == PaymentStatus.PAID:
-        # Idempotent: if already paid, keep paid, do not double-restore stock
-        if old_status != "paid":
+        if is_old_paid:
+            new_status = old_status
+        else:
+            consume_restored_stock = old_status == "cancelled"
             order.status = OrderStatus.PAID
             order.paid_at = datetime.now(timezone.utc)
-            new_status = "paid"
-        else:
             new_status = "paid"
     elif result.status == PaymentStatus.EXPIRED:
         if not is_old_paid:
@@ -421,44 +619,63 @@ async def process_webhook(
             new_status = "cancelled"
             restore_stock = True
     elif result.status == PaymentStatus.REFUNDED:
-        # Only allow refund if previously paid
-        if old_status in {"paid", "shipped", "done"}:
+        # A seller cancellation already restored stock, but a later verified
+        # provider refund must still update financial state and the recovery ledger.
+        if old_status in paid_lineage or old_status == "cancelled":
             order.status = OrderStatus.REFUNDED
             new_status = "refunded"
-            restore_stock = True
+            restore_stock = old_status in paid_lineage
         else:
-            # If not previously paid, keep old status but record refund fact elsewhere
             new_status = old_status
     else:
         new_status = old_status
 
-    # Idempotent stock restore — only if status actually transitions and not previously cancelled/refunded
+    # Row locking plus the current-state guard makes each real transition restore once.
+    # Historical cancellation rows cannot be used here: a late paid event consumes the
+    # restored stock again, so a later refund must perform a fresh restoration.
+    stock_shortage_product_ids: list[int] = []
+    late_paid_consumed_quantities: dict[int, int] = {}
     if restore_stock and old_status not in ("cancelled", "refunded"):
-        # Check if we already restored stock for this order via history to avoid double restore
-        hist_q = await db.execute(
-            select(OrderStatusHistory).where(
-                OrderStatusHistory.order_id == order.id,
-                OrderStatusHistory.to_status.in_(["cancelled", "refunded"]),
-            )
+        consumed_quantities = await _get_late_paid_consumed_quantities(db, order.id)
+        await _adjust_order_stock_for_payment(
+            db,
+            order,
+            restore=True,
+            quantities_by_product=consumed_quantities,
         )
-        already_restored = hist_q.scalars().first() is not None
-        if not already_restored:
-            from models.product import Product
 
-            items = order.items if isinstance(order.items, list) else []
-            for item in items:
-                product_id = item.get("product_id")
-                if not product_id:
-                    continue
-                product_result = await db.execute(
-                    select(Product).where(
-                        Product.id == product_id,
-                        Product.seller_id == order.seller_id,
-                    )
-                )
-                product = product_result.scalar_one_or_none()
-                if product:
-                    product.stok += int(item.get("qty", 1) or 1)
+    if consume_restored_stock:
+        stock_shortage_product_ids = await _adjust_order_stock_for_payment(
+            db,
+            order,
+            restore=False,
+            consumed_quantities=late_paid_consumed_quantities,
+        )
+        if stock_shortage_product_ids:
+            shortage_ids = ",".join(
+                str(product_id) for product_id in stock_shortage_product_ids
+            )
+            shortage_note = (
+                "[Pembayaran terlambat terverifikasi; stok tidak cukup untuk produk: "
+                + shortage_ids
+                + "]"
+            )
+            order.notes = f"{order.notes or ''} {shortage_note}".strip()
+            logger.warning(
+                "Late paid order has insufficient stock",
+                extra={
+                    "order_id": order.id,
+                    "product_ids": stock_shortage_product_ids,
+                },
+            )
+
+    late_paid_consumed_marker = ""
+    if consume_restored_stock:
+        consumed_entries = ",".join(
+            f"{product_id}:{quantity}"
+            for product_id, quantity in sorted(late_paid_consumed_quantities.items())
+        )
+        late_paid_consumed_marker = f"; late_paid_consumed={consumed_entries};"
 
     if new_status != old_status:
         history = OrderStatusHistory(
@@ -466,7 +683,10 @@ async def process_webhook(
             from_status=old_status,
             to_status=new_status,
             changed_by=f"webhook_{provider}",
-            note=f"Payment {result.status.value} via {provider}",
+            note=(
+                f"Payment {getattr(result.status, 'value', result.status)} via {provider}"
+                + late_paid_consumed_marker
+            ),
         )
         db.add(history)
         from core.audit import record_audit
@@ -480,7 +700,12 @@ async def process_webhook(
             actor_type="webhook",
             before={"status": old_status},
             after={"status": new_status},
-            metadata={"provider": provider, "invoice_id": invoice_id},
+            metadata={
+                "provider": provider,
+                "invoice_id": invoice_id,
+                "stock_shortage_product_ids": stock_shortage_product_ids,
+                "late_paid_consumed_quantities": late_paid_consumed_quantities,
+            },
         )
 
     # P5.2 — honest recovery ledger from verified payment/refund facts only.
@@ -539,4 +764,5 @@ async def process_webhook(
         "new_status": new_status,
         "provider": provider,
         "recovery_outcome": recovery_outcome,
+        "stock_shortage_product_ids": stock_shortage_product_ids,
     }

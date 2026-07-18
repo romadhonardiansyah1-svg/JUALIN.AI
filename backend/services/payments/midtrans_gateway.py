@@ -68,7 +68,9 @@ class MidtransGateway(PaymentGateway):
         Create a Midtrans Snap transaction.
         Returns a snap_token and redirect_url for the payment page.
         """
-        invoice_id = f"JUALIN-{order_id}-{int(__import__('time').time())}"
+        # Midtrans enforces unique order IDs. A deterministic ID makes retries
+        # idempotent even if the first response or local database commit fails.
+        invoice_id = f"JUALIN-{order_id}"
         frontend_url = settings.FRONTEND_URL.rstrip("/")
         token_query = f"&token={payment_token}" if payment_token else ""
 
@@ -197,6 +199,7 @@ class MidtransGateway(PaymentGateway):
                     },
                 )
 
+                response.raise_for_status()
                 data = response.json()
                 mt_status = data.get("transaction_status", "")
                 fraud = data.get("fraud_status", "accept")
@@ -210,7 +213,9 @@ class MidtransGateway(PaymentGateway):
                     "cancel": PaymentStatus.CANCELLED,
                     "expire": PaymentStatus.EXPIRED,
                     "refund": PaymentStatus.REFUNDED,
-                    "partial_refund": PaymentStatus.REFUNDED,
+                    # Partial refunds must not restore full inventory or record a
+                    # full recovery reversal; preserve them as a distinct fact.
+                    "partial_refund": PaymentStatus.PARTIALLY_REFUNDED,
                 }
 
                 return PaymentStatusResult(
@@ -229,10 +234,11 @@ class MidtransGateway(PaymentGateway):
                 order_id=order_id,
                 status=PaymentStatus.PENDING,
                 provider="midtrans",
-                amount=0,
+                amount=None,
                 paid_at=None,
                 method=None,
                 raw_response=None,
+                verified=False,
             )
 
     async def validate_webhook(self, payload: dict, headers: dict = None) -> WebhookResult:
@@ -274,6 +280,7 @@ class MidtransGateway(PaymentGateway):
             "cancel": PaymentStatus.CANCELLED,
             "expire": PaymentStatus.EXPIRED,
             "refund": PaymentStatus.REFUNDED,
+            "partial_refund": PaymentStatus.PARTIALLY_REFUNDED,
         }
 
         status = status_map.get(transaction_status, PaymentStatus.PENDING)

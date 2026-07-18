@@ -217,33 +217,18 @@ async def execute_workflow_run(db: AsyncSession, run_id: int) -> dict:
 
 async def _execute_step(db: AsyncSession, run: AutomationRun, template_key: str, ctx: dict) -> dict:
     """Execute a single workflow step based on template_key."""
-
-    if template_key == "pending_payment_2h":
-        order_id = ctx.get("order_id")
-        if not order_id:
-            return {"success": False, "error": "missing order_id"}
-        order_result = await db.execute(select(Order).where(Order.id == order_id))
-        order = order_result.scalar_one_or_none()
-        if not order or order.status != OrderStatus.PENDING:
-            return {"success": True, "skipped": True, "reason": "order not pending"}
-        logger.info(f"Workflow: payment follow-up for order #{order_id}", extra={"seller_id": run.seller_id})
-        return {"success": True, "action": "payment_followup", "order_id": order_id}
-
-    elif template_key == "low_stock_alert":
-        product_id = ctx.get("product_id")
-        logger.info(f"Workflow: low stock alert for product #{product_id}", extra={"seller_id": run.seller_id})
-        return {"success": True, "action": "low_stock_notified", "product_id": product_id}
-
-    elif template_key == "repeat_buyer_bundle":
-        customer_id = ctx.get("customer_id")
-        logger.info(f"Workflow: repeat buyer bundle for customer #{customer_id}", extra={"seller_id": run.seller_id})
-        return {"success": True, "action": "bundle_suggested", "customer_id": customer_id}
-
-    elif template_key == "paid_processing_message":
-        order_id = ctx.get("order_id")
-        logger.info(f"Workflow: paid processing message for order #{order_id}", extra={"seller_id": run.seller_id})
-        return {"success": True, "action": "paid_message_sent", "order_id": order_id}
-
+    supported_templates = {
+        "pending_payment_2h",
+        "low_stock_alert",
+        "repeat_buyer_bundle",
+        "paid_processing_message",
+    }
+    if template_key in supported_templates:
+        return {
+            "success": False,
+            "error": "workflow action not implemented",
+            "template_key": template_key,
+        }
     return {"success": False, "error": f"unknown template: {template_key}"}
 
 
