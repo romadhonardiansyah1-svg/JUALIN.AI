@@ -238,7 +238,13 @@ def _run_checked(
         shell=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"{label} failed with exit code {result.returncode}")
+        message = f"{label} failed with exit code {result.returncode}"
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(
+                f"::error title=Real E2E stage::{message}",
+                file=sys.stderr,
+            )
+        raise RuntimeError(message)
 
 
 def _wait_http(url: str, process: subprocess.Popen[bytes], timeout: int = 120) -> None:
