@@ -4,7 +4,7 @@ Core production tables for scale-up modules.
 import uuid
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, UniqueConstraint, Boolean, Index
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from models.database import Base
 
@@ -86,6 +86,14 @@ class BackgroundJob(Base):
     __table_args__ = (
         Index("ix_jobs_status_next_run", "status", "next_run_at"),
         Index("ix_jobs_processable", "status", "execution_stage", "next_run_at", "lease_expires_at"),
+        Index(
+            "ix_jobs_queued_processable",
+            "next_run_at",
+            "id",
+            postgresql_where=text(
+                "status = 'queued' AND execution_stage = 'pre_side_effect'"
+            ),
+        ),
     )
 
 

@@ -8,7 +8,8 @@ Tabel:
 - negotiation_states : state tawar-menawar per percakapan
 """
 from sqlalchemy import (
-    Column, Integer, String, DateTime, ForeignKey, JSON, Float, Boolean, UniqueConstraint, Time,
+    Column, Integer, String, DateTime, ForeignKey, JSON, Float, Boolean,
+    UniqueConstraint, Time, Index, text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -113,6 +114,26 @@ class AgentApproval(Base):
     decision_scope = Column(String(100), nullable=True)
     decision_response_json = Column(JSON, nullable=True)
     approval_token_hash = Column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_one_pending_recovery_per_opportunity",
+            "opportunity_id",
+            unique=True,
+            postgresql_where=text(
+                "opportunity_id IS NOT NULL AND status='pending'"
+            ),
+        ),
+        Index(
+            "uq_approval_scoped_receipt",
+            "seller_id",
+            "decision_scope",
+            "opportunity_id",
+            "decision_idempotency_key",
+            unique=True,
+            postgresql_where=text("decision_idempotency_key IS NOT NULL"),
+        ),
+    )
 
 
 class NegotiationState(Base):
