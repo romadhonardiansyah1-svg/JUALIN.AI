@@ -1,6 +1,7 @@
 import unittest
 
 from models.ai_quality import AITrace
+from models.auth_session import AuthSession
 from models.billing import UsageCounter
 from models.inbox import InboxMessage, InboxThread
 from models.order import Order
@@ -11,6 +12,7 @@ class MigrationMetadataTests(unittest.TestCase):
     def test_performance_indexes_are_declared_in_orm_metadata(self):
         expected_indexes = {
             AITrace: 'ix_ai_traces_seller_status',
+            AuthSession: 'ix_auth_sessions_actor_user_id',
             BackgroundJob: 'ix_jobs_status_next_run',
             InboxMessage: 'ix_inbox_messages_thread_created',
             InboxThread: 'ix_inbox_threads_seller_lastmsg',

@@ -20,7 +20,7 @@ class AuthSession(Base):
     is_current = Column(Boolean, nullable=False, default=True, server_default="true")
     refresh_token_hash = Column(String(64), nullable=False, unique=True, index=True)
     csrf_token_hash = Column(String(64), nullable=True)
-    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     effective_seller_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     auth_mode = Column(String(20), nullable=False, default="password", server_default="password")
     impersonation_id = Column(Integer, nullable=True)
