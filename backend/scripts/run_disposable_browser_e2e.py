@@ -91,7 +91,8 @@ def playwright_assertions(
         if observed.get(title) != [True]
     )
     if missing_failed_or_duplicate:
-        raise RuntimeError("Real Playwright scenarios were missing, duplicated, or failed")
+        failed_titles = ", ".join(missing_failed_or_duplicate)
+        raise RuntimeError(f"Real Playwright scenarios failed: {failed_titles}")
     return [
         {
             "ok": True,
@@ -903,19 +904,45 @@ def main() -> int:
                 environment=frontend_environment,
             ) as frontend_process:
                 _wait_http(f"{frontend_url}/login", frontend_process)
-                _run_checked(
-                    "Real Playwright disposable-stack suite",
-                    [
-                        npx,
-                        "playwright",
-                        "test",
-                        "e2e/auth-cache-and-proof.real.spec.js",
-                        "--output",
-                        str(pathlib.Path(td) / "playwright-output"),
-                    ],
-                    cwd=FRONTEND,
-                    environment=browser_environment,
-                )
+                try:
+                    _run_checked(
+                        "Real Playwright disposable-stack suite",
+                        [
+                            npx,
+                            "playwright",
+                            "test",
+                            "e2e/auth-cache-and-proof.real.spec.js",
+                            "--output",
+                            str(pathlib.Path(td) / "playwright-output"),
+                        ],
+                        cwd=FRONTEND,
+                        environment=browser_environment,
+                    )
+                except RuntimeError:
+                    try:
+                        failed_report = json.loads(
+                            report_path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, json.JSONDecodeError):
+                        failed_report = None
+                    if isinstance(failed_report, dict):
+                        try:
+                            playwright_assertions(
+                                failed_report,
+                                EXPECTED_BROWSER_TESTS,
+                                expected_file="auth-cache-and-proof.real.spec.js",
+                            )
+                        except RuntimeError as report_error:
+                            safe_detail = str(report_error)
+                            if (
+                                os.environ.get("GITHUB_ACTIONS") == "true"
+                                and safe_detail.startswith("Real Playwright scenarios failed:")
+                            ):
+                                print(
+                                    f"::error title=Real Playwright report::{safe_detail}",
+                                    file=sys.stderr,
+                                )
+                    raise
 
         report = json.loads(report_path.read_text(encoding="utf-8"))
         browser_assertions = playwright_assertions(
