@@ -288,11 +288,20 @@ def _process(
 
 @contextmanager
 def _disposable_redis(run_id: str) -> Iterator[str]:
-    from scripts.run_with_disposable_database import _docker
+    from scripts.run_with_disposable_database import (
+        CONTAINER_ID_PATTERN,
+        _docker,
+        _inspect_container,
+    )
 
     token = uuid.UUID(run_id).hex
     name = f"jualin-test-redis-{token}"
     image = "redis:7-alpine"
+    expected_labels = {
+        "com.jualin.disposable": "true",
+        "com.jualin.test-run-id": run_id,
+        "com.jualin.resource": "redis-e2e",
+    }
     result = _docker(
         [
             "run",
@@ -308,6 +317,8 @@ def _disposable_redis(run_id: str) -> Iterator[str]:
             "com.jualin.resource=redis-e2e",
             "--publish",
             "127.0.0.1::6379",
+            "--tmpfs",
+            "/data:rw,nosuid,nodev,noexec,size=64m,mode=1777",
             image,
             "redis-server",
             "--save",
@@ -319,31 +330,46 @@ def _disposable_redis(run_id: str) -> Iterator[str]:
     )
     container_id = result.stdout.strip()
 
-    def inspect_authority(*, require_running: bool) -> dict[str, Any]:
-        inspected = json.loads(_docker(["inspect", container_id]).stdout)[0]
-        labels = inspected.get("Config", {}).get("Labels") or {}
-        mounts = inspected.get("Mounts") or []
-        ports = inspected.get("NetworkSettings", {}).get("Ports", {}).get("6379/tcp")
+    def inspect_identity() -> dict[str, Any]:
+        inspected = _inspect_container(container_id)
         if (
             inspected.get("Id") != container_id
             or inspected.get("Name") != f"/{name}"
             or inspected.get("Config", {}).get("Image") != image
-            or labels.get("com.jualin.disposable") != "true"
-            or labels.get("com.jualin.test-run-id") != run_id
-            or labels.get("com.jualin.resource") != "redis-e2e"
-            or mounts
-            or not isinstance(ports, list)
-            or len(ports) != 1
-            or ports[0].get("HostIp") != "127.0.0.1"
+            or (inspected.get("Config", {}).get("Labels") or {}) != expected_labels
+        ):
+            raise RuntimeError("Disposable Redis identity verification failed")
+        return inspected
+
+    def inspect_authority(*, require_running: bool) -> tuple[dict[str, Any], int]:
+        inspected = inspect_identity()
+        tmpfs = inspected.get("HostConfig", {}).get("Tmpfs") or {}
+        tmpfs_options = tmpfs.get("/data")
+        option_set = (
+            set(tmpfs_options.split(",")) if isinstance(tmpfs_options, str) else set()
+        )
+        mounts = inspected.get("Mounts") or []
+        ports = inspected.get("NetworkSettings", {}).get("Ports", {}).get("6379/tcp")
+        binding = ports[0] if isinstance(ports, list) and len(ports) == 1 else {}
+        host_port = binding.get("HostPort") if isinstance(binding, dict) else None
+        port = int(host_port) if isinstance(host_port, str) and host_port.isdecimal() else 0
+        if (
+            set(tmpfs) != {"/data"}
+            or not {"rw", "nosuid", "nodev", "noexec"}.issubset(option_set)
+            or len(mounts) != 1
+            or mounts[0].get("Type") != "tmpfs"
+            or mounts[0].get("Destination") != "/data"
+            or binding.get("HostIp") != "127.0.0.1"
+            or not 1 <= port <= 65535
             or (require_running and inspected.get("State", {}).get("Running") is not True)
         ):
             raise RuntimeError("Disposable Redis authority verification failed")
-        return inspected
+        return inspected, port
 
     try:
-        inspected = inspect_authority(require_running=True)
-        ports = inspected["NetworkSettings"]["Ports"]["6379/tcp"]
-        port = int(ports[0]["HostPort"])
+        if CONTAINER_ID_PATTERN.fullmatch(container_id) is None:
+            raise RuntimeError("Disposable Redis returned an invalid container identity")
+        _, port = inspect_authority(require_running=True)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             try:
@@ -378,7 +404,7 @@ def _disposable_redis(run_id: str) -> Iterator[str]:
             if resources:
                 if resources != [container_id]:
                     raise RuntimeError("Refusing Redis teardown with changed authority")
-                inspect_authority(require_running=False)
+                inspect_identity()
                 _docker(["container", "rm", "--force", container_id])
         except Exception as cleanup_error:
             if primary_error is not None:

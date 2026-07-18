@@ -88,7 +88,12 @@ class DisposableBrowserE2ETests(unittest.TestCase):
                     "com.jualin.resource": "redis-e2e",
                 },
             },
-            "Mounts": [],
+            "HostConfig": {
+                "Tmpfs": {
+                    "/data": "rw,nosuid,nodev,noexec,size=64m,mode=1777",
+                },
+            },
+            "Mounts": [{"Type": "tmpfs", "Destination": "/data"}],
             "NetworkSettings": {
                 "Ports": {"6379/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49152"}]}
             },
@@ -98,6 +103,12 @@ class DisposableBrowserE2ETests(unittest.TestCase):
         def docker(arguments, **_kwargs):
             nonlocal ping_attempts
             if arguments[0] == "run":
+                self.assertIn("--tmpfs", arguments)
+                tmpfs_index = arguments.index("--tmpfs")
+                self.assertEqual(
+                    arguments[tmpfs_index + 1],
+                    "/data:rw,nosuid,nodev,noexec,size=64m,mode=1777",
+                )
                 return subprocess.CompletedProcess(arguments, 0, container_id, "")
             if arguments[0] == "inspect":
                 return subprocess.CompletedProcess(arguments, 0, json.dumps([inspected]), "")
@@ -144,7 +155,12 @@ class DisposableBrowserE2ETests(unittest.TestCase):
                     "com.jualin.resource": "redis-e2e",
                 },
             },
-            "Mounts": [],
+            "HostConfig": {
+                "Tmpfs": {
+                    "/data": "rw,nosuid,nodev,noexec,size=64m,mode=1777",
+                },
+            },
+            "Mounts": [{"Type": "tmpfs", "Destination": "/data"}],
             "NetworkSettings": {
                 "Ports": {"6379/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49152"}]}
             },
@@ -171,6 +187,71 @@ class DisposableBrowserE2ETests(unittest.TestCase):
             ["Disposable Redis cleanup also failed; details withheld"],
         )
         self.assertNotIn("synthetic teardown detail", str(raised.exception))
+
+    def test_redis_rejects_persistent_volume_but_cleans_exact_container(self):
+        import json
+        import subprocess
+        import uuid
+
+        from scripts.run_disposable_browser_e2e import _disposable_redis
+
+        run_id = str(uuid.uuid4())
+        container_id = "a" * 64
+        name = f"jualin-test-redis-{uuid.UUID(run_id).hex}"
+        inspected = {
+            "Id": container_id,
+            "Name": f"/{name}",
+            "State": {"Running": True},
+            "Config": {
+                "Image": "redis:7-alpine",
+                "Labels": {
+                    "com.jualin.disposable": "true",
+                    "com.jualin.test-run-id": run_id,
+                    "com.jualin.resource": "redis-e2e",
+                },
+            },
+            "HostConfig": {"Tmpfs": {}},
+            "Mounts": [
+                {"Type": "volume", "Destination": "/data", "Name": "unsafe"}
+            ],
+            "NetworkSettings": {
+                "Ports": {
+                    "6379/tcp": [
+                        {"HostIp": "127.0.0.1", "HostPort": "49152"}
+                    ]
+                }
+            },
+        }
+        removed = False
+
+        def docker(arguments, **_kwargs):
+            nonlocal removed
+            if arguments[0] == "run":
+                return subprocess.CompletedProcess(arguments, 0, container_id, "")
+            if arguments[0] == "inspect":
+                return subprocess.CompletedProcess(
+                    arguments, 0, json.dumps([inspected]), ""
+                )
+            if arguments[0] == "ps":
+                return subprocess.CompletedProcess(
+                    arguments, 0, f"{container_id}\n", ""
+                )
+            if arguments[:3] == ["container", "rm", "--force"]:
+                removed = True
+                return subprocess.CompletedProcess(arguments, 0, container_id, "")
+            raise AssertionError(f"unexpected docker command: {arguments[0]}")
+
+        with patch(
+            "scripts.run_with_disposable_database._docker", side_effect=docker
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "Disposable Redis authority verification failed"
+            ) as raised:
+                with _disposable_redis(run_id):
+                    pass
+
+        self.assertEqual(getattr(raised.exception, "__notes__", []), [])
+        self.assertTrue(removed)
 
     def test_process_cleanup_does_not_mask_primary_failure(self):
         from scripts.run_disposable_browser_e2e import _process
