@@ -937,6 +937,17 @@ if __name__ == "__main__":
         raise SystemExit(130)
     except Exception as exc:
         print(f"[REAL E2E FAIL] {type(exc).__name__}: {exc}", file=sys.stderr)
+        safe_detail = str(exc)
+        if (
+            os.environ.get("GITHUB_ACTIONS") == "true"
+            and safe_detail.startswith(
+                "Disposable Redis authority verification failed ("
+            )
+        ):
+            print(
+                f"::error title=Disposable Redis guard::{safe_detail}",
+                file=sys.stderr,
+            )
         if getattr(exc, "__notes__", None):
             print(
                 "[REAL E2E CLEANUP] an additional sanitized cleanup failure occurred",
