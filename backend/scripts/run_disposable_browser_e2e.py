@@ -349,21 +349,38 @@ def _disposable_redis(run_id: str) -> Iterator[str]:
             set(tmpfs_options.split(",")) if isinstance(tmpfs_options, str) else set()
         )
         mounts = inspected.get("Mounts") or []
+        mount = mounts[0] if len(mounts) == 1 and isinstance(mounts[0], dict) else {}
         ports = inspected.get("NetworkSettings", {}).get("Ports", {}).get("6379/tcp")
         binding = ports[0] if isinstance(ports, list) and len(ports) == 1 else {}
         host_port = binding.get("HostPort") if isinstance(binding, dict) else None
         port = int(host_port) if isinstance(host_port, str) and host_port.isdecimal() else 0
-        if (
-            set(tmpfs) != {"/data"}
-            or not {"rw", "nosuid", "nodev", "noexec"}.issubset(option_set)
-            or len(mounts) != 1
-            or mounts[0].get("Type") != "tmpfs"
-            or mounts[0].get("Destination") != "/data"
-            or binding.get("HostIp") != "127.0.0.1"
-            or not 1 <= port <= 65535
-            or (require_running and inspected.get("State", {}).get("Running") is not True)
-        ):
-            raise RuntimeError("Disposable Redis authority verification failed")
+        checks = (
+            ("tmpfs-map", set(tmpfs) == {"/data"}),
+            (
+                "tmpfs-options",
+                {"rw", "nosuid", "nodev", "noexec"}.issubset(option_set),
+            ),
+            (
+                "mount",
+                len(mounts) == 1
+                and mount.get("Type") == "tmpfs"
+                and mount.get("Destination") == "/data",
+            ),
+            (
+                "port-binding",
+                binding.get("HostIp") == "127.0.0.1" and 1 <= port <= 65535,
+            ),
+            (
+                "running",
+                not require_running
+                or inspected.get("State", {}).get("Running") is True,
+            ),
+        )
+        failed_checks = ",".join(name for name, passed in checks if not passed)
+        if failed_checks:
+            raise RuntimeError(
+                f"Disposable Redis authority verification failed ({failed_checks})"
+            )
         return inspected, port
 
     try:
