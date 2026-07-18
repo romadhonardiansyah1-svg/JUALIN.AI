@@ -37,7 +37,7 @@ export default function LandingPage() {
     { icon: "💬", title: "Chat AI Otomatis", desc: "Balas chat customer 24/7 dengan AI yang paham katalog produkmu. Respons instan, natural, dan sopan.", color: "--primary" },
     { icon: "📦", title: "Katalog Cerdas", desc: "AI memahami semua produk, harga, stok, dan variasi secara real-time dengan semantic search.", color: "--secondary" },
     { icon: "🛒", title: "Order dari Chat", desc: "Percakapan otomatis jadi pesanan tanpa input manual. Customer tinggal bilang mau pesan.", color: "--tertiary" },
-    { icon: "💳", title: "Dual Payment", desc: "Terima pembayaran via QRIS & Virtual Account. Integrasi Midtrans dan Cashi.id built-in.", color: "--stat-orange" },
+    { icon: "💳", title: "Pembayaran Midtrans", desc: "Terima QRIS, transfer bank, e-wallet, dan kartu melalui Midtrans Snap.", color: "--stat-orange" },
     { icon: "📊", title: "Dashboard Analitik", desc: "Conversion funnel, sales stages, customer insights, dan tren penjualan real-time.", color: "--info" },
     { icon: "🧠", title: "Customer Memory", desc: "AI mengingat preferensi dan histori customer. Pelanggan berulang mendapat treatment VIP.", color: "--primary" },
   ];
@@ -54,7 +54,7 @@ export default function LandingPage() {
     { q: "Bagaimana AI bisa paham produk saya?", a: "Cukup tambahkan produk ke katalog, AI akan diarahkan menggunakan data katalog dan tetap dapat keliru. Selalu periksa respons sebelum dipublikasikan." },
     { q: "Apakah AI bisa salah jawab?", a: "AI diarahkan menggunakan data katalog dan tetap dapat keliru. Jika pertanyaan di luar konteks, AI diinstruksikan meminta customer menghubungi langsung, tetapi kesalahan tetap mungkin." },
     { q: "Bagaimana customer mengakses chat?", a: "Setiap toko mendapat link unik (contoh: jualin.ai/chat/nama-toko). Tinggal share ke customer atau pasang di bio Instagram/WhatsApp." },
-    { q: "Bagaimana cara pembayaran?", a: "Kami mendukung QRIS (semua e-wallet & mobile banking) dan Virtual Account (BCA, BNI, BRI, Mandiri) melalui Midtrans dan Cashi.id." },
+    { q: "Bagaimana cara pembayaran?", a: "Pembayaran diproses melalui Midtrans Snap yang mendukung QRIS, transfer bank, e-wallet, dan metode lain yang tersedia di akun merchant." },
   ];
 
   const sectionClass = (id) =>

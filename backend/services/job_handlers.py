@@ -702,6 +702,17 @@ async def handle_payment_reconciliation(db: AsyncSession, job: BackgroundJob) ->
 
         provider = order.payment_provider
         invoice_id = order.payment_invoice_id
+        if provider != "midtrans":
+            logger.warning(
+                "Payment reconciliation suppressed for retired provider",
+                extra={"order_id": order.id, "provider": provider},
+            )
+            return {
+                "success": False,
+                "error": "payment provider retired",
+                "error_code": "payment_provider_retired",
+                "permanent": True,
+            }
         gateway = get_payment_gateway(provider)
         status_result = await gateway.check_status(invoice_id)
         if not getattr(status_result, "verified", True):

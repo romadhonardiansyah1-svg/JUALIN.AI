@@ -170,7 +170,7 @@ class CapabilityRegressionTests(unittest.IsolatedAsyncioTestCase):
         from api.routes_public_payments import create_via_session
         from models.order import OrderStatus
 
-        body = json.dumps({"method": "qris", "provider": "cashi"}).encode()
+        body = json.dumps({"method": "snap", "provider": "midtrans"}).encode()
         sent = False
 
         async def receive():
@@ -423,15 +423,16 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(locked, order)
         self.assertIn("FOR UPDATE", str(db.execute.await_args.args[0]).upper())
 
-    async def test_second_va_payment_creation_reuses_invoice_without_payment_url(self):
+    async def test_second_midtrans_payment_creation_reuses_invoice(self):
         from models.order import OrderStatus
         from services.payments.factory import create_payment_for_order
 
         order = SimpleNamespace(
-            id=3, status=OrderStatus.PENDING, total=100000, customer_name="Buyer",
-            customer_phone="0812", items=[], payment_url=None, payment_provider=None,
-            payment_method=None, payment_invoice_id=None, payment_qr_data=None,
-            payment_va_number=None, payment_expires_at=None,
+            id=3, seller_id=1, status=OrderStatus.PENDING, total=100000,
+            customer_name="Buyer", customer_phone="0812", items=[],
+            payment_url=None, payment_provider=None, payment_method=None,
+            payment_invoice_id=None, payment_qr_data=None, payment_va_number=None,
+            payment_expires_at=None, payment_access_token_hmac=None,
         )
         locked_result = MagicMock()
         locked_result.scalar_one_or_none.return_value = order
@@ -445,27 +446,33 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         db.commit.side_effect = commit
         gateway = SimpleNamespace(create_payment=AsyncMock(return_value=SimpleNamespace(
-            success=True, method="va_bca", provider="cashi", order_id="JUALIN-3",
-            payment_url=None, qr_data=None, token="1234567890",
-            expires_at=None, amount=100000, error_message=None,
+            success=True, method="snap", provider="midtrans", order_id="JUALIN-3",
+            payment_url="https://app.sandbox.midtrans.com/pay", qr_data=None,
+            token="snap-token", expires_at=None, amount=100000, error_message=None,
         )))
         attempt = SimpleNamespace(id="attempt-1")
-        capability = SimpleNamespace(token_hmac="hmac", key_version=1, expires_at=datetime.now(timezone.utc))
+        capability = SimpleNamespace(
+            token_hmac="hmac", key_version=1, expires_at=datetime.now(timezone.utc),
+        )
+
         async def create_capability(*_args):
             events.append("capability")
             return attempt, capability, "cap-token"
 
         with (
             patch("services.payments.factory.get_payment_gateway", return_value=gateway),
-            patch("services.payments.factory._get_or_create_payment_attempt_and_capability", new=AsyncMock(side_effect=create_capability)),
+            patch(
+                "services.payments.factory._get_or_create_payment_attempt_and_capability",
+                new=AsyncMock(side_effect=create_capability),
+            ),
         ):
-            first = await create_payment_for_order(order, method="va_bca", db=db, provider="cashi")
-            second = await create_payment_for_order(order, method="va_bca", db=db, provider="cashi")
+            first = await create_payment_for_order(order, db=db)
+            second = await create_payment_for_order(order, db=db)
 
         self.assertTrue(first["payment_created"])
         self.assertTrue(second["already_exists"])
         self.assertEqual(second["invoice_id"], "JUALIN-3")
-        self.assertEqual(second["va_number"], "1234567890")
+        self.assertEqual(second["provider"], "midtrans")
         self.assertEqual(gateway.create_payment.await_count, 1)
         self.assertEqual(events, ["commit", "capability", "commit"])
 
@@ -495,17 +502,23 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(invoice_ids, ["JUALIN-3", "JUALIN-3"])
 
-    def test_public_payment_payload_recognizes_invoice_without_url(self):
+    def test_retired_provider_payload_hides_payment_instructions(self):
         from api.routes_public_payments import _payment_payload
 
         order = SimpleNamespace(
-            id=3, status="pending", payment_provider="cashi", payment_method="va_bca",
-            payment_invoice_id="JUALIN-3", payment_url=None, payment_qr_data=None,
-            payment_va_number="1234567890", payment_expires_at=None, total=100000,
-            paid_at=None,
+            id=3, status="pending", payment_provider="retired-provider", payment_method="qris",
+            payment_invoice_id="LEGACY-3", payment_url="https://retired.invalid/pay",
+            payment_qr_data="retired-qr", payment_va_number="retired-va",
+            payment_expires_at=None, total=100000, paid_at=None,
         )
 
-        self.assertTrue(_payment_payload(order)["payment_created"])
+        payload = _payment_payload(order)
+
+        self.assertFalse(payload["payment_created"])
+        self.assertTrue(payload["migration_required"])
+        self.assertIsNone(payload["payment_url"])
+        self.assertIsNone(payload["qr_data"])
+        self.assertIsNone(payload["va_number"])
 
     async def test_existing_invoice_without_capability_repairs_access_without_new_invoice(self):
         from models.order import OrderStatus
@@ -515,9 +528,10 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
         order = SimpleNamespace(
             id=4, seller_id=1, status=OrderStatus.PENDING, total=100000,
             customer_name="Buyer", customer_phone="0812", items=[],
-            payment_url="https://pay.example", payment_provider="cashi",
-            payment_method="qris", payment_invoice_id="JUALIN-4",
-            payment_qr_data=None, payment_va_number=None, payment_expires_at=None,
+            payment_url="https://app.sandbox.midtrans.com/pay",
+            payment_provider="midtrans", payment_method="snap",
+            payment_invoice_id="JUALIN-4", payment_qr_data=None,
+            payment_va_number=None, payment_expires_at=None,
             payment_access_token_hmac=None, payment_access_token_key_version=None,
             payment_access_token_expires_at=None,
         )
@@ -529,7 +543,7 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
         gateway = SimpleNamespace(
             create_payment=AsyncMock(),
             check_status=AsyncMock(return_value=SimpleNamespace(
-                status=PaymentStatus.PENDING, amount=100123, verified=True,
+                status=PaymentStatus.PENDING, amount=100000, verified=True,
             )),
         )
         attempt = SimpleNamespace(id="attempt-4")
@@ -544,7 +558,7 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(return_value=(attempt, capability, "repaired-token")),
             ),
         ):
-            result = await create_payment_for_order(order, method="qris", db=db, provider="cashi")
+            result = await create_payment_for_order(order, db=db)
 
         gateway.create_payment.assert_not_awaited()
         gateway.check_status.assert_awaited_once_with("JUALIN-4")
@@ -562,22 +576,175 @@ class PaymentCreationRegressionTests(unittest.IsolatedAsyncioTestCase):
         order = SimpleNamespace(
             id=5, seller_id=1, status=OrderStatus.PENDING, total=100000,
             customer_name="Buyer", customer_phone="0812", items=[],
-            payment_url="https://pay.example", payment_provider="cashi",
-            payment_method="qris", payment_invoice_id="JUALIN-5",
-            payment_qr_data=None, payment_va_number=None, payment_expires_at=None,
+            payment_url="https://app.sandbox.midtrans.com/pay",
+            payment_provider="midtrans", payment_method="snap",
+            payment_invoice_id="JUALIN-5", payment_qr_data=None,
+            payment_va_number=None, payment_expires_at=None,
             payment_access_token_hmac=None,
         )
-        locked_result = MagicMock(); locked_result.scalar_one_or_none.return_value = order
-        db = AsyncMock(); db.execute.return_value = locked_result
+        locked_result = MagicMock()
+        locked_result.scalar_one_or_none.return_value = order
+        db = AsyncMock()
+        db.execute.return_value = locked_result
         gateway = SimpleNamespace(check_status=AsyncMock(return_value=SimpleNamespace(
             status=PaymentStatus.PENDING, amount=50000, verified=True,
         )))
 
         with patch("services.payments.factory.get_payment_gateway", return_value=gateway):
             with self.assertRaises(PaymentError):
-                await create_payment_for_order(order, method="qris", db=db, provider="cashi")
+                await create_payment_for_order(order, db=db)
 
         db.commit.assert_not_awaited()
+
+
+class MidtransOnlyMigrationRegressionTests(unittest.IsolatedAsyncioTestCase):
+    def test_payment_requests_default_to_midtrans_snap(self):
+        from api.routes_payments import CreatePaymentRequest, PublicCreatePaymentRequest
+
+        seller_request = CreatePaymentRequest(order_id=1)
+        public_request = PublicCreatePaymentRequest(order_id=1, token="public-token")
+
+        self.assertEqual((seller_request.provider, seller_request.method), ("midtrans", "snap"))
+        self.assertEqual((public_request.provider, public_request.method), ("midtrans", "snap"))
+
+    def test_payment_requests_reject_retired_provider_and_non_snap_method(self):
+        from pydantic import ValidationError as PydanticValidationError
+        from api.routes_payments import CreatePaymentRequest
+
+        with self.assertRaises(PydanticValidationError):
+            CreatePaymentRequest(order_id=1, provider="retired-provider")
+        with self.assertRaises(PydanticValidationError):
+            CreatePaymentRequest(order_id=1, method="qris")
+
+    def test_available_methods_expose_only_midtrans_snap(self):
+        from api.routes_payments import _available_payment_methods
+
+        with patch("api.routes_payments.settings.MIDTRANS_SERVER_KEY", "configured"):
+            methods = _available_payment_methods()
+
+        self.assertEqual(
+            [(method["provider"], method["method"]) for method in methods],
+            [("midtrans", "snap")],
+        )
+
+    def test_retired_provider_webhook_route_is_absent(self):
+        from api.routes_webhooks import router
+
+        routes = {(route.path, frozenset(route.methods or [])) for route in router.routes}
+        self.assertNotIn(("/retired-provider", frozenset({"POST"})), routes)
+        self.assertIn(("/midtrans", frozenset({"POST"})), routes)
+
+    async def test_existing_retired_provider_invoice_is_blocked_without_network_call(self):
+        from core.exceptions import PaymentError
+        from models.order import OrderStatus
+        from services.payments.factory import create_payment_for_order
+
+        order = SimpleNamespace(
+            id=44, seller_id=1, status=OrderStatus.PENDING, total=100000,
+            customer_name="Buyer", customer_phone="0812", items=[],
+            payment_url="https://retired.invalid/pay", payment_provider="retired-provider",
+            payment_method="qris", payment_invoice_id="LEGACY-44",
+            payment_qr_data=None, payment_va_number=None, payment_expires_at=None,
+            payment_access_token_hmac="legacy-hmac",
+        )
+        locked_result = MagicMock()
+        locked_result.scalar_one_or_none.return_value = order
+        db = AsyncMock()
+        db.execute.return_value = locked_result
+
+        with patch("services.payments.factory.get_payment_gateway") as gateway_factory:
+            with self.assertRaises(PaymentError) as raised:
+                await create_payment_for_order(order, db=db)
+
+        self.assertIn("tidak lagi didukung", str(raised.exception).lower())
+        gateway_factory.assert_not_called()
+        db.commit.assert_not_awaited()
+
+    async def test_reconciliation_suppresses_retired_provider_without_network_call(self):
+        from models.order import OrderStatus
+        from services.job_handlers import handle_payment_reconciliation
+
+        order = SimpleNamespace(
+            id=45, seller_id=1, status=OrderStatus.PENDING,
+            payment_provider="retired-provider", payment_invoice_id="LEGACY-45",
+        )
+        order_result = MagicMock()
+        order_result.scalar_one_or_none.return_value = order
+        db = AsyncMock()
+        db.execute.return_value = order_result
+
+        with patch("services.payments.factory.get_payment_gateway") as gateway_factory:
+            result = await handle_payment_reconciliation(
+                db, SimpleNamespace(payload={"order_id": 45}),
+            )
+
+        self.assertFalse(result["success"])
+        self.assertTrue(result["permanent"])
+        self.assertEqual(result["error_code"], "payment_provider_retired")
+        gateway_factory.assert_not_called()
+        db.commit.assert_not_awaited()
+
+    async def test_capability_session_rejects_retired_provider_before_db_or_network(self):
+        from api.routes_public_payments import create_via_session
+
+        body = json.dumps({"method": "snap", "provider": "retired-provider"}).encode()
+        sent = False
+
+        async def receive():
+            nonlocal sent
+            if sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request({
+            "type": "http", "method": "POST", "path": "/",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"cookie", b"payment_capability_session=session-token"),
+            ],
+        }, receive)
+        db = AsyncMock()
+
+        with (
+            patch("api.routes_public_payments._rate_limit_public", new=AsyncMock()),
+            patch(
+                "api.routes_public_payments.verify_capability_session",
+                new=AsyncMock(return_value=SimpleNamespace(id=1)),
+            ),
+            patch(
+                "services.payments.factory.create_payment_for_order",
+                new=AsyncMock(),
+            ) as create_payment,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                await create_via_session(45, request, db)
+
+        self.assertEqual(raised.exception.status_code, 422)
+        self.assertEqual(
+            raised.exception.detail["error"], "payment_method_not_supported"
+        )
+        db.execute.assert_not_awaited()
+        create_payment.assert_not_awaited()
+
+    async def test_admin_provider_health_exposes_only_midtrans_payment(self):
+        from api.routes_admin import get_provider_health
+
+        query_result = MagicMock()
+        query_result.scalar_one_or_none.return_value = None
+        db = AsyncMock()
+        db.execute.return_value = query_result
+
+        with (
+            patch("cache.get_redis", new=AsyncMock(return_value=None)),
+            patch("api.routes_admin.settings.MIDTRANS_SERVER_KEY", "configured"),
+        ):
+            result = await get_provider_health(
+                admin=SimpleNamespace(id=1),
+                db=db,
+            )
+
+        self.assertEqual(result["payment"], {"midtrans": "configured"})
 
 
 class AdditionalHardeningRegressionTests(unittest.IsolatedAsyncioTestCase):
@@ -588,7 +755,7 @@ class AdditionalHardeningRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         order = SimpleNamespace(
             id=3, seller_id=1, status=OrderStatus.PENDING,
-            payment_provider="cashi", payment_invoice_id="JUALIN-3",
+            payment_provider="midtrans", payment_invoice_id="JUALIN-3",
             paid_at=None,
         )
         order_result = MagicMock()
@@ -599,7 +766,7 @@ class AdditionalHardeningRegressionTests(unittest.IsolatedAsyncioTestCase):
         db.add = MagicMock()
         db.execute.side_effect = [order_result, no_attempt]
         gateway = SimpleNamespace(check_status=AsyncMock(return_value=SimpleNamespace(
-            status=PaymentStatus.PAID, amount=100123,
+            status=PaymentStatus.PAID, amount=100000,
         )))
 
         with patch("services.payments.factory.get_payment_gateway", return_value=gateway):
@@ -655,7 +822,7 @@ class AdditionalHardeningRegressionTests(unittest.IsolatedAsyncioTestCase):
 
         order = SimpleNamespace(
             id=14, seller_id=2, status=OrderStatus.CANCELLED,
-            payment_provider="cashi", payment_invoice_id="JUALIN-14",
+            payment_provider="midtrans", payment_invoice_id="JUALIN-14",
             paid_at=None, total=100000, notes="", items=[{"product_id": 5, "qty": 2}],
         )
         attempt = SimpleNamespace(

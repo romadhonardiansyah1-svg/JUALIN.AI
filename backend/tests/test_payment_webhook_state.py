@@ -42,6 +42,8 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
         order.status = OrderStatus.PAID
         order.total = 100000
         order.items = []
+        order.payment_provider = "midtrans"
+        order.payment_invoice_id = f"JUALIN-{order.id}"
         order.paid_at = None
 
         mock_order_result = MagicMock()
@@ -92,6 +94,8 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
         order.status = OrderStatus.REFUNDED
         order.total = 50000
         order.items = []
+        order.payment_provider = "midtrans"
+        order.payment_invoice_id = f"JUALIN-{order.id}"
 
         mock_order_result = MagicMock()
         mock_order_result.scalar_one_or_none.return_value = order
@@ -110,7 +114,7 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
                 mock_order_result,
             ]
             with patch("core.audit.record_audit", new=AsyncMock()):
-                result = await process_webhook(provider="cashi", payload={}, headers={}, db=mock_db)
+                result = await process_webhook(provider="midtrans", payload={}, headers={}, db=mock_db)
                 self.assertTrue(result["success"])
                 # Should stay refunded
                 self.assertEqual(result["new_status"], "refunded")
@@ -151,6 +155,8 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
         order.status = OrderStatus.PENDING
         order.total = 100000
         order.items = []
+        order.payment_provider = "midtrans"
+        order.payment_invoice_id = f"JUALIN-{order.id}"
 
         mock_order_result = MagicMock()
         mock_order_result.scalar_one_or_none.return_value = order
@@ -193,6 +199,8 @@ class PaymentWebhookMonotonicTests(unittest.IsolatedAsyncioTestCase):
         order.status = OrderStatus.PENDING
         order.total = 100000
         order.items = []
+        order.payment_provider = "midtrans"
+        order.payment_invoice_id = f"JUALIN-{order.id}"
         order.paid_at = None
 
         mock_order_result = MagicMock()

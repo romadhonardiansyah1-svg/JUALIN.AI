@@ -1,17 +1,12 @@
 """
-JUALIN.AI — Webhook Handlers
-Receives payment notifications from Midtrans and Cashi.id.
+JUALIN.AI — Webhook Handlers.
 
-SECURITY:
-- Midtrans: Validates SHA512 signature (order_id + status_code + gross_amount + server_key)
-- Cashi.id: Validates x-api-key header + double-checks status via API
+Payment endpoint:
+    POST /api/webhooks/midtrans → Midtrans payment notification
 
-Endpoints:
-    POST /api/webhooks/midtrans   → Midtrans payment notification
-    POST /api/webhooks/cashi      → Cashi.id payment notification
-
-NOTE: These are PUBLIC endpoints (no auth) — they are called by payment providers.
-      Security is handled by signature/key validation inside each gateway.
+The payment endpoint is public because Midtrans calls it directly. Authenticity
+is enforced by SHA-512 signature validation using the confidential Server Key.
+WhatsApp Cloud verification and notification endpoints are also defined here.
 """
 from datetime import datetime, timezone
 import json
@@ -308,79 +303,4 @@ async def whatsapp_cloud_webhook(request: Request):
             await mark_webhook_processed(event)
         await db.commit()
 
-    return Response(status_code=200, content="OK")
-
-
-@router.post("/cashi")
-async def cashi_webhook(request: Request):
-    """
-    Cashi.id payment notification webhook.
-    
-    Cashi.id sends a POST with JSON body containing:
-    - order_id, status, amount
-    - Headers include x-api-key for authentication
-    
-    We MUST return 200 OK quickly.
-    """
-    try:
-        payload = await request.json()
-    except Exception:
-        logger.warning("Cashi webhook: invalid JSON body")
-        return Response(status_code=400, content="Invalid JSON")
-
-    order_id = payload.get("order_id", "unknown")
-    logger.info(
-        f"Cashi webhook received: {order_id}",
-        extra={
-            "status": payload.get("status"),
-            "amount": payload.get("amount"),
-        },
-    )
-
-    try:
-        from services.payments.factory import process_webhook
-
-        async with async_session() as db:
-            event, is_new = await get_or_create_webhook_event(
-                db,
-                provider="cashi",
-                payload=payload,
-                event_type="payment",
-                external_event_id=str(payload.get("id") or f"{order_id}:{payload.get('status', '')}"),
-            )
-            if not is_new and event.status == "processed":
-                await db.commit()
-                return Response(status_code=200, content="OK")
-
-            result = await process_webhook(
-                provider="cashi",
-                payload=payload,
-                headers=dict(request.headers),
-                db=db,
-            )
-
-            if result["success"]:
-                await mark_webhook_processed(event)
-                await db.commit()
-                logger.info(
-                    f"Cashi webhook processed: order #{result['order_id']} → {result['new_status']}",
-                )
-            else:
-                error = result.get("error", "")
-                invalid = error == "Invalid API key"
-                await mark_webhook_processed(event, status="invalid" if invalid else "failed", error=error)
-                await db.commit()
-                logger.warning(
-                    f"Cashi webhook failed: {error}",
-                    extra={"order_id": order_id},
-                )
-                if invalid:
-                    return Response(status_code=403, content="Invalid API key")
-                return Response(status_code=400, content="Webhook rejected")
-
-    except Exception as e:
-        logger.error(f"Cashi webhook error: {e}", exc_info=True)
-        return Response(status_code=500, content="Webhook error")
-
-    # Always return 200 to prevent retries
     return Response(status_code=200, content="OK")

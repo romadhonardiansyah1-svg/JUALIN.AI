@@ -1,5 +1,7 @@
 # Audit Bug Hunter — 18 Juli 2026
 
+> **Catatan setelah audit:** integrasi provider lama yang disebut sebagai bukti historis di bawah telah dipensiunkan dan adapter/webhook-nya dihapus. Runtime aktif sekarang hanya menerima Midtrans Snap; record provider lama dipertahankan read-only agar identitas dan audit transaksi tidak dipalsukan.
+
 ## Ringkasan
 
 Audit enam pass menemukan defect nyata pada otorisasi, pembayaran, inventori, kuota, streaming chat, inbox, referral, workflow, dan storefront. Semua temuan **Critical/High** di bawah telah diperbaiki dan memiliki regression coverage terfokus. Tidak ada Critical/High terbuka yang terbukti pada review kode final.
@@ -11,7 +13,7 @@ Status rilis tetap **NO-GO** sampai bukti PostgreSQL/Redis nyata, browser Chromi
 | # | File:line final | Bug dan skenario kegagalan | Dampak | Perbaikan |
 |---|---|---|---|---|
 | C1 | `backend/services/payments/factory.py:461-768` | Webhook paid dapat memakai amount yang tidak terverifikasi, attempt lama, atau invoice fallback yang salah. Payload/attempt salah → order ditandai paid. | Underpayment diterima dan status pembayaran lintas-attempt rusak. | Cocokkan provider+invoice current attempt, Decimal amount, seller, dan tolak amount hilang/mismatch/stale. |
-| C2 | `backend/services/payments/cashi_gateway.py:306-380` | Cashi webhook amount berasal dari payload dan lookup provider yang gagal terlihat sebagai pending valid. Payload dipalsukan/outage → fakta pembayaran dipercaya. | Order salah paid/pending dan webhook tidak dapat diretry dengan jujur. | Amount/status wajib berasal dari status API terverifikasi; lookup gagal menghasilkan `verified=False` dan webhook fail closed. |
+| C2 | `adapter provider historis yang sudah dihapus:306-380` | provider lama webhook amount berasal dari payload dan lookup provider yang gagal terlihat sebagai pending valid. Payload dipalsukan/outage → fakta pembayaran dipercaya. | Order salah paid/pending dan webhook tidak dapat diretry dengan jujur. | Amount/status wajib berasal dari status API terverifikasi; lookup gagal menghasilkan `verified=False` dan webhook fail closed. |
 | C3 | `backend/services/payments/factory.py:564-768` | Webhook bersamaan, late-paid, cancel, dan refund mengubah order/stock tanpa lifecycle monotonic dan lock lengkap. | Double restore, stok negatif/phantom, paid turun status, atau refund tidak tercatat. | Lock order+produk, paid-lineage monotonic, exact late-paid consumption ledger, refund reversal, dan stock conservation. |
 | C4 | `backend/services/job_handlers.py:677-897` | Reconciliation melaporkan sukses tetapi hanya menangani paid; refund/cancel/late-paid tidak menyelaraskan stock dan recovery ledger. | Provider dan database berbeda walaupun job sukses. | Exact current-attempt validation, row locks, amount validation, lifecycle parity, audit, recovery outcome, dan retry pada status unverifiable. |
 | C5 | `backend/api/routes_public_payments.py:124-297`; `backend/services/payment_capability.py:106-221` | Bootstrap capability dapat direplay dan session anak tetap dipakai setelah parent revoked/expired atau attempt berubah. | Akses publik pembayaran melampaui otorisasi yang diberikan. | Single-use row lock, parent/attempt revalidation, audience/purpose binding, expiry/revocation checks. |
@@ -29,8 +31,8 @@ Status rilis tetap **NO-GO** sampai bukti PostgreSQL/Redis nyata, browser Chromi
 | # | File:line final | Trigger → failure → impact | Perbaikan |
 |---|---|---|---|
 | H5 | `backend/services/payments/factory.py:264-458` | Dua request create-payment bersamaan atau retry VA tanpa URL → dua invoice/attempt dapat dibuat. | Lock order, deterministic invoice ID, durable provider+invoice identity, dan reuse invoice meski URL kosong. |
-| H6 | `backend/services/payments/factory.py:264-458` | Invoice provider tersimpan tetapi capability setup gagal → retry selalu mengembalikan invoice tanpa capability. | Repair capability dari status provider terverifikasi tanpa membuat invoice baru; Cashi wajib `amount >= total`, provider lain exact match. |
-| H7 | `backend/services/payments/cashi_gateway.py:32-380`; `backend/services/payments/midtrans_gateway.py:31-304` | Provider mengembalikan amount berbeda/QRIS unique suffix/partial refund → amount lokal salah atau partial refund dianggap full. | Simpan amount provider, bedakan `PARTIALLY_REFUNDED`, dan jangan melakukan full stock/reversal untuk partial refund. |
+| H6 | `backend/services/payments/factory.py:264-458` | Invoice provider tersimpan tetapi capability setup gagal → retry selalu mengembalikan invoice tanpa capability. | Repair capability dari status provider terverifikasi tanpa membuat invoice baru; provider lama wajib `amount >= total`, provider lain exact match. |
+| H7 | `adapter provider historis yang sudah dihapus:32-380`; `backend/services/payments/midtrans_gateway.py:31-304` | Provider mengembalikan amount berbeda/QRIS unique suffix/partial refund → amount lokal salah atau partial refund dianggap full. | Simpan amount provider, bedakan `PARTIALLY_REFUNDED`, dan jangan melakukan full stock/reversal untuk partial refund. |
 | H8 | `backend/services/payments/factory.py:461-768`; `backend/api/routes_orders.py:343-417` | Seller cancel setelah paid lalu provider refund → refund fact diabaikan atau stock direstore dua kali. | Cancelled→refunded mencatat reversal tanpa double restore. |
 | H9 | `backend/services/payments/factory.py:189-263,564-768`; `backend/api/routes_orders.py:77-91` | Late payment saat stok tidak cukup, termasuk duplicate product lines → stock negatif atau refund membuat/menghilangkan stok. | Catat jumlah yang benar-benar dikonsumsi per produk pada immutable status history dan restore jumlah itu saja. |
 | H10 | `backend/ai/followup.py:103-148` | Dua worker auto-cancel order yang sama → keduanya restore stock. | Lock pending orders dengan `FOR UPDATE SKIP LOCKED` dan lock produk seller-scoped. |
@@ -67,7 +69,7 @@ Status rilis tetap **NO-GO** sampai bukti PostgreSQL/Redis nyata, browser Chromi
 
 ## Needs verification
 
-- **Ambiguous provider create timeout:** deterministic Midtrans/Cashi invoice IDs mengurangi duplikasi, tetapi recovery checkout token/URL setelah provider menerima request lalu response timeout bergantung kontrak/API provider. Tidak diklaim selesai.
+- **Ambiguous provider create timeout:** deterministic Midtrans/provider lama invoice IDs mengurangi duplikasi, tetapi recovery checkout token/URL setelah provider menerima request lalu response timeout bergantung kontrak/API provider. Tidak diklaim selesai.
 - **Real PostgreSQL concurrency:** lock SQL dan state behavior diuji dengan mocks; belum ada eksekusi concurrent transaction pada PostgreSQL disposable.
 - **Real browser:** tidak ada Chromium runtime, network, console, responsive, atau visual verification.
 - **Real stack:** PostgreSQL/Redis/Docker startup dan disposable full-stack rehearsal belum dijalankan karena environment sebelumnya tidak tersedia; tidak dicoba ulang membabi buta.

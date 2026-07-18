@@ -93,7 +93,6 @@ export default function AdminSystemPage() {
     { name: "WhatsApp", icon: "💬", status: providers.whatsapp?.status },
     { name: "LLM", icon: "🤖", status: providers.llm?.status, extra: providers.llm?.provider },
     { name: "Midtrans", icon: "💳", status: providers.payment?.midtrans },
-    { name: "Cashi", icon: "📱", status: providers.payment?.cashi },
   ] : [];
 
   const jobStatusColor = (s) => {

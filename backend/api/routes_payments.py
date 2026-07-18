@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime, timezone
 import secrets
 
@@ -33,8 +33,8 @@ logger = get_logger(__name__)
 
 class CreatePaymentRequest(BaseModel):
     order_id: int
-    method: str = "qris"           # qris, snap, va_bca, etc.
-    provider: Optional[str] = None  # midtrans, cashi (auto-detect if not set)
+    method: Literal["snap"] = "snap"
+    provider: Literal["midtrans"] = "midtrans"
 
 
 class PaymentStatusResponse(BaseModel):
@@ -49,8 +49,8 @@ class PaymentStatusResponse(BaseModel):
 class PublicCreatePaymentRequest(BaseModel):
     order_id: int
     token: str
-    method: str = "qris"
-    provider: Optional[str] = None
+    method: Literal["snap"] = "snap"
+    provider: Literal["midtrans"] = "midtrans"
 
 
 def _verify_public_token(order: Order, token: str | None):
@@ -63,79 +63,46 @@ def _verify_public_token(order: Order, token: str | None):
 
 
 def _payment_payload(order: Order, payment_created: bool = True, check_error: str | None = None) -> dict:
+    retired_provider = bool(
+        order.payment_provider and order.payment_provider != "midtrans"
+    )
     data = {
         "order_id": order.id,
         "status": order.status.value,
         "provider": order.payment_provider,
-        "method": order.payment_method,
+        "method": None if retired_provider else order.payment_method,
         "invoice_id": order.payment_invoice_id,
-        "payment_url": order.payment_url,
-        "qr_data": order.payment_qr_data,
-        "va_number": order.payment_va_number,
+        "payment_url": None if retired_provider else order.payment_url,
+        "qr_data": None if retired_provider else order.payment_qr_data,
+        "va_number": None if retired_provider else order.payment_va_number,
         "expires_at": order.payment_expires_at,
         "amount": order.total,
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
-        "payment_created": payment_created,
+        "payment_created": payment_created and not retired_provider,
     }
+    if retired_provider:
+        data["migration_required"] = True
+        data["payment_error"] = (
+            "Provider pembayaran lama telah dihentikan. "
+            "Batalkan order ini dan buat order baru untuk menggunakan Midtrans."
+        )
     if check_error:
         data["check_error"] = check_error
     return data
 
 
 def _available_payment_methods() -> list[dict]:
-    methods = []
-
-    if settings.CASHI_API_KEY:
-        methods.extend([
-            {
-                "provider": "cashi",
-                "method": "qris",
-                "label": "QRIS (Semua E-Wallet & Mobile Banking)",
-                "icon": "📱",
-                "description": "GoPay, OVO, Dana, ShopeePay, dan semua bank",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_bca",
-                "label": "Transfer Bank BCA (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account BCA",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_bni",
-                "label": "Transfer Bank BNI (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account BNI",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_bri",
-                "label": "Transfer Bank BRI (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account BRI",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_mandiri",
-                "label": "Transfer Bank Mandiri (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account Mandiri",
-            },
-        ])
-
-    if settings.MIDTRANS_SERVER_KEY:
-        methods.extend([
-            {
-                "provider": "midtrans",
-                "method": "snap",
-                "label": "Midtrans (Semua Metode)",
-                "icon": "💳",
-                "description": "QRIS, GoPay, Transfer Bank, Kartu Kredit, dan lainnya",
-            },
-        ])
-
-    return methods
+    if not settings.MIDTRANS_SERVER_KEY:
+        return []
+    return [
+        {
+            "provider": "midtrans",
+            "method": "snap",
+            "label": "Midtrans (Semua Metode)",
+            "icon": "💳",
+            "description": "QRIS, GoPay, Transfer Bank, Kartu Kredit, dan lainnya",
+        }
+    ]
 
 
 async def _sync_payment_status(order: Order, db: AsyncSession | None = None) -> dict:
@@ -241,13 +208,7 @@ async def create_payment(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Create a payment for an existing order.
-    Returns payment URL/QR/token based on the method chosen.
-    
-    Seller creates payment → gets link/QR → sends to customer.
-    """
-    # Find order (must belong to current seller)
+    """Create a Midtrans Snap payment for a seller-owned order."""
     result = await db.execute(
         select(Order)
         .where(Order.id == req.order_id)
@@ -258,14 +219,21 @@ async def create_payment(
     if not order:
         raise NotFoundError("Order", req.order_id)
 
-    # Validate order is in a payable state
     if order.status not in (OrderStatus.PENDING, OrderStatus.CONFIRMED):
         raise ValidationError(
             message=f"Order #{req.order_id} tidak dalam status yang bisa dibayar (status: {order.status.value})",
             fields={"status": order.status.value},
         )
 
-    # Don't create duplicate payments
+    if order.payment_provider and order.payment_provider != "midtrans":
+        raise ValidationError(
+            message=(
+                "Provider pembayaran lama telah dihentikan. "
+                "Batalkan order ini dan buat order baru untuk menggunakan Midtrans."
+            ),
+            fields={"payment_provider": "retired"},
+        )
+
     if order.payment_provider and order.payment_invoice_id:
         return {
             "message": "Pembayaran sudah dibuat sebelumnya",
@@ -273,7 +241,6 @@ async def create_payment(
             "already_exists": True,
         }
 
-    # Create payment
     from services.payments.factory import create_payment_for_order
 
     payment_result = await create_payment_for_order(
@@ -326,10 +293,7 @@ async def refresh_payment_status(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    P1.4 — Seller-auth explicit refresh: durable deduplicated reconciliation job.
-    Returns 202 refreshing, does not claim paid before verified provider fact.
-    """
+    """Queue a Midtrans reconciliation job for a seller-owned order."""
     result = await db.execute(
         select(Order)
         .where(Order.id == order_id)
@@ -343,14 +307,22 @@ async def refresh_payment_status(
     if not order.payment_provider or not order.payment_invoice_id:
         return {"status": "no_payment", "message": "Belum ada pembayaran yang dibuat", "order_id": order_id}
 
-    # Enqueue durable reconciliation job (idempotent)
+    if order.payment_provider != "midtrans":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "payment_provider_retired",
+                "message": "Status provider pembayaran lama tidak dapat diperbarui. Gunakan order Midtrans baru.",
+            },
+        )
+
     from core.idempotency import enqueue_job_record
 
     idem_key = f"payment_refresh:{order.seller_id}:{order.id}:{order.payment_invoice_id}"
     job, is_new = await enqueue_job_record(
         db,
         job_type="payment_reconciliation",
-        payload={"order_id": order.id, "invoice_id": order.payment_invoice_id, "provider": order.payment_provider},
+        payload={"order_id": order.id, "invoice_id": order.payment_invoice_id, "provider": "midtrans"},
         seller_id=order.seller_id,
         idempotency_key=idem_key,
         handler_contract_version=1,
@@ -433,7 +405,7 @@ async def create_public_payment(
     req: PublicCreatePaymentRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a payment from the public payment page without seller login."""
+    """Create a Midtrans Snap payment from the legacy public payment route."""
     result = await db.execute(select(Order).where(Order.id == req.order_id))
     order = result.scalar_one_or_none()
 
@@ -448,18 +420,21 @@ async def create_public_payment(
             fields={"status": order.status.value},
         )
 
+    if order.payment_provider and order.payment_provider != "midtrans":
+        raise ValidationError(
+            message=(
+                "Provider pembayaran lama telah dihentikan. "
+                "Minta seller membuat order Midtrans baru."
+            ),
+            fields={"payment_provider": "retired"},
+        )
+
     if order.payment_provider and order.payment_invoice_id:
         return {
             "message": "Pembayaran sudah dibuat sebelumnya",
             **_payment_payload(order, payment_created=True),
             "already_exists": True,
         }
-
-    if req.provider == "manual" or req.method == "manual":
-        raise ValidationError(
-            message="Payment gateway belum dikonfigurasi. Hubungi seller untuk pembayaran manual.",
-            fields={"provider": req.provider or "manual"},
-        )
 
     from services.payments.factory import create_payment_for_order
 
@@ -475,64 +450,8 @@ async def create_public_payment(
 async def list_payment_methods(
     current_user: User = Depends(get_current_user),
 ):
-    """
-    List available payment methods grouped by provider.
-    Frontend uses this to show payment options.
-    """
-    methods = []
-
-    # Cashi.id methods (always available if configured)
-    if settings.CASHI_API_KEY:
-        methods.extend([
-            {
-                "provider": "cashi",
-                "method": "qris",
-                "label": "QRIS (Semua E-Wallet & Mobile Banking)",
-                "icon": "📱",
-                "description": "GoPay, OVO, Dana, ShopeePay, dan semua bank",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_bca",
-                "label": "Transfer Bank BCA (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account BCA",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_bni",
-                "label": "Transfer Bank BNI (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account BNI",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_bri",
-                "label": "Transfer Bank BRI (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account BRI",
-            },
-            {
-                "provider": "cashi",
-                "method": "va_mandiri",
-                "label": "Transfer Bank Mandiri (VA)",
-                "icon": "🏦",
-                "description": "Virtual Account Mandiri",
-            },
-        ])
-
-    # Midtrans methods
-    if settings.MIDTRANS_SERVER_KEY:
-        methods.extend([
-            {
-                "provider": "midtrans",
-                "method": "snap",
-                "label": "Midtrans (Semua Metode)",
-                "icon": "💳",
-                "description": "QRIS, GoPay, Transfer Bank, Kartu Kredit, dan lainnya",
-            },
-        ])
-
+    """List the sole supported payment method: Midtrans Snap."""
+    methods = _available_payment_methods()
     return {"methods": methods, "configured": bool(methods)}
 
 
@@ -540,10 +459,7 @@ async def list_payment_methods(
 async def get_payment_config(
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Get client-side payment configuration.
-    Frontend needs this for Midtrans Snap.js initialization.
-    """
+    """Return the client configuration for Midtrans Snap.js."""
     return {
         "midtrans": {
             "enabled": bool(settings.MIDTRANS_SERVER_KEY),
@@ -552,8 +468,5 @@ async def get_payment_config(
             "snap_url": "https://app.midtrans.com/snap/snap.js" if settings.MIDTRANS_IS_PRODUCTION
                         else "https://app.sandbox.midtrans.com/snap/snap.js",
         },
-        "cashi": {
-            "enabled": bool(settings.CASHI_API_KEY),
-        },
-        "default_provider": settings.DEFAULT_PAYMENT_PROVIDER,
+        "default_provider": "midtrans",
     }

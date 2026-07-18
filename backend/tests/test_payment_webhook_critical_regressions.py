@@ -17,7 +17,8 @@ class PaymentWebhookCriticalRegressionTests(unittest.IsolatedAsyncioTestCase):
         order.total = 100000
         order.items = []
         order.paid_at = None
-        order.payment_invoice_id = None
+        order.payment_provider = "midtrans"
+        order.payment_invoice_id = f"JUALIN-{order_id}"
         return order
 
     async def test_legacy_paid_amount_mismatch_is_rejected(self):
@@ -42,90 +43,46 @@ class PaymentWebhookCriticalRegressionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Amount mismatch", result["error"])
         db.commit.assert_not_awaited()
 
-    async def test_cashi_paid_amount_uses_verified_unique_suffix_attempt_amount(self):
+    async def test_midtrans_webhook_cannot_mutate_retired_provider_order(self):
+        from models.order import OrderStatus
         from services.payments.base import PaymentStatus
         from services.payments.factory import process_webhook
 
-        attempt = SimpleNamespace(
-            id="attempt-current", order_id=3, seller_id=10,
-            amount=Decimal("100123"), is_current=True,
-        )
-        attempt_result = MagicMock()
-        attempt_result.scalar_one_or_none.return_value = attempt
-        order = self._order()
+        order = self._order(77)
+        order.payment_provider = "retired-provider"
+        order.payment_invoice_id = "LEGACY-retired-provider-77"
+        no_attempt = MagicMock()
+        no_attempt.scalar_one_or_none.return_value = None
         order_result = MagicMock()
         order_result.scalar_one_or_none.return_value = order
         db = AsyncMock()
         db.add = MagicMock()
-        db.execute.side_effect = [attempt_result, order_result]
+        db.execute.side_effect = [no_attempt, order_result]
         gateway = MagicMock()
         gateway.validate_webhook = AsyncMock(return_value=MagicMock(
-            valid=True, order_id="JUALIN-3", status=PaymentStatus.PAID, amount=100123,
+            valid=True,
+            order_id="JUALIN-77",
+            status=PaymentStatus.PAID,
+            amount=100000,
         ))
 
         with (
-            patch("services.payments.factory.get_payment_gateway", return_value=gateway),
+            patch(
+                "services.payments.factory.get_payment_gateway",
+                return_value=gateway,
+            ),
             patch("core.audit.record_audit", new=AsyncMock()),
-            patch("services.payment_recovery.outcomes.on_verified_payment", new=AsyncMock(return_value={})),
+            patch(
+                "services.payment_recovery.outcomes.on_verified_payment",
+                new=AsyncMock(return_value={}),
+            ),
         ):
-            result = await process_webhook("cashi", {}, {}, db)
+            result = await process_webhook("midtrans", {}, {}, db)
 
-        self.assertTrue(result["success"])
-        self.assertEqual(result["new_status"], "paid")
-
-    async def test_cashi_webhook_uses_api_verified_amount_not_payload_amount(self):
-        from services.payments.base import PaymentStatus
-        from services.payments.cashi_gateway import CashiGateway
-
-        gateway = object.__new__(CashiGateway)
-        gateway.api_key = "test-key"
-        gateway.check_status = AsyncMock(return_value=SimpleNamespace(
-            status=PaymentStatus.PAID, amount=100123,
-        ))
-
-        result = await gateway.validate_webhook(
-            {"order_id": "JUALIN-3", "status": "paid", "amount": 1},
-            {"x-api-key": "test-key"},
-        )
-
-        self.assertTrue(result.valid)
-        self.assertEqual(result.amount, 100123)
-
-    async def test_cashi_paid_webhook_without_verified_amount_is_rejected(self):
-        from services.payments.base import PaymentStatus
-        from services.payments.cashi_gateway import CashiGateway
-
-        gateway = object.__new__(CashiGateway)
-        gateway.api_key = "test-key"
-        gateway.check_status = AsyncMock(return_value=SimpleNamespace(
-            status=PaymentStatus.PAID, amount=None,
-        ))
-
-        result = await gateway.validate_webhook(
-            {"order_id": "JUALIN-3", "status": "paid", "amount": 100000},
-            {"x-api-key": "test-key"},
-        )
-
-        self.assertFalse(result.valid)
-        self.assertIn("amount", result.error_message.lower())
-
-    async def test_cashi_webhook_rejects_unverified_status_lookup(self):
-        from services.payments.base import PaymentStatus
-        from services.payments.cashi_gateway import CashiGateway
-
-        gateway = object.__new__(CashiGateway)
-        gateway.api_key = "test-key"
-        gateway.check_status = AsyncMock(return_value=SimpleNamespace(
-            status=PaymentStatus.PENDING, amount=None, verified=False,
-        ))
-
-        result = await gateway.validate_webhook(
-            {"order_id": "JUALIN-3", "status": "paid", "amount": 100000},
-            {"x-api-key": "test-key"},
-        )
-
-        self.assertFalse(result.valid)
-        self.assertIn("verified", result.error_message.lower())
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error"], "payment identity mismatch")
+        self.assertEqual(order.status, OrderStatus.PENDING)
+        db.commit.assert_not_awaited()
 
     async def test_stale_payment_attempt_is_rejected(self):
         from services.payments.base import PaymentStatus

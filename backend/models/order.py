@@ -109,7 +109,7 @@ class Order(Base):
 
     # Payment info (populated after payment is created)
     payment_method = Column(String(50), nullable=True)   # "qris", "va_bca", "gopay", "snap"
-    payment_provider = Column(String(20), nullable=True)  # "midtrans", "cashi"
+    payment_provider = Column(String(20), nullable=True)  # Active: "midtrans"; other values are historical only
     payment_invoice_id = Column(String(100), nullable=True, index=True)  # Provider order/invoice id
     payment_access_token = Column(String(100), nullable=True, index=True)  # Legacy plaintext token (to be sunset)
     payment_access_token_hmac = Column(String(64), nullable=True, index=True)  # HMAC of token, P2.4

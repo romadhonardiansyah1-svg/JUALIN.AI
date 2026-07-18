@@ -38,20 +38,34 @@ logger = get_logger(__name__)
 
 
 def _payment_payload(order):
-    return {
+    retired_provider = bool(
+        order.payment_provider and order.payment_provider != "midtrans"
+    )
+    data = {
         "order_id": order.id,
         "status": order.status.value if hasattr(order.status, "value") else str(order.status),
         "provider": order.payment_provider,
-        "method": order.payment_method,
+        "method": None if retired_provider else order.payment_method,
         "invoice_id": order.payment_invoice_id,
-        "payment_url": order.payment_url,
-        "qr_data": order.payment_qr_data,
-        "va_number": order.payment_va_number,
+        "payment_url": None if retired_provider else order.payment_url,
+        "qr_data": None if retired_provider else order.payment_qr_data,
+        "va_number": None if retired_provider else order.payment_va_number,
         "expires_at": order.payment_expires_at,
         "amount": float(order.total) if hasattr(order, "total") else 0,
         "paid_at": order.paid_at.isoformat() if order.paid_at else None,
-        "payment_created": bool(order.payment_provider and order.payment_invoice_id),
+        "payment_created": bool(
+            not retired_provider
+            and order.payment_provider
+            and order.payment_invoice_id
+        ),
     }
+    if retired_provider:
+        data["migration_required"] = True
+        data["payment_error"] = (
+            "Provider pembayaran lama telah dihentikan. "
+            "Minta seller membuat order Midtrans baru."
+        )
+    return data
 
 
 class ExchangeRequest(BaseModel):
@@ -268,10 +282,18 @@ async def create_via_session(
         raise HTTPException(status_code=403, detail={"error": "session_invalid"})
 
     body = await request.json()
-    method = body.get("method", "qris")
-    provider = body.get("provider")
-    if provider == "manual" or method == "manual":
-        raise HTTPException(status_code=400, detail="Gateway pembayaran belum dikonfigurasi")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail={"error": "invalid_payment_request"})
+    method = body.get("method", "snap")
+    provider = body.get("provider", "midtrans")
+    if provider != "midtrans" or method != "snap":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "payment_method_not_supported",
+                "message": "Metode pembayaran yang didukung hanya Midtrans Snap.",
+            },
+        )
 
     order_result = await db.execute(
         select(Order).where(Order.id == order_id).with_for_update()
@@ -283,6 +305,14 @@ async def create_via_session(
     from models.order import OrderStatus
     if order.status not in (OrderStatus.PENDING, OrderStatus.CONFIRMED):
         raise HTTPException(status_code=409, detail="Order tidak dapat dibayar pada status saat ini")
+    if order.payment_provider and order.payment_provider != "midtrans":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "payment_provider_retired",
+                "message": "Minta seller membuat order Midtrans baru.",
+            },
+        )
     if order.payment_provider and order.payment_invoice_id:
         return JSONResponse(
             content={**_payment_payload(order), "already_exists": True},
@@ -290,7 +320,9 @@ async def create_via_session(
         )
 
     from services.payments.factory import create_payment_for_order
-    result = await create_payment_for_order(order=order, method=method, provider=provider, db=db)
+    result = await create_payment_for_order(
+        order=order, method="snap", provider="midtrans", db=db
+    )
     return JSONResponse(
         content=result,
         headers={"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer"},

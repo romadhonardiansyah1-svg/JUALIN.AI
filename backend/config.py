@@ -89,18 +89,10 @@ class Settings(BaseSettings):
     
     # ── Payment Gateways ──
     
-    # Midtrans (Snap API)
+    # Midtrans Snap — the sole supported payment provider.
     MIDTRANS_SERVER_KEY: str = ""
     MIDTRANS_CLIENT_KEY: str = ""
     MIDTRANS_IS_PRODUCTION: bool = False  # False = sandbox, True = production
-    
-    # Cashi.id (QRIS + VA)
-    CASHI_API_KEY: str = ""
-    CASHI_BASE_URL: str = "https://cashi.id/api"
-    
-    # Default payment provider per seller tier
-    # Free/Starter = cashi (simpler), Pro/Bisnis = midtrans (full features)
-    DEFAULT_PAYMENT_PROVIDER: str = "cashi"
 
     # WhatsApp Cloud API
     WHATSAPP_VERIFY_TOKEN: str = ""

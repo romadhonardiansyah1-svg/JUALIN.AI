@@ -98,7 +98,13 @@ export default function PaymentPage() {
   }, [orderId, legacyToken, capabilityExchanged, capabilityReady]);
 
   useEffect(() => {
-    if (!capabilityReady) return;
+    if (!capabilityReady || !order) return;
+    if (order.migration_required) {
+      setMethods([]);
+      setSelectedMethod(null);
+      setMethodsLoaded(true);
+      return;
+    }
 
     async function loadMethods() {
       try {
@@ -122,7 +128,7 @@ export default function PaymentPage() {
       }
     }
     loadMethods();
-  }, [orderId, legacyToken, capabilityExchanged, capabilityReady]);
+  }, [orderId, legacyToken, capabilityExchanged, capabilityReady, order]);
 
   useEffect(() => {
     if (!capabilityReady || !paymentInfo || paymentStatus === "paid" || paymentStatus === "expired") return;
@@ -212,6 +218,23 @@ export default function PaymentPage() {
             <div className={styles.spinner}></div>
             <p>Memuat informasi pembayaran...</p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (order?.migration_required) {
+    return (
+      <div className={styles.page}>
+        <div className={styles.card}>
+          <div className={styles.expiredIcon}>⚠️</div>
+          <h1 className={styles.title}>Metode Pembayaran Dihentikan</h1>
+          <p className={styles.subtitle}>
+            {order.payment_error || "Provider pembayaran lama telah dihentikan."}
+          </p>
+          <p className={styles.muted}>
+            Silakan minta seller membatalkan order ini dan membuat order Midtrans baru.
+          </p>
         </div>
       </div>
     );

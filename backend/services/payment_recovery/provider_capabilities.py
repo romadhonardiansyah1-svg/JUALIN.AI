@@ -48,10 +48,7 @@ TRUSTED_PAYMENT_HOSTS = {
     "app.midtrans.com",
     "app.sandbox.midtrans.com",
     "api.midtrans.com",
-    "cashi.id",
-    "pay.cashi.id",
-    "checkout.cashi.id",
-    # Add more as per staging evidence
+    "api.sandbox.midtrans.com",
 }
 
 # For safety, we consider ONLY HTTPS with trusted host as trusted link
@@ -92,38 +89,23 @@ def evaluate_payment_provider(
     payment_expires_at_str: str | None,
     invoice_id: str | None,
 ) -> PaymentProviderCapabilities:
-    """
-    Evaluate payment provider capabilities for a given order/payment attempt.
-    """
-    # Trusted link: must be HTTPS and host allowlisted
-    trusted_link = is_trusted_https_link(payment_url)
-
-    # Exact expiry: parseable expiry
+    """Evaluate whether a persisted payment cycle is supported by Midtrans."""
     from services.payment_recovery.policy import parse_legacy_expiry
 
-    expiry_dt = parse_legacy_expiry(payment_expires_at_str)
-    exact_expiry = expiry_dt is not None
-
-    # Stable cycle ID: we have invoice_id as stable external ID
+    is_midtrans = provider == "midtrans"
     stable_cycle = bool(invoice_id)
-
-    # Payment state query: assume supported if provider is midtrans or cashi and we have gateway
-    state_query = provider in ("midtrans", "cashi") and stable_cycle
-
-    # Account active: for payment provider, we assume true if API keys configured (checked elsewhere)
-    # For this pure function, we return True if provider known
-    account_active = provider in ("midtrans", "cashi")
+    exact_expiry = parse_legacy_expiry(payment_expires_at_str) is not None
 
     return PaymentProviderCapabilities(
         provider=provider,
-        payment_state_query=state_query,
+        payment_state_query=is_midtrans and stable_cycle,
         stable_cycle_id=stable_cycle,
-        trusted_https_link=trusted_link,
+        trusted_https_link=is_midtrans and is_trusted_https_link(payment_url),
         exact_expiry=exact_expiry,
-        provider_account_active=account_active,
-        idempotency_supported=provider == "midtrans",  # Midtrans supports idempotency via order_id uniqueness
-        reconciliation_supported=True,
-        delivery_webhook_supported=False,  # Payment webhooks are separate
+        provider_account_active=is_midtrans,
+        idempotency_supported=is_midtrans,
+        reconciliation_supported=is_midtrans,
+        delivery_webhook_supported=False,
     )
 
 

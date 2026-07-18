@@ -1,12 +1,4 @@
-"""
-JUALIN.AI — Payment Gateway Abstract Base
-All payment providers implement this interface.
-
-This abstraction ensures:
-1. Switching providers requires ZERO changes in routes
-2. Both gateways return the same response format
-3. Webhook validation is gateway-specific but follows the same contract
-"""
+"""Shared payment contracts for the Midtrans Snap integration."""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
@@ -43,7 +35,7 @@ class PaymentCreateResult:
     """Unified result from creating a payment."""
     success: bool
     order_id: str                # Our internal order ID / invoice ID
-    provider: str                # "midtrans" or "cashi"
+    provider: str                # "midtrans"
     method: str                  # Payment method used
     amount: int                  # Amount in IDR (int — no decimals)
     payment_url: Optional[str]   # URL for customer to pay (checkout page or QR)
@@ -78,15 +70,12 @@ class WebhookResult:
 
 
 class PaymentGateway(ABC):
-    """
-    Abstract base class for payment gateways.
-    Both Midtrans and Cashi.id implement this interface.
-    """
+    """Abstract contract implemented by the Midtrans gateway."""
 
     @property
     @abstractmethod
     def provider_name(self) -> str:
-        """Return provider identifier: 'midtrans' or 'cashi'."""
+        """Return the provider identifier: 'midtrans'."""
         ...
 
     @abstractmethod

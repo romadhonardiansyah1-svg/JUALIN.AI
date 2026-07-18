@@ -32,50 +32,28 @@ def _parse_decimal_amount(value) -> Decimal | None:
 _gateways: dict[str, PaymentGateway] = {}
 
 
-def get_payment_gateway(provider: str = None) -> PaymentGateway:
-    """
-    Get a payment gateway instance by provider name.
-    Creates singleton instances on first call.
-    
-    Args:
-        provider: "midtrans" or "cashi" (default from config)
-    
-    Returns:
-        PaymentGateway instance
-    
-    Raises:
-        PaymentError if provider is invalid or not configured
-    """
-    provider = provider or settings.DEFAULT_PAYMENT_PROVIDER
+def get_payment_gateway(provider: str | None = None) -> PaymentGateway:
+    """Return the sole supported payment gateway: Midtrans."""
+    provider = provider or "midtrans"
+    if provider != "midtrans":
+        raise PaymentError(
+            message="Provider pembayaran tidak lagi didukung. Gunakan Midtrans.",
+            provider=provider,
+        )
 
     if provider in _gateways:
         return _gateways[provider]
 
-    if provider == "midtrans":
-        if not settings.MIDTRANS_SERVER_KEY:
-            raise PaymentError(
-                message="Midtrans belum dikonfigurasi. Set MIDTRANS_SERVER_KEY di .env",
-                provider="midtrans",
-            )
-        from services.payments.midtrans_gateway import MidtransGateway
-        _gateways["midtrans"] = MidtransGateway()
-        return _gateways["midtrans"]
-
-    elif provider == "cashi":
-        if not settings.CASHI_API_KEY:
-            raise PaymentError(
-                message="Cashi.id belum dikonfigurasi. Set CASHI_API_KEY di .env",
-                provider="cashi",
-            )
-        from services.payments.cashi_gateway import CashiGateway
-        _gateways["cashi"] = CashiGateway()
-        return _gateways["cashi"]
-
-    else:
+    if not settings.MIDTRANS_SERVER_KEY:
         raise PaymentError(
-            message=f"Provider '{provider}' tidak dikenali. Gunakan 'midtrans' atau 'cashi'.",
-            provider=provider,
+            message="Midtrans belum dikonfigurasi. Set MIDTRANS_SERVER_KEY di .env",
+            provider="midtrans",
         )
+
+    from services.payments.midtrans_gateway import MidtransGateway
+
+    _gateways["midtrans"] = MidtransGateway()
+    return _gateways["midtrans"]
 
 
 async def _get_or_create_payment_attempt_and_capability(
@@ -263,8 +241,8 @@ async def _get_late_paid_consumed_quantities(
 
 async def create_payment_for_order(
     order,
-    method: str = "qris",
-    provider: str = None,
+    method: str = "snap",
+    provider: str | None = None,
     db: AsyncSession = None,
 ) -> dict:
     """Create at most one durable external invoice for an order."""
@@ -278,7 +256,15 @@ async def create_payment_for_order(
         if order.status not in (OrderStatus.PENDING, OrderStatus.CONFIRMED):
             raise PaymentError(
                 message="Order tidak dalam status yang dapat dibayar",
-                provider=provider or "",
+                provider=provider or "midtrans",
+            )
+        if order.payment_provider and order.payment_provider != "midtrans":
+            raise PaymentError(
+                message=(
+                    "Provider pembayaran lama tidak lagi didukung. "
+                    "Batalkan order ini dan buat order baru untuk membayar melalui Midtrans."
+                ),
+                provider=order.payment_provider,
             )
         if order.payment_provider and order.payment_invoice_id:
             capability_token = None
@@ -296,11 +282,7 @@ async def create_payment_for_order(
                     repaired_amount is not None
                     and expected_amount is not None
                     and repaired_amount == repaired_amount.to_integral_value()
-                    and (
-                        repaired_amount >= expected_amount
-                        if order.payment_provider == "cashi"
-                        else repaired_amount == expected_amount
-                    )
+                    and repaired_amount == expected_amount
                 )
                 if not getattr(status_result, "verified", True) or not amount_is_valid:
                     raise PaymentError(
@@ -359,8 +341,12 @@ async def create_payment_for_order(
                 "payment_attempt_id": str(attempt.id) if attempt else None,
             }
 
-    if not provider:
-        provider = "midtrans" if method == "snap" else settings.DEFAULT_PAYMENT_PROVIDER
+    provider = provider or "midtrans"
+    if provider != "midtrans" or method != "snap":
+        raise PaymentError(
+            message="Metode pembayaran yang didukung hanya Midtrans Snap.",
+            provider=provider,
+        )
     gateway = get_payment_gateway(provider)
     gateway_token = secrets.token_urlsafe(16)
     result = await gateway.create_payment(
@@ -535,6 +521,16 @@ async def process_webhook(
         logger.error(f"Webhook: order #{internal_order_id} not found")
         return {"success": False, "error": f"Order #{internal_order_id} not found"}
 
+    if (
+        order.payment_provider != provider
+        or order.payment_invoice_id != invoice_id
+    ):
+        logger.warning(
+            "Webhook payment identity mismatch",
+            extra={"order_id": internal_order_id, "provider": provider},
+        )
+        return {"success": False, "error": "payment identity mismatch"}
+
     if payment_attempt:
         await db.refresh(payment_attempt)
         if not payment_attempt.is_current:
@@ -560,11 +556,7 @@ async def process_webhook(
         and result.status == PaymentStatus.PAID
         and incoming_amount is not None
         and expected_amount is not None
-        and (
-            incoming_amount < expected_amount
-            if provider == "cashi"
-            else incoming_amount != expected_amount
-        )
+        and incoming_amount != expected_amount
     )
     if legacy_amount_mismatch:
         logger.warning(

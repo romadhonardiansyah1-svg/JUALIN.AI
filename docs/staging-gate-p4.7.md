@@ -15,7 +15,7 @@ Never paste secret values into tickets, git, or chat.
 | `WHATSAPP_WABA_ID` | WhatsApp Business Account id |
 | `WHATSAPP_APP_SECRET` | Webhook signature secret |
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verify token |
-| `MIDTRANS_*` or `CASHI_*` | Payment sandbox credentials |
+| `MIDTRANS_SERVER_KEY`, `MIDTRANS_CLIENT_KEY`, `MIDTRANS_IS_PRODUCTION=false` | Midtrans sandbox credentials and mode |
 | `ENABLE_PAYMENT_RECOVERY` | Must stay `false` until ready |
 | `PAYMENT_RECOVERY_MODE` | Start with `observe`, then `approval` |
 | `ENABLE_DEMO_PROOF_MODE` | Must stay `false` in production |

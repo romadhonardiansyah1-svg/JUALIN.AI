@@ -82,6 +82,9 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-not-needed}
       LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-}
+      MIDTRANS_CLIENT_KEY: ${MIDTRANS_CLIENT_KEY:-}
+      MIDTRANS_IS_PRODUCTION: ${MIDTRANS_IS_PRODUCTION:-false}
       CORS_ORIGINS: '["http://localhost:3000","http://localhost","https://${DOMAIN:-jualan-ai.cloud}","https://www.${DOMAIN:-jualan-ai.cloud}"]'
       BASE_URL: ${BASE_URL:-https://${DOMAIN:-jualan-ai.cloud}}
       FRONTEND_URL: ${FRONTEND_URL:-https://${DOMAIN:-jualan-ai.cloud}}
@@ -137,6 +140,8 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-not-needed}
       LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-}
+      MIDTRANS_IS_PRODUCTION: ${MIDTRANS_IS_PRODUCTION:-false}
       DEBUG: ${DEBUG:-false}
       MIN_PASSWORD_LENGTH: ${MIN_PASSWORD_LENGTH:-10}
       MAX_JSON_BODY_BYTES: ${MAX_JSON_BODY_BYTES:-2097152}

@@ -381,7 +381,6 @@ async def get_provider_health(
     # 5. Payment
     providers["payment"] = {
         "midtrans": "configured" if settings.MIDTRANS_SERVER_KEY else "missing_config",
-        "cashi": "configured" if settings.CASHI_API_KEY else "missing_config",
     }
 
     # 6. LLM
