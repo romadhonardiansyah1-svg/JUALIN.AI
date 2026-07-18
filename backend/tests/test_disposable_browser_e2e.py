@@ -93,7 +93,7 @@ class DisposableBrowserE2ETests(unittest.TestCase):
                     "/data": "rw,nosuid,nodev,noexec,size=64m,mode=1777",
                 },
             },
-            "Mounts": [{"Type": "tmpfs", "Destination": "/data"}],
+            "Mounts": [],
             "NetworkSettings": {
                 "Ports": {"6379/tcp": [{"HostIp": "127.0.0.1", "HostPort": "49152"}]}
             },

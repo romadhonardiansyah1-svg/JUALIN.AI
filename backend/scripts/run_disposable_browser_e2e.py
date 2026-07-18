@@ -348,8 +348,20 @@ def _disposable_redis(run_id: str) -> Iterator[str]:
         option_set = (
             set(tmpfs_options.split(",")) if isinstance(tmpfs_options, str) else set()
         )
-        mounts = inspected.get("Mounts") or []
-        mount = mounts[0] if len(mounts) == 1 and isinstance(mounts[0], dict) else {}
+        mounts = inspected.get("Mounts")
+        mount = (
+            mounts[0]
+            if isinstance(mounts, list)
+            and len(mounts) == 1
+            and isinstance(mounts[0], dict)
+            else {}
+        )
+        mount_is_safe = mounts == [] or (
+            isinstance(mounts, list)
+            and len(mounts) == 1
+            and mount.get("Type") == "tmpfs"
+            and mount.get("Destination") == "/data"
+        )
         ports = inspected.get("NetworkSettings", {}).get("Ports", {}).get("6379/tcp")
         binding = ports[0] if isinstance(ports, list) and len(ports) == 1 else {}
         host_port = binding.get("HostPort") if isinstance(binding, dict) else None
@@ -360,12 +372,7 @@ def _disposable_redis(run_id: str) -> Iterator[str]:
                 "tmpfs-options",
                 {"rw", "nosuid", "nodev", "noexec"}.issubset(option_set),
             ),
-            (
-                "mount",
-                len(mounts) == 1
-                and mount.get("Type") == "tmpfs"
-                and mount.get("Destination") == "/data",
-            ),
+            ("mount", mount_is_safe),
             (
                 "port-binding",
                 binding.get("HostIp") == "127.0.0.1" and 1 <= port <= 65535,
