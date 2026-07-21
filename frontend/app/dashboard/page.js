@@ -14,15 +14,11 @@ export default function DashboardOverview() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    // Prefer session identity; avoid treating localStorage as source of truth for claims.
-    try {
-      const userData = localStorage.getItem("jualin_user");
-      if (userData) setUser(JSON.parse(userData));
-    } catch {
-      setUser(null);
-    }
-
     async function load() {
+      // Identity from cookie session only — never rehydrate claims from localStorage.
+      const meRes = await Promise.allSettled([api.getMe()]);
+      setUser(meRes[0].status === "fulfilled" ? meRes[0].value : null);
+
       const [sRes, qRes, odRes, csRes, mdRes] = await Promise.allSettled([
         api.getSummary(),
         api.getQuota(),

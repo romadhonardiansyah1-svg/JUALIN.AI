@@ -324,9 +324,13 @@ async function uploadFile(endpoint, file, extraData = {}) {
   });
 
   if (res.status === 401) {
+    // Upload is seller-dashboard only; still avoid hard-navigation loops on login shell.
     if (typeof window !== "undefined") {
       clearAuthStateAndCache();
-      window.location.href = "/login";
+      const path = window.location?.pathname || "";
+      if (!path.startsWith("/login") && !path.startsWith("/register")) {
+        window.location.href = "/login";
+      }
     }
     throw new Error("Session expired");
   }
