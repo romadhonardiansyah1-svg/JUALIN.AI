@@ -9,6 +9,7 @@ Semua panggilan LLM lewat sini supaya:
 Urutan failover per panggilan: setiap key × [model, fallback_model] → key .env sebagai cadangan terakhir.
 ponytail: kursor rotasi disimpan in-memory (reset saat restart) — cukup; persist ke DB kalau nanti multi-instance.
 """
+import re
 import time
 from types import SimpleNamespace
 from typing import AsyncGenerator
@@ -101,6 +102,73 @@ def _attempts(cfg, purpose: str):
             yield idx, cfg.api_keys[idx], model
 
 
+# ── Reasoning strip: buang jejak "berpikir" model reasoning agar tidak bocor ke pembeli ──
+# Berlaku provider-agnostic (Groq/OpenRouter/OpenAI/dll) — aman gonta-ganti model reasoning/non-reasoning.
+_THINK_PAIRS = (("<think>", "</think>"), ("<thinking>", "</thinking>"))
+
+
+def strip_think(text: str) -> str:
+    """Hapus blok <think>...</think> (dan <thinking>) dari teks non-stream."""
+    if not text:
+        return text
+    for open_tag, close_tag in _THINK_PAIRS:
+        text = re.sub(
+            re.escape(open_tag) + r".*?" + re.escape(close_tag),
+            "",
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+    return text.strip()
+
+
+def _tail_overlap(s: str, tag: str) -> int:
+    """Panjang suffix `s` yang menjadi prefix `tag` — untuk menahan tag yang terpotong antar-chunk."""
+    for k in range(min(len(s), len(tag) - 1), 0, -1):
+        if s[-k:] == tag[:k]:
+            return k
+    return 0
+
+
+async def _strip_think_stream(source: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+    """Saring token streaming: sembunyikan segmen antara <think> dan </think> lintas-chunk."""
+    open_tag, close_tag = "<think>", "</think>"
+    buf = ""
+    in_think = False
+    async for chunk in source:
+        if not chunk:
+            continue
+        buf += chunk
+        emit: list[str] = []
+        while buf:
+            if not in_think:
+                i = buf.find(open_tag)
+                if i == -1:
+                    hold = _tail_overlap(buf, open_tag)
+                    if hold:
+                        emit.append(buf[:-hold])
+                        buf = buf[-hold:]
+                    else:
+                        emit.append(buf)
+                        buf = ""
+                    break
+                emit.append(buf[:i])
+                buf = buf[i + len(open_tag):]
+                in_think = True
+            else:
+                j = buf.find(close_tag)
+                if j == -1:
+                    hold = _tail_overlap(buf, close_tag)
+                    buf = buf[-hold:] if hold else ""
+                    break
+                buf = buf[j + len(close_tag):]
+                in_think = False
+        text = "".join(emit)
+        if text:
+            yield text
+    if buf and not in_think:
+        yield buf
+
+
 async def llm_chat(messages: list[dict], *, purpose: str = "main",
                    temperature: float = 0.7, max_tokens: int = 420,
                    model: str | None = None) -> str:
@@ -116,7 +184,7 @@ async def llm_chat(messages: list[dict], *, purpose: str = "main",
                 temperature=temperature, max_tokens=max_tokens,
             )
             _key_cursor = idx
-            return resp.choices[0].message.content or ""
+            return strip_think(resp.choices[0].message.content or "")
         except _RETRYABLE as e:
             last_err = e
             logger.warning(f"llm_router: key#{idx} model={model or mdl} gagal ({type(e).__name__}), coba berikutnya")
@@ -126,7 +194,16 @@ async def llm_chat(messages: list[dict], *, purpose: str = "main",
 
 async def llm_chat_stream(messages: list[dict], *, purpose: str = "main",
                           temperature: float = 0.7, max_tokens: int = 420) -> AsyncGenerator[str, None]:
-    """Streaming token. Failover hanya SEBELUM token pertama keluar
+    """Streaming token dengan reasoning (<think>) disaring agar tidak bocor ke pembeli."""
+    async for token in _strip_think_stream(
+        _llm_chat_stream_raw(messages, purpose=purpose, temperature=temperature, max_tokens=max_tokens)
+    ):
+        yield token
+
+
+async def _llm_chat_stream_raw(messages: list[dict], *, purpose: str = "main",
+                               temperature: float = 0.7, max_tokens: int = 420) -> AsyncGenerator[str, None]:
+    """Streaming token mentah. Failover hanya SEBELUM token pertama keluar
     (retry setelah token keluar = teks dobel di layar pembeli)."""
     global _key_cursor
     cfg = await _get_cfg()
