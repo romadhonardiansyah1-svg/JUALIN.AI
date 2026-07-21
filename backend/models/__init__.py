@@ -48,7 +48,7 @@ from models.concierge_checklist import ConciergeChecklist
 
 # JUALIN OS models
 from models.agent_os import AgentPolicy, AgentRun, AgentApproval, NegotiationState
-from models.llm_settings import LLMSettings  # noqa: F401
+from models.llm_settings import LLMSettings, LLMProvider  # noqa: F401
 
 # Payment recovery safety foundation
 from models.payment_recovery import (

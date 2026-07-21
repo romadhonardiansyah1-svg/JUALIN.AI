@@ -899,3 +899,110 @@ async def test_llm_settings(admin: User = Depends(require_admin)):
     from services.llm_router import invalidate_llm_cache, llm_test
     invalidate_llm_cache()          # pastikan test memakai settings terbaru
     return await llm_test()
+
+
+# ── Multi-provider LLM registry (list provider: Groq/OpenRouter/OpenAI-compatible/dll) ──
+
+
+class LLMProviderBody(_BM):
+    label: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    light_model: str | None = None
+    fallback_model: str | None = None
+    priority: int | None = None
+    is_enabled: bool | None = None
+    api_keys: list[str] | None = None
+
+
+def _serialize_provider(row) -> dict:
+    return {
+        "id": row.id,
+        "label": row.label or "",
+        "base_url": row.base_url or "",
+        "model": row.model or "",
+        "light_model": row.light_model or "",
+        "fallback_model": row.fallback_model or "",
+        "priority": row.priority,
+        "is_enabled": row.is_enabled,
+        "api_keys_masked": [_mask_key(k) for k in (row.api_keys_json or [])],
+    }
+
+
+def _validate_base_url(base_url: str) -> str:
+    b = (base_url or "").strip()
+    if b and not b.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="base_url harus diawali http(s)://")
+    return b
+
+
+@router.get("/llm-providers")
+async def list_llm_providers(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from models.llm_settings import LLMProvider
+    r = await db.execute(select(LLMProvider).order_by(LLMProvider.priority, LLMProvider.id))
+    return {"providers": [_serialize_provider(x) for x in r.scalars().all()]}
+
+
+@router.post("/llm-providers")
+async def create_llm_provider(body: LLMProviderBody, admin: User = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    from models.llm_settings import LLMProvider
+    keys = [k.strip() for k in (body.api_keys or []) if k and k.strip()]
+    row = LLMProvider(
+        label=(body.label or "").strip(),
+        base_url=_validate_base_url(body.base_url or ""),
+        model=(body.model or "").strip(),
+        light_model=(body.light_model or "").strip(),
+        fallback_model=(body.fallback_model or "").strip(),
+        priority=int(body.priority) if body.priority is not None else 100,
+        is_enabled=bool(body.is_enabled) if body.is_enabled is not None else True,
+        api_keys_json=keys,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    from services.llm_router import invalidate_llm_cache
+    invalidate_llm_cache()
+    return {"success": True, "provider": _serialize_provider(row)}
+
+
+@router.put("/llm-providers/{provider_id}")
+async def update_llm_provider(provider_id: int, body: LLMProviderBody,
+                              admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    from models.llm_settings import LLMProvider
+    r = await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))
+    row = r.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provider tidak ada")
+    if body.base_url is not None:
+        row.base_url = _validate_base_url(body.base_url)
+    for f in ("label", "model", "light_model", "fallback_model"):
+        v = getattr(body, f)
+        if v is not None:
+            setattr(row, f, v.strip())
+    if body.priority is not None:
+        row.priority = int(body.priority)
+    if body.is_enabled is not None:
+        row.is_enabled = bool(body.is_enabled)
+    if body.api_keys is not None:
+        row.api_keys_json = [k.strip() for k in body.api_keys if k and k.strip()]
+    await db.commit()
+    await db.refresh(row)
+    from services.llm_router import invalidate_llm_cache
+    invalidate_llm_cache()
+    return {"success": True, "provider": _serialize_provider(row)}
+
+
+@router.delete("/llm-providers/{provider_id}")
+async def delete_llm_provider(provider_id: int, admin: User = Depends(require_admin),
+                              db: AsyncSession = Depends(get_db)):
+    from models.llm_settings import LLMProvider
+    r = await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))
+    row = r.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Provider tidak ada")
+    await db.delete(row)
+    await db.commit()
+    from services.llm_router import invalidate_llm_cache
+    invalidate_llm_cache()
+    return {"success": True}

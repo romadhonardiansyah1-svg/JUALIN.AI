@@ -685,6 +685,15 @@ export const api = {
     fetchAPI(`/api/admin/llm-settings/keys/${index}`, { method: "DELETE" }),
   adminLlmTest: () =>
     fetchAPI("/api/admin/llm-settings/test", { method: "POST", body: JSON.stringify({}) }),
+
+  // ── Admin: Multi-Provider LLM ──
+  adminLlmProviders: () => fetchAPI("/api/admin/llm-providers"),
+  adminLlmProviderCreate: (body) =>
+    fetchAPI("/api/admin/llm-providers", { method: "POST", body: JSON.stringify(body) }),
+  adminLlmProviderUpdate: (id, body) =>
+    fetchAPI(`/api/admin/llm-providers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  adminLlmProviderDelete: (id) =>
+    fetchAPI(`/api/admin/llm-providers/${id}`, { method: "DELETE" }),
 };
 
 
