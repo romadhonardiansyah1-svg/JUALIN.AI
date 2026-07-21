@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # Prefer Node 24 for JS-based actions (checkout/setup/upload) on current runners.
 env:
@@ -140,13 +141,13 @@ jobs:
   real-browser-e2e:
     needs: [validate-backend, build-and-e2e-frontend]
     runs-on: ubuntu-latest
-    # Competition real-browser evidence gate. Non-blocking: it runs the full
-    # real disposable stack (browser + backend + PostgreSQL + Redis) to collect
-    # proof artifacts, but its failure must not block the pipeline used for
-    # installation. Correctness is already enforced by validate-backend and
-    # build-and-e2e-frontend above. Re-enable blocking by removing the line
-    # below once the real-stack harness is reproducible in CI.
-    continue-on-error: true
+    # Competition real-browser evidence gate. Manual-only: it runs the full real
+    # disposable stack (browser + backend + PostgreSQL + Redis) to collect proof
+    # artifacts. It does NOT run on push/PR so the installation pipeline stays
+    # clean; correctness is already enforced by validate-backend and
+    # build-and-e2e-frontend above. Trigger it on demand from the Actions tab
+    # ("Run workflow") once the real-stack harness is reproducible.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v5
 
