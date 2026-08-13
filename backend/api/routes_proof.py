@@ -6,6 +6,7 @@ No arbitrary path/DSN/command/module. Artifacts sanitized with schema version.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -337,7 +338,7 @@ async def proof_run(
                         "message": "Scenario tidak diizinkan",
                     },
                 )
-            one = run_scenario(body.scenario, seed=body.seed)
+            one = await asyncio.to_thread(run_scenario, body.scenario, seed=body.seed)
             payload = {
                 "run_id": f"single-{body.scenario}-{body.seed}",
                 "suite": "backend",
@@ -357,7 +358,7 @@ async def proof_run(
                 "disclaimer": "Single-scenario offline proof. DATA SIMULASI.",
             }
         else:
-            payload = run_all(seed=body.seed, suite=body.suite)
+            payload = await asyncio.to_thread(run_all, seed=body.seed, suite=body.suite)
 
         payload = _enrich_payload(payload, actor_user_id=current_user.id)
         validate_sanitized_artifact(payload)

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import styles from "./settings.module.css";
@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+  const savedTimerRef = useRef(null);
 
   useEffect(() => {
     if (!sessionUser) return;
@@ -20,7 +21,10 @@ export default function SettingsPage() {
     setAiActive(sessionUser.ai_active !== false);
   }, [sessionUser]);
 
+  useEffect(() => () => clearTimeout(savedTimerRef.current), []);
+
   const handleSave = async () => {
+    if (saving) return;
     setSaving(true);
     setError("");
     setSaved(false);
@@ -32,7 +36,8 @@ export default function SettingsPage() {
       setUser(updated);
       updateUser(updated);
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 3000);
     } catch (e) {
       setError(e.message || "Gagal menyimpan pengaturan");
     }

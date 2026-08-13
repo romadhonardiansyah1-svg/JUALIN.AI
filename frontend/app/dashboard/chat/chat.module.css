@@ -87,6 +87,11 @@
 .chatInput { padding: 16px 24px; background: white; border-top: 1px solid var(--border-light); display: flex; gap: 12px; }
 .chatInput .input { flex: 1; }
 
+.sendError {
+  align-self: center; max-width: 90%; padding: 10px 14px; border-radius: var(--radius);
+  background: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; font-size: 0.85rem;
+}
+
 .chatPlaceholder {
   flex: 1; display: flex; flex-direction: column; align-items: center;
   justify-content: center; color: var(--text-muted);

@@ -106,6 +106,11 @@ async def lifespan(app: FastAPI):
     log_level = "DEBUG" if settings.DEBUG else "INFO"
     setup_logging(log_level=log_level, log_to_file=not settings.DEBUG)
 
+    # 1b. Error/performance reporting (no-op unless SENTRY_DSN is set)
+    from core.observability import init_sentry
+
+    init_sentry()
+
     logger.info("=" * 60)
     logger.info(f"🚀 Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info("=" * 60)
@@ -203,6 +208,17 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-Process-Time", "X-Request-ID"],
 )
+
+# 5. GZip. Starlette's add_middleware inserts at index 0, so this ends up the
+# outermost user middleware and compresses every response body, including the
+# JSONResponses that RateLimit/CSRF short-circuit.
+# Safe for SSE: GZipMiddleware skips text/event-stream via
+# DEFAULT_EXCLUDED_CONTENT_TYPES, so /api/chat/stream passes through unbuffered.
+# minimum_size 1024: below that gzip framing costs more than it saves.
+# compresslevel 6 instead of the default 9 to keep CPU low on a 4GB VPS.
+from starlette.middleware.gzip import GZipMiddleware
+
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # ── Register Routers ──
 app.include_router(auth_router, prefix="/api/auth", tags=["Auth"])

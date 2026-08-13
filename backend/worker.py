@@ -20,6 +20,10 @@ from core.idempotency import enqueue_job_record
 
 settings = get_settings()
 setup_logging(log_level="DEBUG" if settings.DEBUG else "INFO", log_to_file=False)
+from core.observability import init_sentry
+
+init_sentry()
+
 logger = get_logger(__name__)
 
 

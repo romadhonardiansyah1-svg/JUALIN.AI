@@ -14,6 +14,9 @@ const STATUS_MAP = {
 export default function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState("");
+  const [error, setError] = useState("");
+  const [updatingId, setUpdatingId] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   // Format items array → readable text (BUG 8 FIX)
   function formatItems(items) {
@@ -23,12 +26,14 @@ export default function OrdersPage() {
   }
 
   const loadOrders = useCallback(async () => {
+    setError("");
     try {
       const data = await api.getOrders(filter);
       setOrders(data);
     } catch (e) {
       console.error("Failed to load orders:", e);
       setOrders([]);
+      setError(e.message || "Gagal memuat order. Angka di bawah bukan data sebenarnya.");
     }
   }, [filter]);
 
@@ -37,15 +42,20 @@ export default function OrdersPage() {
   }, [loadOrders]);
 
   const handleStatusChange = async (id, newStatus) => {
+    if (updatingId) return;
+    setUpdatingId(id);
     try {
       await api.updateOrderStatus(id, { status: newStatus });
-      loadOrders();
+      await loadOrders();
     } catch (e) {
       alert(e.message);
     }
+    setUpdatingId(null);
   };
 
   const handleExportCSV = async () => {
+    if (exporting) return;
+    setExporting(true);
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
       const url = `${apiBase}/api/orders/export/csv${filter ? `?status=${filter}` : ""}`;
@@ -65,6 +75,7 @@ export default function OrdersPage() {
     } catch (e) {
       alert("Export gagal: " + e.message);
     }
+    setExporting(false);
   };
 
   return (
@@ -72,7 +83,7 @@ export default function OrdersPage() {
       <div className={styles.header}>
         <div>
           <h2>Order</h2>
-          <p className="text-muted text-sm">{orders.length} total order</p>
+          <p className="text-muted text-sm">{error ? "Jumlah order belum diketahui" : `${orders.length} total order`}</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div className={styles.filters}>
@@ -86,11 +97,17 @@ export default function OrdersPage() {
               </button>
             ))}
           </div>
-          <button className="btn btn-outline" onClick={handleExportCSV} title="Export ke CSV">
-            📥 Export CSV
+          <button className="btn btn-outline" onClick={handleExportCSV} disabled={exporting} title="Export ke CSV">
+            {exporting ? "⏳ Menyiapkan..." : "📥 Export CSV"}
           </button>
         </div>
       </div>
+
+      {error && (
+        <div className={styles.errorBox} role="alert">
+          {error} <button className="btn btn-sm btn-outline" onClick={loadOrders}>Coba lagi</button>
+        </div>
+      )}
 
       <div className="card" style={{ padding: 0, overflow: "hidden" }}>
         <div className="table-container">
@@ -118,15 +135,15 @@ export default function OrdersPage() {
                   <td>
                     {o.status === "pending" && (
                       <div style={{ display: "flex", gap: "6px" }}>
-                        <button className="btn btn-sm btn-primary" onClick={() => handleStatusChange(o.id, "paid")}>✓ Bayar</button>
-                        <button className="btn btn-sm btn-outline" style={{ color: "#EF4444" }} onClick={() => { if (confirm("Batalkan order ini?")) handleStatusChange(o.id, "cancelled"); }}>✕</button>
+                        <button className="btn btn-sm btn-primary" onClick={() => handleStatusChange(o.id, "paid")} disabled={updatingId !== null}>✓ Bayar</button>
+                        <button className="btn btn-sm btn-outline" style={{ color: "#EF4444" }} disabled={updatingId !== null} aria-label={`Batalkan order ${o.id}`} onClick={() => { if (confirm("Batalkan order ini?")) handleStatusChange(o.id, "cancelled"); }}>✕</button>
                       </div>
                     )}
                     {o.status === "paid" && (
-                      <button className="btn btn-sm btn-outline" onClick={() => handleStatusChange(o.id, "shipped")}>📦 Kirim</button>
+                      <button className="btn btn-sm btn-outline" onClick={() => handleStatusChange(o.id, "shipped")} disabled={updatingId !== null}>📦 Kirim</button>
                     )}
                     {o.status === "shipped" && (
-                      <button className="btn btn-sm btn-outline" onClick={() => handleStatusChange(o.id, "done")}>✅ Selesai</button>
+                      <button className="btn btn-sm btn-outline" onClick={() => handleStatusChange(o.id, "done")} disabled={updatingId !== null}>✅ Selesai</button>
                     )}
                   </td>
                 </tr>

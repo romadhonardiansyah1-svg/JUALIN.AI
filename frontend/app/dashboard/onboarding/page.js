@@ -17,6 +17,7 @@ export default function OnboardingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [completing, setCompleting] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -28,21 +29,28 @@ export default function OnboardingPage() {
   }
 
   async function markStep(step) {
+    if (busy) return;
+    setBusy(true);
     try {
       await updateOnboarding({ step, completed: true });
       await loadData();
     } catch (e) { setError(e.message); }
+    setBusy(false);
   }
 
   async function handleTestChat() {
+    if (busy) return;
+    setBusy(true);
     try {
       const result = await onboardingTestChat();
       alert(result.message);
       await loadData();
     } catch (e) { setError(e.message); }
+    setBusy(false);
   }
 
   async function handleComplete() {
+    if (completing) return;
     setCompleting(true);
     try {
       const result = await completeOnboarding();
@@ -108,10 +116,10 @@ export default function OnboardingPage() {
                   <p className="text-muted text-sm" style={{ margin: 0 }}>{step.desc}</p>
                 </div>
                 {!done && step.key === "test_chat" && (
-                  <button className="btn btn-sm btn-primary" onClick={handleTestChat}>🧪 Test</button>
+                  <button className="btn btn-sm btn-primary" onClick={handleTestChat} disabled={busy}>{busy ? "⏳..." : "🧪 Test"}</button>
                 )}
                 {!done && step.key !== "go_live" && step.key !== "test_chat" && (
-                  <button className="btn btn-sm btn-outline" onClick={() => markStep(step.key)}>Tandai Selesai</button>
+                  <button className="btn btn-sm btn-outline" onClick={() => markStep(step.key)} disabled={busy}>Tandai Selesai</button>
                 )}
                 {step.key === "go_live" && !data?.completed && (
                   <button

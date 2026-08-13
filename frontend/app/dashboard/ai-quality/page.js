@@ -9,6 +9,7 @@ export default function AIQualityPage() {
   const [status, setStatus] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -22,6 +23,8 @@ export default function AIQualityPage() {
   }, [status]);
 
   async function runEval() {
+    if (busy) return;
+    setBusy(true);
     setError("");
     setMessage("");
     try {
@@ -30,15 +33,19 @@ export default function AIQualityPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy(false);
   }
 
   async function markDown(traceId) {
+    if (busy) return;
+    setBusy(true);
     try {
       await api.createAIFeedback({ trace_id: traceId, rating: "down", reason: "seller_report", note: "Ditandai dari AI Quality Center" });
       setMessage("Feedback disimpan.");
     } catch (e) {
       setError(e.message);
     }
+    setBusy(false);
   }
 
   useEffect(() => {
@@ -59,7 +66,7 @@ export default function AIQualityPage() {
             <option value="failed">Failed</option>
           </select>
           <button className="btn btn-outline" onClick={load}>Refresh</button>
-          <button className="btn btn-primary" onClick={runEval}>Run Eval</button>
+          <button className="btn btn-primary" onClick={runEval} disabled={busy}>{busy ? "Memproses..." : "Run Eval"}</button>
         </div>
       </div>
       {error && <div className={styles.error}>{error}</div>}
@@ -83,7 +90,7 @@ export default function AIQualityPage() {
                   <td><span className={`badge ${trace.status === "ok" ? "badge-success" : "badge-danger"}`}>{trace.status}</span></td>
                   <td>{trace.latency_ms} ms</td>
                   <td>{trace.response_preview || trace.error_message || "-"}</td>
-                  <td><button className="btn btn-sm btn-outline" onClick={() => markDown(trace.trace_id)}>Flag</button></td>
+                  <td><button className="btn btn-sm btn-outline" onClick={() => markDown(trace.trace_id)} disabled={busy}>Flag</button></td>
                 </tr>
               ))}
             </tbody>

@@ -19,6 +19,7 @@ export default function QAReviewPage() {
   const [filter, setFilter] = useState("pending");
   const [editItem, setEditItem] = useState(null);
   const [editText, setEditText] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -29,18 +30,26 @@ export default function QAReviewPage() {
   useEffect(() => { loadData(); }, [loadData]);
 
   async function handleApprove(id) {
-    try { await approveQA(id, { notes: "" }); loadData(); } catch (e) { alert(e.message); }
+    if (busy) return;
+    setBusy(true);
+    try { await approveQA(id, { notes: "" }); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleReject(id) {
+    if (busy) return;
     const reason = prompt("Alasan reject:");
-    try { await rejectQA(id, { notes: reason || "" }); loadData(); } catch (e) { alert(e.message); }
+    setBusy(true);
+    try { await rejectQA(id, { notes: reason || "" }); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleEditSend() {
-    if (!editItem || !editText) return;
-    try { await editAndSendQA(editItem.id, { edited_content: editText }); setEditItem(null); loadData(); }
+    if (!editItem || !editText || busy) return;
+    setBusy(true);
+    try { await editAndSendQA(editItem.id, { edited_content: editText }); setEditItem(null); await loadData(); }
     catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   return (
@@ -74,9 +83,9 @@ export default function QAReviewPage() {
           </div>
           {filter === "pending" && (
             <div style={{ display: "flex", gap: 6 }}>
-              <button className="btn btn-sm btn-primary" onClick={() => handleApprove(item.id)}>✅ Approve</button>
-              <button className="btn btn-sm btn-danger" onClick={() => handleReject(item.id)}>❌ Reject</button>
-              <button className="btn btn-sm btn-outline" onClick={() => { setEditItem(item); setEditText(item.original_content || ""); }}>✏️ Edit & Send</button>
+              <button className="btn btn-sm btn-primary" onClick={() => handleApprove(item.id)} disabled={busy}>✅ Approve</button>
+              <button className="btn btn-sm btn-danger" onClick={() => handleReject(item.id)} disabled={busy}>❌ Reject</button>
+              <button className="btn btn-sm btn-outline" onClick={() => { setEditItem(item); setEditText(item.original_content || ""); }} disabled={busy}>✏️ Edit &amp; Send</button>
             </div>
           )}
         </div>
@@ -88,8 +97,8 @@ export default function QAReviewPage() {
             <h3>✏️ Edit & Kirim</h3>
             <textarea className="input" rows={6} value={editText} onChange={(e) => setEditText(e.target.value)} style={{ width: "100%", marginBottom: 12 }} />
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="btn btn-outline" onClick={() => setEditItem(null)}>Batal</button>
-              <button className="btn btn-primary" onClick={handleEditSend}>📤 Kirim</button>
+              <button className="btn btn-outline" onClick={() => setEditItem(null)} disabled={busy}>Batal</button>
+              <button className="btn btn-primary" onClick={handleEditSend} disabled={busy}>{busy ? "Mengirim..." : "📤 Kirim"}</button>
             </div>
           </div>
         </div>

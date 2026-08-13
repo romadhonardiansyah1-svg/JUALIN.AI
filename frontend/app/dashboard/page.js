@@ -2,23 +2,21 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 import styles from "./overview.module.css";
 
 export default function DashboardOverview() {
+  // Identity comes from the cookie-session AuthProvider; layout blocks children until auth settles.
+  const { user } = useAuth();
   const [summary, setSummary] = useState(null);
   const [quota, setQuota] = useState(null);
   const [dailyOrders, setDailyOrders] = useState([]);
   const [chatStats, setChatStats] = useState(null);
   const [moneyData, setMoneyData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState(null);
 
   useEffect(() => {
     async function load() {
-      // Identity from cookie session only — never rehydrate claims from localStorage.
-      const meRes = await Promise.allSettled([api.getMe()]);
-      setUser(meRes[0].status === "fulfilled" ? meRes[0].value : null);
-
       const [sRes, qRes, odRes, csRes, mdRes] = await Promise.allSettled([
         api.getSummary(),
         api.getQuota(),

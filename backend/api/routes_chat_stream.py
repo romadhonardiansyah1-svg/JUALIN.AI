@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from config import get_settings
-from models.database import get_db
+from models.database import async_session, get_db
 from models.user import User, UserTier
 from models.conversation import Conversation, Message, MessageRole
 from models.chat_analytics import ChatAnalytics
@@ -71,6 +71,49 @@ async def _sse_event(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+_STREAM_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",  # Disable nginx buffering
+}
+
+
+async def _release_request_session(db: AsyncSession) -> bool:
+    """
+    Commit everything the request session still holds, then let go of its pooled
+    connection before the SSE body starts.
+
+    FastAPI only closes the dependency stack after the response finishes
+    (fastapi/routing.py ~:116-118 and ~:453-462), so a session left inside an open
+    transaction pins one of the 10 pool connections (models/database.py: pool_size=5
+    + max_overflow=5) for the whole stream — nginx allows 120s per read. Ten
+    concurrent streams would starve every other endpoint, login included.
+
+    Returns False when the commit failed (caller must not stream a normal reply).
+    """
+    try:
+        await db.commit()
+        return True
+    except Exception as exc:
+        await db.rollback()
+        logger.error(f"Failed to commit chat state before streaming: {exc}", exc_info=True)
+        return False
+
+
+def _persistence_failed_response() -> StreamingResponse:
+    """Same failure contract the in-stream persistence error uses."""
+    async def failed_stream():
+        yield await _sse_event({
+            "type": "error",
+            "error": "response_persistence_failed",
+            "message": "Respons belum tersimpan. Periksa riwayat chat sebelum mencoba lagi.",
+        })
+
+    return StreamingResponse(
+        failed_stream(), media_type="text/event-stream", headers=_STREAM_HEADERS,
+    )
+
+
 @router.post("/stream")
 async def stream_chat(
     req: StreamChatRequest,
@@ -84,13 +127,11 @@ async def stream_chat(
     """
     start_time = time.monotonic()
 
-    # Rate limit (endpoint publik!)
-    from core.rate_limit import check_rate_limit
-    client_ip = request.client.host if request.client else "unknown"
-    rl = await check_rate_limit(f"chat:{client_ip}",
-                                max_requests=settings.CHAT_RATE_LIMIT_PER_MIN, window_seconds=60)
-    if not rl["allowed"]:
-        raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Coba lagi nanti.")
+    # Rate limit (endpoint publik!) — shared helper: real client IP, degraded-allow
+    # when Redis is down. See enforce_chat_rate_limit for the rationale.
+    from api.routes_chat import enforce_chat_rate_limit
+
+    await enforce_chat_rate_limit(request, "chat")
 
     # Find seller
     result = await db.execute(select(User).where(User.slug == req.seller_slug))
@@ -111,11 +152,13 @@ async def stream_chat(
     # Check quota
     is_exceeded, _, _ = await _check_quota_simple(seller.id, db)
     if is_exceeded:
+        nama_toko = seller.nama_toko
+
         async def quota_stream():
             msg = (
-                f"Hai kak! Terima kasih sudah menghubungi {seller.nama_toko} 😊\n"
+                f"Hai kak! Terima kasih sudah menghubungi {nama_toko} 😊\n"
                 f"Saat ini penjual kami sedang tidak tersedia.\n"
-                f"Silakan hubungi langsung via {seller.no_hp or 'kontak toko'} ya kak! 🙏"
+                f"Silakan coba lagi nanti ya kak! 🙏"
             )
             yield await _sse_event({"type": "token", "token": msg})
             yield await _sse_event({"type": "done", "done": True, "quota_exceeded": True})

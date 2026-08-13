@@ -9,6 +9,7 @@ export default function WorkflowsPage() {
   const [selected, setSelected] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -23,6 +24,8 @@ export default function WorkflowsPage() {
   }, [selected]);
 
   async function createRule() {
+    if (busy) return;
+    setBusy(true);
     try {
       const template = templates.find((item) => item.key === selected);
       await api.createWorkflowRule({ template_key: selected, name: template?.name || selected });
@@ -31,15 +34,19 @@ export default function WorkflowsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy(false);
   }
 
   async function toggleRule(rule) {
+    if (busy) return;
+    setBusy(true);
     try {
       await api.updateWorkflowRule(rule.id, { is_active: !rule.is_active });
       await load();
     } catch (e) {
       setError(e.message);
     }
+    setBusy(false);
   }
 
   useEffect(() => {
@@ -63,7 +70,7 @@ export default function WorkflowsPage() {
             <select className="input" value={selected} onChange={(e) => setSelected(e.target.value)}>
               {templates.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}
             </select>
-            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={createRule}>Aktifkan Template</button>
+            <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={createRule} disabled={busy}>{busy ? "Memproses..." : "Aktifkan Template"}</button>
           </div>
           <div className={styles.list}>
             {templates.map((template) => (
@@ -85,7 +92,7 @@ export default function WorkflowsPage() {
                   <span className={`badge ${rule.is_active ? "badge-success" : "badge-neutral"}`}>{rule.is_active ? "active" : "paused"}</span>
                 </div>
                 <div className={styles.listMeta}>{rule.template_key}</div>
-                <button className="btn btn-sm btn-outline" style={{ marginTop: 8 }} onClick={() => toggleRule(rule)}>{rule.is_active ? "Pause" : "Activate"}</button>
+                <button className="btn btn-sm btn-outline" style={{ marginTop: 8 }} onClick={() => toggleRule(rule)} disabled={busy}>{rule.is_active ? "Pause" : "Activate"}</button>
               </div>
             ))}
           </div>

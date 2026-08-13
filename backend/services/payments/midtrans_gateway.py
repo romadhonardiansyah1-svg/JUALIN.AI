@@ -183,7 +183,9 @@ class MidtransGateway(PaymentGateway):
                 success=False, order_id=invoice_id, provider="midtrans",
                 method=method, amount=amount, payment_url=None, qr_data=None,
                 token=None, expires_at=None,
-                error_message=f"Gagal membuat pembayaran: {str(e)}",
+                # Exception detail stays in the log above; this message reaches the
+                # public HTTP response and must not leak internal hosts/URLs.
+                error_message="Gagal membuat pembayaran. Coba lagi.",
                 raw_response=None,
             )
 

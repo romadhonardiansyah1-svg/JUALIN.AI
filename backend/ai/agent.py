@@ -199,8 +199,8 @@ def detect_sales_stage(conversation_history: list, current_intent: str) -> str:
 async def search_products_semantic(query: str, seller_id: int, db: AsyncSession, limit: int = 5) -> list[dict]:
     """Semantic search for products using pgvector."""
     try:
-        from ai.embeddings import generate_embedding
-        query_embedding = generate_embedding(query)
+        from ai.embeddings import generate_embedding_async
+        query_embedding = await generate_embedding_async(query)
 
         result = await db.execute(
             select(Product)

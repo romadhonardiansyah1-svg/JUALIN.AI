@@ -15,6 +15,7 @@ export default function CustomersPage() {
   const [tags, setTags] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const loadCustomers = useCallback(async (q = "") => {
     setError("");
@@ -28,8 +29,11 @@ export default function CustomersPage() {
   async function selectCustomer(id) {
     setError("");
     try {
-      const detail = await api.getCustomer(id);
-      const events = await api.getCustomerTimeline(id);
+      // Both calls only need `id` — no reason to serialize them.
+      const [detail, events] = await Promise.all([
+        api.getCustomer(id),
+        api.getCustomerTimeline(id),
+      ]);
       setSelected(detail);
       setTimeline(events);
       setTags((detail.tags || []).join(", "));
@@ -40,7 +44,8 @@ export default function CustomersPage() {
   }
 
   async function saveCustomer() {
-    if (!selected) return;
+    if (!selected || saving) return;
+    setSaving(true);
     try {
       await api.updateCustomer(selected.id, {
         tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
@@ -51,6 +56,7 @@ export default function CustomersPage() {
     } catch (e) {
       setError(e.message);
     }
+    setSaving(false);
   }
 
   useEffect(() => {
@@ -101,7 +107,7 @@ export default function CustomersPage() {
                   <strong>{selected.name}</strong>
                   <div className={styles.muted}>{selected.phone || "-"} / {selected.email || "-"}</div>
                 </div>
-                <button className="btn btn-primary" onClick={saveCustomer}>Simpan</button>
+                <button className="btn btn-primary" onClick={saveCustomer} disabled={saving}>{saving ? "Menyimpan..." : "Simpan"}</button>
               </div>
               <div className={styles.panelBody}>
                 <div className={styles.grid}>

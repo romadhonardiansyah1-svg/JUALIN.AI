@@ -2,6 +2,8 @@
 JUALIN.AI — Embedding Module
 Sentence-transformer lokal untuk semantic search
 """
+import asyncio
+
 from config import get_settings
 from core.logging_config import get_logger
 
@@ -25,6 +27,11 @@ def generate_embedding(text: str) -> list[float]:
     """Generate embedding vector from text."""
     model = get_embedding_model()
     return model.encode(text).tolist()
+
+
+async def generate_embedding_async(text: str) -> list[float]:
+    """Async wrapper: model load + CPU inference off the event loop."""
+    return await asyncio.to_thread(generate_embedding, text)
 
 
 def build_embed_text(product: dict) -> str:

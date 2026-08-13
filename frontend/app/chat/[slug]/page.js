@@ -10,6 +10,24 @@ import styles from "./public-chat.module.css";
  * Features: SSE streaming with word-by-word rendering,
  * typing indicator, quick replies, sales stage badge.
  */
+
+/**
+ * session_id is an access-control credential: (public slug, session_id) is the
+ * only thing guarding this customer's chat history (name, phone, address,
+ * orders). It must be unguessable, so Math.random() is not acceptable here.
+ * Throws when Web Crypto is missing — a weak id is worse than a hard failure.
+ */
+function newSessionId() {
+  const webCrypto = globalThis.crypto;
+  if (webCrypto?.randomUUID) return `cust-${webCrypto.randomUUID()}`;
+  if (webCrypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    webCrypto.getRandomValues(bytes);
+    return `cust-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+  }
+  throw new Error("Web Crypto unavailable: refusing to generate a guessable session id");
+}
+
 export default function PublicChatPage() {
   const params = useParams();
   const slug = params.slug;
@@ -21,8 +39,31 @@ export default function PublicChatPage() {
   const [storeName, setStoreName] = useState("");
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [salesStage, setSalesStage] = useState("greeting");
+  const [sessionError, setSessionError] = useState(false);
   const chatEndRef = useRef(null);
   const abortRef = useRef(null);
+
+  const loadHistory = useCallback(
+    async (sid) => {
+      try {
+        const data = await api.getChatHistory(sid, slug);
+        if (data.messages?.length > 0) {
+          setMessages(
+            data.messages.map((m) => ({
+              role: m.role === "customer" ? "customer" : "ai",
+              content: m.content,
+              time: m.created_at
+                ? new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
+                : "",
+            }))
+          );
+        }
+      } catch (e) {
+        // No history, that's fine
+      }
+    },
+    [slug]
+  );
 
   useEffect(() => {
     const formattedName = slug
@@ -36,9 +77,12 @@ export default function PublicChatPage() {
       setSessionId(existingSession);
       loadHistory(existingSession);
     } else {
-      const newSession = `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      setSessionId(newSession);
-      sessionStorage.setItem(`jualin_session_${slug}`, newSession);
+      try {
+        setSessionId(newSessionId());
+      } catch (e) {
+        setSessionError(true);
+        return;
+      }
 
       setMessages([
         {
@@ -48,7 +92,14 @@ export default function PublicChatPage() {
         },
       ]);
     }
-  }, [slug]);
+  }, [slug, loadHistory]);
+
+  // Single owner of the sessionStorage write, so React state and storage can
+  // never drift apart — including when the server hands back a different id.
+  useEffect(() => {
+    if (!sessionId) return;
+    sessionStorage.setItem(`jualin_session_${slug}`, sessionId);
+  }, [slug, sessionId]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -60,7 +111,7 @@ export default function PublicChatPage() {
     const t = setInterval(async () => {
       if (sending || streaming || document.visibilityState !== "visible") return;
       try {
-        const data = await api.getChatHistory(sessionId);
+        const data = await api.getChatHistory(sessionId, slug);
         if (data.messages && data.messages.length > messages.length) {
           setMessages(
             data.messages.map((m) => ({
@@ -75,7 +126,7 @@ export default function PublicChatPage() {
       } catch (e) { /* diam saja */ }
     }, 5000);
     return () => clearInterval(t);
-  }, [sessionId, sending, streaming, messages.length]);
+  }, [sessionId, slug, sending, streaming, messages.length]);
 
   // Cleanup: abort stream on unmount
   useEffect(() => {
@@ -83,25 +134,6 @@ export default function PublicChatPage() {
       if (abortRef.current) abortRef.current();
     };
   }, []);
-
-  async function loadHistory(sid) {
-    try {
-      const data = await api.getChatHistory(sid);
-      if (data.messages?.length > 0) {
-        setMessages(
-          data.messages.map((m) => ({
-            role: m.role === "customer" ? "customer" : "ai",
-            content: m.content,
-            time: m.created_at
-              ? new Date(m.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })
-              : "",
-          }))
-        );
-      }
-    } catch (e) {
-      // No history, that's fine
-    }
-  }
 
   const handleSend = useCallback(
     async (e) => {
@@ -230,6 +262,19 @@ export default function PublicChatPage() {
     post_sale: "✅ Selesai",
   };
   const stageLabel = stageLabels[salesStage];
+
+  if (sessionError) {
+    return (
+      <div className={styles.chatPage}>
+        <main className={styles.messagesArea}>
+          <div className={styles.quotaMsg} role="alert">
+            ⚠️ Browser ini tidak mendukung pembuatan sesi yang aman. Silakan
+            perbarui browser Anda, lalu buka ulang halaman ini.
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.chatPage}>

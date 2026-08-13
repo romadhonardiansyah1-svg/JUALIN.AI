@@ -26,6 +26,7 @@ export default function TemplatesPage() {
   const [error, setError] = useState("");
   const [filterType, setFilterType] = useState("");
   const [installing, setInstalling] = useState(null);
+  const [duplicating, setDuplicating] = useState(null);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
@@ -39,6 +40,7 @@ export default function TemplatesPage() {
   useEffect(() => { loadTemplates(); }, [loadTemplates]);
 
   async function handleInstall(id) {
+    if (installing || duplicating) return;
     setInstalling(id);
     try {
       const result = await installTemplate(id);
@@ -49,11 +51,14 @@ export default function TemplatesPage() {
   }
 
   async function handleDuplicate(id) {
+    if (installing || duplicating) return;
+    setDuplicating(id);
     try {
       const result = await duplicateTemplate(id);
       alert(`✅ ${result.message}`);
       await loadTemplates();
     } catch (e) { alert(`❌ ${e.message}`); }
+    setDuplicating(null);
   }
 
   return (
@@ -108,12 +113,17 @@ export default function TemplatesPage() {
                 <button
                   className="btn btn-sm btn-primary"
                   onClick={() => handleInstall(t.id)}
-                  disabled={installing === t.id}
+                  disabled={installing !== null || duplicating !== null}
                 >
                   {installing === t.id ? "⏳..." : "Install"}
                 </button>
-                <button className="btn btn-sm btn-outline" onClick={() => handleDuplicate(t.id)}>
-                  📋
+                <button
+                  className="btn btn-sm btn-outline"
+                  onClick={() => handleDuplicate(t.id)}
+                  disabled={installing !== null || duplicating !== null}
+                  aria-label={`Duplikat ${t.name}`}
+                >
+                  {duplicating === t.id ? "⏳" : "📋"}
                 </button>
               </div>
             </div>

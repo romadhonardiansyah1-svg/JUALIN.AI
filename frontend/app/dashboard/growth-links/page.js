@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import styles from "./growth-links.module.css";
 
@@ -17,39 +17,56 @@ export default function GrowthLinksPage() {
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [copied, setCopied] = useState("");
+  const [error, setError] = useState("");
 
   // Create form
   const [source, setSource] = useState("wa_link");
   const [campaignName, setCampaignName] = useState("");
   const [targetUrl, setTargetUrl] = useState("");
+  const copyTimerRef = useRef(null);
 
   useEffect(() => { load(); }, []);
+  useEffect(() => () => clearTimeout(copyTimerRef.current), []);
 
   const load = async () => {
-    try {
-      const [l, s] = await Promise.all([api.getGrowthLinks(), api.getGrowthLinkStats()]);
-      setLinks(l || []);
-      setStats(s);
-    } catch { /* empty */ }
+    setError("");
+    // Independent endpoints: one failure must not blank the whole page.
+    const [linksRes, statsRes] = await Promise.allSettled([
+      api.getGrowthLinks(),
+      api.getGrowthLinkStats(),
+    ]);
+    if (linksRes.status === "fulfilled") setLinks(linksRes.value || []);
+    if (statsRes.status === "fulfilled") setStats(statsRes.value);
+    const failed = [];
+    if (linksRes.status === "rejected") failed.push("daftar link");
+    if (statsRes.status === "rejected") failed.push("statistik");
+    if (failed.length) {
+      setError(`Sebagian data belum dimuat: ${failed.join(", ")}. Bagian lain tetap ditampilkan.`);
+    }
     setLoading(false);
   };
 
   const handleCreate = async () => {
+    if (creating) return;
     setCreating(true);
+    setError("");
     try {
       await api.createGrowthLink({ source, campaign_name: campaignName, target_url: targetUrl });
       setShowCreate(false);
       setCampaignName("");
       setTargetUrl("");
       await load();
-    } catch { /* empty */ }
+    } catch (e) {
+      setError(e.message || "Gagal membuat growth link");
+    }
     setCreating(false);
   };
 
   const copyLink = (link) => {
     navigator.clipboard.writeText(link);
     setCopied(link);
-    setTimeout(() => setCopied(""), 2000);
+    clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(""), 2000);
   };
 
   if (loading) return <div className="card" style={{ padding: "2rem", textAlign: "center" }}>Memuat growth links...</div>;
@@ -65,6 +82,8 @@ export default function GrowthLinksPage() {
           + Buat Link
         </button>
       </div>
+
+      {error && <div className={styles.errorBox} role="alert">{error}</div>}
 
       {/* Stats */}
       {stats && (

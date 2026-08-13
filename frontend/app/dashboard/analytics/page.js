@@ -11,11 +11,18 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     async function load() {
-      try {
-        const [s, q] = await Promise.all([api.getSummary(), api.getQuota()]);
-        setSummary(s);
-        setQuota(q);
-      } catch (e) {
+      // 4 independent endpoints — one wave, per-block error isolation preserved.
+      const [sRes, qRes, tpRes, odRes] = await Promise.allSettled([
+        api.getSummary(),
+        api.getQuota(),
+        api.getTopProducts(),
+        api.getOrdersDaily(30),
+      ]);
+
+      if (sRes.status === "fulfilled" && qRes.status === "fulfilled") {
+        setSummary(sRes.value);
+        setQuota(qRes.value);
+      } else {
         setSummary({
           chat_today: 0, orders_today: 0, revenue_today: 0,
           products_active: 0, avg_response_time: 0,
@@ -24,28 +31,12 @@ export default function AnalyticsPage() {
       }
 
       // Fetch top products from API (BUG 7 FIX)
-      try {
-        const tp = await api.getTopProducts();
-        if (tp && tp.length > 0) {
-          setTopProducts(tp);
-        } else {
-          throw new Error("empty");
-        }
-      } catch {
-        setTopProducts([]);
-      }
+      const tp = tpRes.status === "fulfilled" ? tpRes.value : null;
+      setTopProducts(tp && tp.length > 0 ? tp : []);
 
       // Fetch daily orders from API (BUG 7 FIX)
-      try {
-        const od = await api.getOrdersDaily(30);
-        if (od && od.length > 0) {
-          setDailyOrders(od.map(d => d.count));
-        } else {
-          throw new Error("empty");
-        }
-      } catch {
-        setDailyOrders([]);
-      }
+      const od = odRes.status === "fulfilled" ? odRes.value : null;
+      setDailyOrders(od && od.length > 0 ? od.map((d) => d.count) : []);
     }
     load();
   }, []);

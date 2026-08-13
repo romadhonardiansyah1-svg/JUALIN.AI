@@ -4,7 +4,7 @@
    Glassmorphism · Micro-animations · Mobile-first
    ═══════════════════════════════════════════════ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@400;500;600;700;800&display=swap');
+/* Fonts are loaded and self-hosted by next/font in app/layout.js. */
 
 /* ── CSS Variables ── */
 :root {
@@ -70,9 +70,9 @@
   --radius-2xl: 24px;
   --radius-full: 9999px;
 
-  /* Fonts */
-  --font-heading: 'Plus Jakarta Sans', sans-serif;
-  --font-body: 'Inter', sans-serif;
+  /* Fonts — families injected by next/font (see app/layout.js) */
+  --font-heading: var(--font-jakarta), sans-serif;
+  --font-body: var(--font-inter), sans-serif;
 
   /* Sidebar */
   --sidebar-width: 260px;
@@ -136,41 +136,17 @@ img {
 
 .text-center { text-align: center; }
 .text-muted { color: var(--text-secondary); }
-.text-primary { color: var(--primary); }
 .text-sm { font-size: 0.875rem; }
 .text-xs { font-size: 0.75rem; }
-.text-lg { font-size: 1.125rem; }
-.text-xl { font-size: 1.25rem; }
-.text-2xl { font-size: 1.5rem; }
-.text-3xl { font-size: 1.875rem; }
 
-.font-medium { font-weight: 500; }
 .font-semibold { font-weight: 600; }
-.font-bold { font-weight: 700; }
 
 .mt-1 { margin-top: 0.25rem; }
 .mt-2 { margin-top: 0.5rem; }
-.mt-4 { margin-top: 1rem; }
-.mt-6 { margin-top: 1.5rem; }
-.mt-8 { margin-top: 2rem; }
-.mb-2 { margin-bottom: 0.5rem; }
-.mb-4 { margin-bottom: 1rem; }
 .mb-6 { margin-bottom: 1.5rem; }
 
 .flex { display: flex; }
-.flex-col { flex-direction: column; }
-.items-center { align-items: center; }
-.justify-between { justify-content: space-between; }
-.justify-center { justify-content: center; }
-.gap-2 { gap: 0.5rem; }
-.gap-3 { gap: 0.75rem; }
-.gap-4 { gap: 1rem; }
-.gap-6 { gap: 1.5rem; }
-
 .grid { display: grid; }
-.grid-2 { grid-template-columns: repeat(2, 1fr); }
-.grid-3 { grid-template-columns: repeat(3, 1fr); }
-.grid-4 { grid-template-columns: repeat(4, 1fr); }
 
 /* ── Buttons — Premium ── */
 .btn {
@@ -567,27 +543,6 @@ img {
 
 .skeleton-text { height: 14px; margin-bottom: 8px; }
 .skeleton-title { height: 22px; width: 60%; margin-bottom: 12px; }
-.skeleton-card { height: 120px; border-radius: var(--radius-md); }
-.skeleton-avatar { width: 40px; height: 40px; border-radius: 50%; }
-
-/* ── Toast / Notification ── */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  padding: 14px 24px;
-  background: var(--text);
-  color: white;
-  border-radius: var(--radius-md);
-  font-size: 0.88rem;
-  font-weight: 500;
-  box-shadow: var(--shadow-xl);
-  z-index: 1000;
-  animation: slideInRight 0.3s ease;
-}
-
-.toast-success { border-left: 4px solid var(--success); }
-.toast-error { border-left: 4px solid var(--danger); }
 
 /* ── Animations ── */
 @keyframes typing {
@@ -605,24 +560,9 @@ img {
   to { opacity: 1; }
 }
 
-@keyframes slideInRight {
-  from { opacity: 0; transform: translateX(40px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
 }
 
 @keyframes pulse-glow {
@@ -630,27 +570,8 @@ img {
   50% { box-shadow: 0 0 0 8px transparent; }
 }
 
-@keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-@keyframes countUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 /* ── Responsive ── */
-@media (max-width: 1024px) {
-  .grid-4 { grid-template-columns: repeat(2, 1fr); }
-}
-
 @media (max-width: 768px) {
-  .grid-2, .grid-3, .grid-4 {
-    grid-template-columns: 1fr;
-  }
-
   .container {
     padding: 0 16px;
   }
@@ -706,7 +627,6 @@ img {
   --c-pink: #F472B6;
 
   --glass: rgba(255, 255, 255, 0.05);
-  --glass-2: rgba(255, 255, 255, 0.08);
   --glass-line: rgba(255, 255, 255, 0.12);
 
   --grad-brand: linear-gradient(100deg, #34D399 0%, #22D3EE 52%, #A78BFA 100%);
@@ -715,7 +635,7 @@ img {
   --glow-emerald: 0 0 40px -8px rgba(34, 197, 94, 0.55);
   --glow-cyan: 0 0 40px -8px rgba(34, 211, 238, 0.5);
   --shadow-3d: 0 24px 60px -24px rgba(0, 0, 0, 0.75), 0 2px 8px rgba(0, 0, 0, 0.4);
-  --font-display: 'Sora', 'Plus Jakarta Sans', sans-serif;
+  --font-display: var(--font-sora), var(--font-jakarta), sans-serif;
 }
 
 /* Latar aurora gelap untuk permukaan etalase */
@@ -740,54 +660,12 @@ img {
   background-size: 3px 3px;
 }
 
-/* Blob aurora melayang */
-.aurora-blob {
-  position: absolute;
-  width: 460px;
-  height: 460px;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.5;
-  pointer-events: none;
-  z-index: 0;
-  animation: aurora-drift 18s ease-in-out infinite;
-}
-.aurora-blob.b1 { background: var(--c-emerald); top: -120px; left: -80px; }
-.aurora-blob.b2 { background: var(--c-cyan); top: 10%; right: -120px; animation-delay: -6s; }
-.aurora-blob.b3 { background: var(--c-violet); bottom: -160px; left: 30%; animation-delay: -12s; }
-
-/* Kaca */
-.glass {
-  background: var(--glass);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  backdrop-filter: blur(18px) saturate(140%);
-  border: 1px solid var(--glass-line);
-  border-radius: 20px;
-  box-shadow: var(--shadow-3d);
-}
-.glass-strong {
-  background: var(--glass-2);
-  -webkit-backdrop-filter: blur(26px) saturate(150%);
-  backdrop-filter: blur(26px) saturate(150%);
-  border: 1px solid var(--glass-line);
-  border-radius: 24px;
-  box-shadow: var(--shadow-3d);
-}
-
 /* Teks gradient */
 .gradient-text {
   background: var(--grad-brand);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-}
-
-/* Border gradient */
-.grad-border {
-  border: 1px solid transparent;
-  background:
-    linear-gradient(var(--d-bg-2), var(--d-bg-2)) padding-box,
-    var(--grad-brand-soft) border-box;
 }
 
 /* Panggung 3D + kartu tilt */
@@ -802,17 +680,7 @@ img {
   box-shadow: var(--shadow-3d), var(--glow-emerald);
 }
 
-/* Tombol glow */
-.btn-glow {
-  box-shadow: 0 10px 34px -10px rgba(34, 197, 94, 0.65), inset 0 0 0 1px rgba(255, 255, 255, 0.15);
-}
-.btn-glow:hover { box-shadow: 0 14px 44px -10px rgba(34, 197, 94, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.22); }
-
-/* Melayang & reveal */
-.float-slow { animation: float-slow 6s ease-in-out infinite; }
-.glow-pulse { animation: glow-pulse 3s ease-in-out infinite; }
-
-/* Keyframes baru */
+/* Keyframes baru — dipakai oleh page.module.css & auth.module.css */
 @keyframes aurora-drift {
   0%, 100% { transform: translate(0, 0) scale(1); }
   33% { transform: translate(40px, -30px) scale(1.08); }
@@ -834,4 +702,8 @@ img {
 /* Aksesibilitas: matikan animasi bila pengguna minta */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  /* Hemat CPU/GPU: efek kaca dan promosi layer tidak dibutuhkan tanpa animasi.
+     Semua permukaan ber-backdrop-filter sudah punya lapisan alpha sendiri,
+     jadi kontras teks tidak berubah saat blur dilepas. */
+  * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; will-change: auto !important; }
 }

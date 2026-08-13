@@ -1,3 +1,5 @@
+import { withSentryConfig } from "@sentry/nextjs";
+
 const internalApiUrl =
   process.env.INTERNAL_API_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
@@ -22,4 +24,12 @@ const nextConfig = {
   output: "standalone",
 };
 
-export default nextConfig;
+// Source map upload only runs when SENTRY_AUTH_TOKEN is present (CI); local and
+// Docker builds stay unchanged.
+export default withSentryConfig(nextConfig, {
+  org: "university-of-nahdlatul-ulama",
+  project: "jualin-frontend",
+  silent: !process.env.CI,
+  sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+  webpack: { treeshake: { removeDebugLogging: true } },
+});

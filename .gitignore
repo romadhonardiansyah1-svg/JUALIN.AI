@@ -37,11 +37,15 @@ docker-compose.override.yml
 .cache/
 sentence_transformers/
 
-# Grok agent local MCP/project config (machine paths)
+# Local agent MCP/project configuration (machine paths)
 .grok/
-
+.kiro/
 
 
 # Proof mode / local artifacts
 artifacts/
+
+# Sentry
+.sentryclirc
+.env.sentry-build-plugin
 

@@ -323,9 +323,15 @@ async def get_deal_context(seller_id: int, conversation_id: int, db: AsyncSessio
         .where(NegotiationState.status == "accepted")
     )
     lines = []
-    for s in r.scalars().all():
-        rp = await db.execute(select(Product).where(Product.id == s.product_id))
-        p = rp.scalar_one_or_none()
+    states = r.scalars().all()
+    pids = {s.product_id for s in states} - {None}
+    by_id = {}
+    if pids:
+        # ponytail: satu query untuk semua produk deal (dulu 1 query per negosiasi, hot path chat)
+        rp = await db.execute(select(Product).where(Product.id.in_(pids)))
+        by_id = {p.id: p for p in rp.scalars().all()}
+    for s in states:
+        p = by_id.get(s.product_id)
         if p and s.current_offer:
             lines.append(f"- {p.nama}: SUDAH DEAL di Rp {float(s.current_offer):,.0f} (JANGAN pakai harga katalog)")
     if not lines:

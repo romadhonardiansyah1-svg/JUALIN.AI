@@ -9,12 +9,14 @@ export default function ImportPage() {
   const [importResult, setImportResult] = useState(null);
   const [importMode, setImportMode] = useState("skip_duplicates");
   const [importing, setImporting] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   async function runPreview(e) {
     e.preventDefault();
-    if (!file) return;
+    if (!file || previewing) return;
+    setPreviewing(true);
     setError("");
     setMessage("");
     setPreview(null);
@@ -24,6 +26,7 @@ export default function ImportPage() {
     } catch (e) {
       setError(e.message);
     }
+    setPreviewing(false);
   }
 
   async function runImport() {
@@ -82,7 +85,7 @@ export default function ImportPage() {
           <div className={styles.panelHeader}><strong>Preview Import Produk</strong></div>
           <form className={styles.panelBody} onSubmit={runPreview}>
             <input className="input" type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={!file}>Preview CSV</button>
+            <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={!file || previewing}>{previewing ? "Memproses..." : "Preview CSV"}</button>
           </form>
         </div>
         <div className={styles.panel}>

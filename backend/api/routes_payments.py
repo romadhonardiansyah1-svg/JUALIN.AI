@@ -8,12 +8,12 @@ Endpoints:
     GET  /api/payments/methods         → List available payment methods
     GET  /api/payments/config          → Get client-side payment config
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Literal, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import secrets
 
 from config import get_settings
@@ -53,13 +53,153 @@ class PublicCreatePaymentRequest(BaseModel):
     provider: Literal["midtrans"] = "midtrans"
 
 
+_LEGACY_TOKEN_INVALID = "Link pembayaran tidak valid atau sudah tidak berlaku"
+
+# ponytail: legacy-link lifetimes are module constants, NOT
+# settings.PAYMENT_CAPABILITY_TOKEN_TTL_HOURS. That setting bounds a capability
+# exchange held by a live browser session; a legacy link is pasted into a
+# WhatsApp thread and must survive until the buyer actually pays. Reusing one
+# number for two different lifetimes is what locked paying customers out.
+_LEGACY_TOKEN_ROTATE_AFTER_HOURS = 24    # advisory only: when ai.actions re-mints
+LEGACY_PAYMENT_LINK_TTL_DAYS = 30        # hard ceiling while the order is payable
+_LEGACY_TOKEN_TERMINAL_GRACE_HOURS = 48  # once the order can no longer be paid
+
+# Statuses where the customer can still legitimately pay, so the link must work
+# regardless of age. Everything else is terminal or seller-side and the token is
+# only a read handle to customer data — that one does expire.
+_PAYABLE_STATUS_VALUES = frozenset(
+    {OrderStatus.PENDING.value, OrderStatus.CONFIRMED.value}
+)
+
+
+def legacy_payment_link_expiry() -> datetime:
+    """Hard deadline recorded on a freshly minted legacy payment link."""
+    return datetime.now(timezone.utc) + timedelta(days=LEGACY_PAYMENT_LINK_TTL_DAYS)
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if not value:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _order_status_value(order: Order) -> str:
+    status = getattr(order, "status", None)
+    return str(getattr(status, "value", status) or "")
+
+
+def _order_is_payable(order: Order) -> bool:
+    return _order_status_value(order) in _PAYABLE_STATUS_VALUES
+
+
+def _legacy_token_deadline(order: Order) -> datetime | None:
+    """Advisory freshness deadline — past it, ai.actions re-mints the token.
+
+    NOT the enforcement rule (see _legacy_token_hard_deadline). Rotation may be
+    eager; rejection may not, because the AI rotation path is flag-gated off by
+    default and a rejected link has no self-service recovery.
+
+    Takes the LATEST candidate on purpose: rotating a token invalidates the URL
+    already sitting in the customer's WhatsApp thread, so a re-send must not
+    kill a link the verifier would still accept. For a stamped order this lands
+    on the same instant as the hard deadline, which is what ai.actions
+    ._legacy_token_is_stale documents ("the verifier would already reject").
+    """
+    created_at = _as_utc(getattr(order, "created_at", None))
+    derived = (
+        created_at + timedelta(hours=_LEGACY_TOKEN_ROTATE_AFTER_HOURS)
+        if created_at
+        else None
+    )
+    stamped = _as_utc(getattr(order, "payment_access_token_expires_at", None))
+    candidates = [value for value in (derived, stamped) if value]
+    return max(candidates) if candidates else None
+
+
+def _legacy_token_hard_deadline(order: Order) -> datetime | None:
+    """Deadline actually enforced on a legacy query-string token.
+
+    Bound to order STATUS, not age alone: a PENDING/CONFIRMED order is still
+    payable (auto-cancel needs 48h *and* followup_count>=3, and its scheduler
+    ships disabled), so its link stays usable up to a generous ceiling. Once the
+    order is terminal the token is only a handle on customer data, so it dies
+    shortly after the order stopped moving.
+    """
+    created_at = _as_utc(getattr(order, "created_at", None))
+
+    if _order_is_payable(order):
+        if not created_at:
+            return None
+        ceiling = created_at + timedelta(days=LEGACY_PAYMENT_LINK_TTL_DAYS)
+        # A stamped expiry may only extend a payable order, never shorten it:
+        # the capability/AI paths stamp a short TTL on this same column.
+        stamped = _as_utc(getattr(order, "payment_access_token_expires_at", None))
+        return max(ceiling, stamped) if stamped else ceiling
+
+    # Anchor on paid_at when present, else creation: an order paid on day 3 must
+    # not 403 the buyer on its own success page.
+    anchor = _as_utc(getattr(order, "paid_at", None)) or created_at
+    if not anchor:
+        return None
+    return anchor + timedelta(hours=_LEGACY_TOKEN_TERMINAL_GRACE_HOURS)
+
+
 def _verify_public_token(order: Order, token: str | None):
-    if (
-        not token
-        or not order.payment_access_token
-        or not secrets.compare_digest(str(token), str(order.payment_access_token))
-    ):
-        raise HTTPException(status_code=403, detail="Link pembayaran tidak valid atau sudah tidak berlaku")
+    # ponytail: constant-time compare stays; expiry is checked after it so a
+    # wrong token and an expired token cost the same and reveal the same.
+    token_matches = bool(
+        token
+        and order.payment_access_token
+        and secrets.compare_digest(str(token), str(order.payment_access_token))
+    )
+    if not token_matches:
+        raise HTTPException(status_code=403, detail=_LEGACY_TOKEN_INVALID)
+
+    deadline = _legacy_token_hard_deadline(order)
+    if deadline and datetime.now(timezone.utc) > deadline:
+        logger.warning(
+            "Expired legacy payment token rejected",
+            extra={
+                "order_id": order.id,
+                "order_status": _order_status_value(order),
+                "deadline": deadline.isoformat(),
+            },
+        )
+        raise HTTPException(status_code=403, detail=_LEGACY_TOKEN_INVALID)
+
+
+async def _rate_limit_legacy_public(request: Request, bucket: str, max_requests: int):
+    """Fail-closed rate limit for the legacy query-token payment endpoints.
+
+    Mirrors routes_public_payments._rate_limit_public: these endpoints are
+    reachable by anyone holding a leaked URL, and POST /public/create spends a
+    Midtrans call plus a DB commit per request, so a dead Redis must not become
+    an open door.
+    """
+    from core.rate_limit import check_rate_limit_typed
+    from middleware import get_client_ip
+
+    client_ip = get_client_ip(request)
+    rl = await check_rate_limit_typed(
+        f"legacy:payment:{bucket}:{client_ip}",
+        max_requests=max_requests,
+        window_seconds=60,
+    )
+    if rl.status == "dependency_unavailable":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "security_dependency_unavailable",
+                "message": "Keputusan belum dapat diproses dengan aman. Coba lagi nanti.",
+            },
+            headers={"Retry-After": str(rl.retry_after)},
+        )
+    if not rl.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "rate_limited", "message": "Terlalu banyak percobaan"},
+            headers={"Retry-After": str(rl.retry_after)},
+        )
 
 
 def _payment_payload(order: Order, payment_created: bool = True, check_error: str | None = None) -> dict:
@@ -343,10 +483,13 @@ async def refresh_payment_status(
 @router.get("/public/status/{order_id}")
 async def get_public_payment_status(
     order_id: int,
+    request: Request,
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
     """P1.4 — Public read-only snapshot, zero provider call, no mutation, no-store."""
+    await _rate_limit_legacy_public(request, "status", 30)
+
     result = await db.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
 
@@ -385,10 +528,13 @@ async def refresh_public_payment_status(
 @router.get("/public/methods/{order_id}")
 async def list_public_payment_methods(
     order_id: int,
+    request: Request,
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
     """List payment methods available to a customer with a valid payment link."""
+    await _rate_limit_legacy_public(request, "methods", 30)
+
     result = await db.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
 
@@ -402,10 +548,13 @@ async def list_public_payment_methods(
 
 @router.post("/public/create")
 async def create_public_payment(
+    request: Request,
     req: PublicCreatePaymentRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """Create a Midtrans Snap payment from the legacy public payment route."""
+    await _rate_limit_legacy_public(request, "create", 5)
+
     result = await db.execute(select(Order).where(Order.id == req.order_id))
     order = result.scalar_one_or_none()
 

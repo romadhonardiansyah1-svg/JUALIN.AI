@@ -9,6 +9,7 @@ export default function IntegrationsPage() {
   const [form, setForm] = useState({ display_name: "WhatsApp", phone_number_id: "", access_token: "", app_secret: "" });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [connecting, setConnecting] = useState(false);
 
   async function load() {
     setError("");
@@ -29,6 +30,8 @@ export default function IntegrationsPage() {
 
   async function connect(e) {
     e.preventDefault();
+    if (connecting) return;
+    setConnecting(true);
     setError("");
     setMessage("");
     try {
@@ -39,6 +42,7 @@ export default function IntegrationsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setConnecting(false);
   }
 
   useEffect(() => {
@@ -64,7 +68,7 @@ export default function IntegrationsPage() {
             <label className={styles.formRow} style={{ marginTop: 12 }}>Phone number ID<input className="input" value={form.phone_number_id} onChange={(e) => setForm({ ...form, phone_number_id: e.target.value })} required /></label>
             <label className={styles.formRow} style={{ marginTop: 12 }}>Access token<input className="input" type="password" value={form.access_token} onChange={(e) => setForm({ ...form, access_token: e.target.value })} required /></label>
             <label className={styles.formRow} style={{ marginTop: 12 }}>App secret<input className="input" type="password" value={form.app_secret} onChange={(e) => setForm({ ...form, app_secret: e.target.value })} /></label>
-            <button className="btn btn-primary" style={{ marginTop: 14 }}>Connect</button>
+            <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={connecting}>{connecting ? "Menghubungkan..." : "Connect"}</button>
           </form>
         </div>
         <div className={styles.panel}>

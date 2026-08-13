@@ -52,6 +52,36 @@ class ConversationResponse(BaseModel):
 
 # ── Helpers ──
 
+async def enforce_chat_rate_limit(request: Request, bucket: str) -> None:
+    """Rate limit a public chat call, keyed on the real client IP.
+
+    Behind Nginx every request shares the proxy's `request.client.host`, so the
+    bucket must come from `get_client_ip()` or the whole platform shares one
+    counter (and history enumeration is no longer per-attacker).
+
+    Redis down is treated as degraded-allow, not 429: chat is the core product
+    surface and a rate limiter outage is not "too many requests". Auth and
+    payment paths keep their fail-closed behaviour.
+    """
+    from core.rate_limit import check_rate_limit
+    from middleware import get_client_ip
+
+    client_ip = get_client_ip(request)
+    rl = await check_rate_limit(
+        f"{bucket}:{client_ip}",
+        max_requests=settings.CHAT_RATE_LIMIT_PER_MIN,
+        window_seconds=60,
+    )
+    if rl.get("status") == "dependency_unavailable":
+        logger.warning(
+            "chat_rate_limiter_dependency_unavailable_degraded_allow",
+            extra={"bucket": bucket, "client_ip": client_ip},
+        )
+        return
+    if not rl["allowed"]:
+        raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Coba lagi nanti.")
+
+
 def parse_product_line(line: str) -> tuple[str, int]:
     # e.g., "Baju Pink Satin x2" or "Baju Pink Satin x 2" or "Baju Pink Satin 2pcs" or "Baju Pink Satin (2 pcs)"
     qty_match = re.search(r'\s+x\s*(\d+)\b', line, re.IGNORECASE)
@@ -289,11 +319,7 @@ async def send_message(
     Public endpoint (no auth needed — customers don't have accounts).
     """
     # ── Rate limit ──
-    from core.rate_limit import check_rate_limit
-    client_ip = request.client.host if request.client else "unknown"
-    rl = await check_rate_limit(f"chat:{client_ip}", max_requests=settings.CHAT_RATE_LIMIT_PER_MIN, window_seconds=60)
-    if not rl["allowed"]:
-        raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Coba lagi nanti.")
+    await enforce_chat_rate_limit(request, "chat")
     # Find seller by slug
     result = await db.execute(select(User).where(User.slug == req.seller_slug))
     seller = result.scalar_one_or_none()
@@ -314,7 +340,7 @@ async def send_message(
         return ChatResponse(
             response=f"Hai kak! Terima kasih sudah menghubungi {seller.nama_toko} 😊\n"
                      f"Saat ini penjual kami sedang tidak tersedia.\n"
-                     f"Silakan hubungi langsung via {seller.no_hp or 'kontak toko'} ya kak! 🙏",
+                     f"Silakan coba lagi nanti ya kak! 🙏",
             session_id=req.session_id or str(uuid.uuid4()),
             quota_exceeded=True,
         )
@@ -515,16 +541,16 @@ async def send_message(
             source="chat", source_id=str(conversation.id),
             idempotency_key=f"chat.sent:{conversation.id}:{ai_msg.id}",
         )
-    except Exception:
-        pass  # metering should not block chat
+    except Exception as e:
+        logger.warning(f"Metering record_usage_event failed: {e}")  # metering should not block chat
 
     # ── JUALIN OS: catat aktivitas Pramuniaga untuk activity feed ──
     if settings.ENABLE_AGENT_OS and not agent_os_handled:
         try:
             from services.agent_os.orchestrator import record_sales_activity
             await record_sales_activity(seller.id, conversation.id, intent, sales_stage, order_created, db)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"record_sales_activity failed: {e}")
 
     await db.commit()
     
@@ -538,11 +564,37 @@ async def send_message(
 @router.get("/history/{session_id}")
 async def get_chat_history(
     session_id: str,
+    request: Request,
+    seller_slug: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all messages in a conversation."""
+    """
+    Get all messages in a conversation.
+
+    session_id BUKAN kredensial. Akses diberikan ke:
+      - seller ter-autentikasi, dibatasi ke percakapan miliknya sendiri; atau
+      - klien storefront anonim yang mengirim `seller_slug` bersama session_id.
+    Plus rate limit per IP supaya session_id tidak bisa dienumerasi.
+    """
+    await enforce_chat_rate_limit(request, "chat_history")
+
+    try:
+        seller_id = (await get_current_user(request, None, db)).id
+    except HTTPException:
+        seller_id = None
+
+    if seller_id is None:
+        if not seller_slug:
+            raise HTTPException(status_code=403, detail="seller_slug wajib untuk akses riwayat")
+        slug_result = await db.execute(select(User.id).where(User.slug == seller_slug))
+        seller_id = slug_result.scalar_one_or_none()
+        if seller_id is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
     result = await db.execute(
-        select(Conversation).where(Conversation.session_id == session_id)
+        select(Conversation)
+        .where(Conversation.session_id == session_id)
+        .where(Conversation.seller_id == seller_id)
     )
     conversation = result.scalar_one_or_none()
     

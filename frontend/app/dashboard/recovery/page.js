@@ -21,7 +21,15 @@ function newIdempotencyKey(prefix) {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return `${prefix}:${crypto.randomUUID()}`;
   }
-  return `${prefix}:${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  // Fallback must stay unpredictable: a guessable idempotency key lets an attacker
+  // collide/replay an approve-reject decision.
+  const bytes = new Uint8Array(16);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return `${prefix}:${Date.now()}-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 }
 
 function decisionCopy(err) {

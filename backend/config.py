@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     MAX_MULTIPART_BODY_BYTES: int = 8 * 1024 * 1024
     MIN_PASSWORD_LENGTH: int = 10
 
+    # Observability — Sentry is inert unless SENTRY_DSN is set.
+    SENTRY_DSN: str = ""
+    SENTRY_ENVIRONMENT: str = "development"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.05
+
     # Public payment capability settings
     PAYMENT_CAPABILITY_TOKEN_TTL_HOURS: int = 24
     PAYMENT_CAPABILITY_SESSION_TTL_MINUTES: int = 30

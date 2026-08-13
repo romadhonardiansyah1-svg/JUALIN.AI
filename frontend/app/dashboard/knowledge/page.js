@@ -10,6 +10,7 @@ export default function KnowledgePage() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ type: "manual", title: "", content: "" });
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { loadData(); }, []);
   async function loadData() {
@@ -19,20 +20,29 @@ export default function KnowledgePage() {
 
   async function handleCreate(e) {
     e.preventDefault();
+    if (busy) return;
+    setBusy(true);
     try {
       await createKnowledgeSource(form);
       setShowForm(false); setForm({ type: "manual", title: "", content: "" });
-      loadData();
+      await loadData();
     } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleReindex(id) {
-    try { await reindexKnowledge(id); alert("Reindexed!"); loadData(); } catch (e) { alert(e.message); }
+    if (busy) return;
+    setBusy(true);
+    try { await reindexKnowledge(id); alert("Reindexed!"); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleDelete(id) {
+    if (busy) return;
     if (!confirm("Hapus knowledge source ini?")) return;
-    try { await deleteKnowledge(id); loadData(); } catch (e) { alert(e.message); }
+    setBusy(true);
+    try { await deleteKnowledge(id); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}>⏳ Memuat...</div>;
@@ -58,7 +68,7 @@ export default function KnowledgePage() {
             <input className="input" placeholder="Judul" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
           </div>
           <textarea className="input" rows={6} placeholder="Konten knowledge..." value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} style={{ width: "100%", marginBottom: 12 }} />
-          <button className="btn btn-primary" type="submit">💾 Simpan</button>
+          <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? "⏳ Menyimpan..." : "💾 Simpan"}</button>
         </form>
       )}
 
@@ -73,8 +83,8 @@ export default function KnowledgePage() {
               <div className="text-sm text-muted">{s.type} · {s.chunk_count} chunks · {s.status}</div>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              <button className="btn btn-sm btn-outline" onClick={() => handleReindex(s.id)}>🔄</button>
-              <button className="btn btn-sm btn-danger" onClick={() => handleDelete(s.id)}>🗑️</button>
+              <button className="btn btn-sm btn-outline" onClick={() => handleReindex(s.id)} disabled={busy} aria-label={`Reindex ${s.title}`}>🔄</button>
+              <button className="btn btn-sm btn-danger" onClick={() => handleDelete(s.id)} disabled={busy} aria-label={`Hapus ${s.title}`}>🗑️</button>
             </div>
           </div>
         </div>

@@ -16,6 +16,9 @@ export default function ProductsPage() {
   const [uploading, setUploading] = useState(null); // product id being uploaded
   const fileInputRef = useRef(null);
   const [uploadTargetId, setUploadTargetId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [brokenImages, setBrokenImages] = useState({}); // productId -> foto_url that failed
 
   useEffect(() => {
     loadProducts();
@@ -34,6 +37,8 @@ export default function ProductsPage() {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    if (saving) return;
+    setSaving(true);
     try {
       if (editingProduct) {
         await api.updateProduct(editingProduct.id, { ...form, harga: Number(form.harga), stok: Number(form.stok) });
@@ -43,10 +48,11 @@ export default function ProductsPage() {
       setShowModal(false);
       setEditingProduct(null);
       setForm({ nama: "", deskripsi: "", harga: "", stok: "", kategori: "umum" });
-      loadProducts();
+      await loadProducts();
     } catch (e) {
       alert(e.message);
     }
+    setSaving(false);
   };
 
   const handleEdit = (product) => {
@@ -56,13 +62,16 @@ export default function ProductsPage() {
   };
 
   const handleDelete = async (id) => {
+    if (deletingId) return;
     if (!confirm("Hapus produk ini?")) return;
+    setDeletingId(id);
     try {
       await api.deleteProduct(id);
-      loadProducts();
+      await loadProducts();
     } catch (e) {
       alert(e.message);
     }
+    setDeletingId(null);
   };
 
   const handleUploadClick = (productId) => {
@@ -91,6 +100,11 @@ export default function ProductsPage() {
       setProducts(prev => prev.map(p => 
         p.id === uploadTargetId ? { ...p, foto_url: result.foto_url } : p
       ));
+      setBrokenImages(prev => {
+        const next = { ...prev };
+        delete next[uploadTargetId];
+        return next;
+      });
     } catch (e) {
       alert("Gagal upload: " + e.message);
     }
@@ -158,32 +172,40 @@ export default function ProductsPage() {
 
       {/* Product Grid */}
       <div className={styles.productGrid}>
-        {filtered.map((p) => (
+        {filtered.map((p) => {
+          // Broken flag is keyed by the URL that failed, so a new upload recovers on its own.
+          const imageOk = p.foto_url && brokenImages[p.id] !== p.foto_url;
+          return (
           <div key={p.id} className={`${styles.productCard} ${p.stok === 0 ? styles.outOfStock : ""}`}>
             <div 
               className={styles.productImage}
               onClick={() => handleUploadClick(p.id)}
               title="Klik untuk upload foto"
             >
-              {p.foto_url ? (
+              {imageOk && (
                 <img 
                   src={getImageUrl(p.foto_url)} 
                   alt={p.nama}
                   className={styles.productImg}
-                  onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
+                  loading="lazy"
+                  width={320}
+                  height={180}
+                  onError={() => setBrokenImages((prev) => ({ ...prev, [p.id]: p.foto_url }))}
                 />
-              ) : null}
-              <div className={styles.productImagePlaceholder} style={p.foto_url ? { display: "none" } : {}}>
-                {uploading === p.id ? (
-                  <span className={styles.uploadingText}>⏳ Uploading...</span>
-                ) : (
-                  <>
-                    <span className={styles.productImageIcon}>📷</span>
-                    <span className={styles.uploadHint}>Klik untuk upload foto</span>
-                  </>
-                )}
-              </div>
-              {p.foto_url && (
+              )}
+              {!imageOk && (
+                <div className={styles.productImagePlaceholder}>
+                  {uploading === p.id ? (
+                    <span className={styles.uploadingText}>⏳ Uploading...</span>
+                  ) : (
+                    <>
+                      <span className={styles.productImageIcon}>📷</span>
+                      <span className={styles.uploadHint}>Klik untuk upload foto</span>
+                    </>
+                  )}
+                </div>
+              )}
+              {imageOk && (
                 <div className={styles.imageOverlay}>
                   <span>📷 Ganti Foto</span>
                 </div>
@@ -199,11 +221,12 @@ export default function ProductsPage() {
               </div>
             </div>
             <div className={styles.productActions}>
-              <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)}>✏️</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p.id)}>🗑️</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => handleEdit(p)} aria-label={`Edit ${p.nama}`}>✏️</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(p.id)} disabled={deletingId === p.id} aria-label={`Hapus ${p.nama}`}>🗑️</button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Modal */}
@@ -248,8 +271,8 @@ export default function ProductsPage() {
               <p className="text-xs text-muted">💡 Foto bisa diupload setelah produk dibuat — klik area foto di kartu produk.</p>
               <div className={styles.modalActions}>
                 <button type="button" className="btn btn-outline" onClick={() => setShowModal(false)}>Batal</button>
-                <button type="submit" className="btn btn-primary">
-                  {editingProduct ? "Simpan Perubahan" : "Tambah Produk"}
+                <button type="submit" className="btn btn-primary" disabled={saving}>
+                  {saving ? "Menyimpan..." : editingProduct ? "Simpan Perubahan" : "Tambah Produk"}
                 </button>
               </div>
             </form>

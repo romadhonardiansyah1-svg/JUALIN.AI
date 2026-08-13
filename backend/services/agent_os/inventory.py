@@ -12,13 +12,18 @@ logger = get_logger(__name__)
 async def check_stock_guard(seller_id: int, items: list[dict], db: AsyncSession) -> dict:
     """Verifikasi stok cukup untuk daftar item [{product_id, qty}]. Return {ok, issues}."""
     issues = []
+    pids = {it.get("product_id") for it in items or []} - {None, 0, ""}
+    by_id = {}
+    if pids:
+        # ponytail: satu round-trip untuk seluruh cart (dulu 1 query per item)
+        r = await db.execute(select(Product).where(Product.id.in_(pids), Product.seller_id == seller_id))
+        by_id = {p.id: p for p in r.scalars().all()}
     for it in items or []:
         pid = it.get("product_id")
         qty = int(it.get("qty", 1))
         if not pid:
             continue
-        r = await db.execute(select(Product).where(Product.id == pid, Product.seller_id == seller_id))
-        p = r.scalar_one_or_none()
+        p = by_id.get(pid)
         if not p or p.is_active != 1:
             issues.append({"product_id": pid, "reason": "tidak ditemukan"})
         elif p.stok < qty:

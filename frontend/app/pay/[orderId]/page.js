@@ -12,6 +12,10 @@ import styles from "./payment.module.css";
  * - Consent checkbox for transactional reminder (unchecked default, separate)
  * - No token in referrer/analytics, private no-store responses
  */
+
+// Single source of truth for statuses that must stop status polling.
+const TERMINAL_STATUSES = ["paid", "expired", "cancelled", "failed"];
+
 export default function PaymentPage() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -131,9 +135,12 @@ export default function PaymentPage() {
   }, [orderId, legacyToken, capabilityExchanged, capabilityReady, order]);
 
   useEffect(() => {
-    if (!capabilityReady || !paymentInfo || paymentStatus === "paid" || paymentStatus === "expired") return;
+    if (!capabilityReady || !paymentInfo || TERMINAL_STATUSES.includes(paymentStatus)) return;
     setPolling(true);
-    const interval = setInterval(async () => {
+    let cancelled = false;
+    const fetchStatus = async () => {
+      // Public page: never poll from a background tab.
+      if (cancelled || typeof document === "undefined" || document.visibilityState !== "visible") return;
       try {
         let data;
         if (capabilityExchanged || !legacyToken) {
@@ -146,15 +153,23 @@ export default function PaymentPage() {
         } else {
           data = await api.getPublicPaymentStatus(orderId, legacyToken);
         }
+        if (cancelled) return;
         setPaymentStatus(data.status);
-        if (data.status === "paid") {
+        if (TERMINAL_STATUSES.includes(data.status)) {
           clearInterval(interval);
           setPolling(false);
         }
       } catch {}
-    }, 5000);
+    };
+    const interval = setInterval(fetchStatus, 5000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") fetchStatus();
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
+      cancelled = true;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVis);
       setPolling(false);
     };
   }, [paymentInfo, paymentStatus, orderId, legacyToken, capabilityExchanged, capabilityReady]);

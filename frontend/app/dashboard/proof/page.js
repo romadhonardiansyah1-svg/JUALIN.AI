@@ -17,33 +17,37 @@ export default function ProofModePage() {
 
   const load = useCallback(async () => {
     setError("");
-    try {
-      const cap = await api.getProofCapability();
-      setCapability(cap);
-      try {
-        const latest = await api.getProofLatest();
-        setResult(latest);
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404) {
-          setResult({
-            status: "UNVERIFIED",
-            verification_status: "UNVERIFIED",
-            unverified_reason: "missing_artifact",
-            watermark: "DATA SIMULASI",
-            scenarios: [],
-          });
-        }
-      }
-    } catch (e) {
+    // Both endpoints are independent — fetch in one wave.
+    const [capRes, latestRes] = await Promise.allSettled([
+      api.getProofCapability(),
+      api.getProofLatest(),
+    ]);
+
+    if (capRes.status === "rejected") {
+      const e = capRes.reason;
       if (e instanceof ApiError && e.status === 404) {
         setError("Proof Mode tidak tersedia di environment ini.");
       } else {
-        setError(e.message || "Proof Mode tidak tersedia");
+        setError(e?.message || "Proof Mode tidak tersedia");
       }
       setCapability(null);
-    } finally {
       setLoading(false);
+      return;
     }
+
+    setCapability(capRes.value);
+    if (latestRes.status === "fulfilled") {
+      setResult(latestRes.value);
+    } else if (latestRes.reason instanceof ApiError && latestRes.reason.status === 404) {
+      setResult({
+        status: "UNVERIFIED",
+        verification_status: "UNVERIFIED",
+        unverified_reason: "missing_artifact",
+        watermark: "DATA SIMULASI",
+        scenarios: [],
+      });
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {

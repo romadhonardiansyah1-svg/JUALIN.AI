@@ -9,11 +9,24 @@ from config import get_settings
 
 settings = get_settings()
 
+# Pool sizing for a small VPS: backend + ARQ worker + migrate share one Postgres
+# whose default max_connections is 100. pool_size covers steady-state, max_overflow
+# covers bursts. pool_pre_ping: asyncpg connections idle behind a NAT/pgbouncer or
+# surviving a DB restart are dead but still pooled; without it the next request
+# fails. pool_recycle: recycle below the usual 3600s idle_session_timeout cutoff.
+#
+# ponytail: the SSE chat stream holds its request session for the whole stream
+# (FastAPI closes the dependency stack only after the response ends), so a few
+# concurrent streams consume connections for the duration of the LLM wait.
+# max_overflow=15 gives ~20/process headroom for that; the real fix is to not hold
+# the session across the stream — raise when SSE concurrency scales.
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
-    pool_size=20,
-    max_overflow=10,
+    pool_size=5,
+    max_overflow=15,
+    pool_pre_ping=True,
+    pool_recycle=1800,
 )
 
 async_session = async_sessionmaker(

@@ -5,6 +5,7 @@ This module is intentionally separate from the legacy text parser so the old
 chat flow can remain as fallback while structured actions are rolled out.
 """
 from typing import Any, Literal
+from datetime import datetime, timedelta, timezone
 import secrets
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -48,6 +49,28 @@ PROMPT_INJECTION_PATTERNS = (
 def detect_prompt_injection(text: str) -> bool:
     lower = (text or "").lower()
     return any(pattern in lower for pattern in PROMPT_INJECTION_PATTERNS)
+
+
+def _legacy_token_expiry() -> datetime:
+    """Expiry stamped on AI-minted legacy payment links.
+
+    Same TTL the capability path uses, so a link posted into a chat/WA thread
+    stops working instead of staying valid forever. api.routes_payments
+    ._verify_public_token enforces it.
+    """
+    return datetime.now(timezone.utc) + timedelta(
+        hours=settings.PAYMENT_CAPABILITY_TOKEN_TTL_HOURS
+    )
+
+
+def _legacy_token_is_stale(order: Order) -> bool:
+    """True when the verifier would already reject this order's legacy token."""
+    # Lazy import: api.routes_payments owns the deadline rule, and importing it
+    # at module load would tie the AI package to the route layer.
+    from api.routes_payments import _legacy_token_deadline
+
+    deadline = _legacy_token_deadline(order)
+    return bool(deadline and datetime.now(timezone.utc) > deadline)
 
 
 class CreateOrderItem(BaseModel):
@@ -211,6 +234,7 @@ async def _execute_create_order(
         total=total,
         status=OrderStatus.PENDING,
         payment_access_token=secrets.token_urlsafe(32),
+        payment_access_token_expires_at=_legacy_token_expiry(),
     )
     db.add(order)
     await db.flush()
@@ -238,8 +262,12 @@ async def _execute_send_payment_link(
     order = result.scalar_one_or_none()
     if not order:
         raise ValueError("Order tidak ditemukan")
-    if not order.payment_access_token:
+    # Resending must hand out a link that still works: an order that has been
+    # pending past the TTL keeps its row but its old token is now rejected, so
+    # rotate instead of returning a dead URL.
+    if not order.payment_access_token or _legacy_token_is_stale(order):
         order.payment_access_token = secrets.token_urlsafe(32)
+        order.payment_access_token_expires_at = _legacy_token_expiry()
         await db.flush()
     return {
         "type": "send_payment_link",

@@ -21,6 +21,8 @@ export default function AgentOsPage() {
   const [impact, setImpact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deciding, setDeciding] = useState(false);
+  const [savingPolicy, setSavingPolicy] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -85,6 +87,8 @@ export default function AgentOsPage() {
   };
 
   const decide = async (id, action) => {
+    if (deciding) return;
+    setDeciding(true);
     try {
       if (action === "approve") await api.agentOsApprove(id);
       else await api.agentOsReject(id);
@@ -92,10 +96,13 @@ export default function AgentOsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setDeciding(false);
   };
 
   const savePolicy = async (patch) => {
+    if (savingPolicy) return;
     const previous = policy;
+    setSavingPolicy(true);
     try {
       const next = { ...policy, ...patch };
       setPolicy(next);
@@ -105,6 +112,7 @@ export default function AgentOsPage() {
       setPolicy(previous);
       setError(e.message || "Gagal menyimpan kebijakan");
     }
+    setSavingPolicy(false);
   };
 
   if (loading) return <div style={{ padding: 24, color: "#94a3b8" }}>Memuat AI Crew…</div>;
@@ -211,12 +219,12 @@ export default function AgentOsPage() {
               <div style={{ fontSize: 12, color: "#94a3b8" }}>{a.action_type} · {a.agent_role}</div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => decide(a.id, "approve")}
-                style={{ background: "#22c55e", border: 0, color: "#06210f", fontWeight: 700, padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>
+              <button onClick={() => decide(a.id, "approve")} disabled={deciding}
+                style={{ background: "#22c55e", border: 0, color: "#06210f", fontWeight: 700, padding: "8px 14px", borderRadius: 8, cursor: deciding ? "not-allowed" : "pointer" }}>
                 Setujui
               </button>
-              <button onClick={() => decide(a.id, "reject")}
-                style={{ background: "#334155", border: 0, color: "#e2e8f0", padding: "8px 14px", borderRadius: 8, cursor: "pointer" }}>
+              <button onClick={() => decide(a.id, "reject")} disabled={deciding}
+                style={{ background: "#334155", border: 0, color: "#e2e8f0", padding: "8px 14px", borderRadius: 8, cursor: deciding ? "not-allowed" : "pointer" }}>
                 Tolak
               </button>
             </div>
@@ -284,7 +292,7 @@ export default function AgentOsPage() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
             <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>Negosiasi otomatis</span>
-              <input type="checkbox" checked={!!policy.allow_auto_negotiation}
+              <input type="checkbox" checked={!!policy.allow_auto_negotiation} disabled={savingPolicy}
                 onChange={(e) => savePolicy({ allow_auto_negotiation: e.target.checked })} />
             </label>
             <label style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

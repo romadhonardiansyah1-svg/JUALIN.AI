@@ -10,3 +10,8 @@
 }
 .filterBtn:hover { border-color: var(--primary); color: var(--primary); }
 .filterActive { background: var(--primary); color: white; border-color: var(--primary); }
+.errorBox {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px; margin-bottom: 16px; border-radius: var(--radius);
+  background: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; font-size: 0.9rem;
+}

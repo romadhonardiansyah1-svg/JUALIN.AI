@@ -143,28 +143,6 @@ async def list_growth_links(
     ]
 
 
-@router.get("/{code}/redirect")
-async def redirect_growth_link(
-    code: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """Public redirect endpoint — track click and redirect to target."""
-    result = await db.execute(
-        select(GrowthLink).where(GrowthLink.code == code, GrowthLink.is_active == True)
-    )
-    link = result.scalar_one_or_none()
-
-    if not link:
-        raise HTTPException(status_code=404, detail="Link tidak ditemukan")
-
-    # Track click
-    link.click_count = (link.click_count or 0) + 1
-    await db.commit()
-
-    return RedirectResponse(url=link.target_url, status_code=302)
-
-
 @router.get("/stats")
 async def growth_link_stats(
     current_user: User = Depends(get_current_user),
@@ -187,3 +165,26 @@ async def growth_link_stats(
         "total_orders": row[2] or 0,
         "total_revenue": float(row[3] or 0),
     }
+
+
+# Declared last: the catch-all {code} path would otherwise swallow /stats.
+@router.get("/{code}/redirect")
+async def redirect_growth_link(
+    code: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public redirect endpoint — track click and redirect to target."""
+    result = await db.execute(
+        select(GrowthLink).where(GrowthLink.code == code, GrowthLink.is_active == True)
+    )
+    link = result.scalar_one_or_none()
+
+    if not link:
+        raise HTTPException(status_code=404, detail="Link tidak ditemukan")
+
+    # Track click
+    link.click_count = (link.click_count or 0) + 1
+    await db.commit()
+
+    return RedirectResponse(url=link.target_url, status_code=302)

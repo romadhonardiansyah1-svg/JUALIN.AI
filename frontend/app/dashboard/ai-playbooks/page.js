@@ -8,6 +8,7 @@ const TONE_OPTIONS = ["friendly", "professional", "casual"];
 export default function PlaybooksPage() {
   const [playbooks, setPlaybooks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [togglingId, setTogglingId] = useState(null);
 
   useEffect(() => { loadData(); }, []);
   async function loadData() {
@@ -16,7 +17,10 @@ export default function PlaybooksPage() {
   }
 
   async function togglePlaybook(id, enabled) {
-    try { await updatePlaybook(id, { is_enabled: !enabled }); loadData(); } catch (e) { alert(e.message); }
+    if (togglingId) return;
+    setTogglingId(id);
+    try { await updatePlaybook(id, { is_enabled: !enabled }); await loadData(); } catch (e) { alert(e.message); }
+    setTogglingId(null);
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}>⏳ Memuat playbooks...</div>;
@@ -42,7 +46,7 @@ export default function PlaybooksPage() {
                 </div>
                 <p className="text-sm text-muted" style={{ margin: "4px 0 0" }}>{p.description}</p>
               </div>
-              <button className={`btn btn-sm ${p.is_enabled ? "btn-danger" : "btn-primary"}`} onClick={() => togglePlaybook(p.id, p.is_enabled)}>
+              <button className={`btn btn-sm ${p.is_enabled ? "btn-danger" : "btn-primary"}`} onClick={() => togglePlaybook(p.id, p.is_enabled)} disabled={togglingId !== null}>
                 {p.is_enabled ? "Disable" : "Enable"}
               </button>
             </div>

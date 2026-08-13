@@ -61,3 +61,7 @@
   font-size: 0.85rem; color: var(--danger); margin-bottom: 0.75rem;
 }
 .templateMeta { display: flex; gap: 1rem; font-size: 0.8rem; color: var(--text-secondary); }
+.errorBox {
+  padding: 0.75rem 0.875rem; margin-bottom: 1rem; border-radius: 10px;
+  background: #FEF2F2; color: #B91C1C; border: 1px solid #FECACA; font-size: 0.9rem;
+}

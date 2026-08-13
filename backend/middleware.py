@@ -64,13 +64,24 @@ def _is_origin_allowed(origin: str) -> bool:
 
 
 def get_client_ip(request: Request) -> str:
-    """Return best-effort client IP behind Nginx/reverse proxies."""
+    """Return best-effort client IP behind Nginx/reverse proxies.
+
+    X-Real-IP is preferred: nginx sets it from $remote_addr and overwrites any
+    client-supplied value. X-Forwarded-For uses $proxy_add_x_forwarded_for, which
+    APPENDS to whatever the client sent, so its leftmost entry is attacker-chosen
+    and must not be trusted for rate-limit buckets. Read XFF right-to-left, taking
+    the last hop the proxy appended.
+    """
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
+
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
+        hops = [hop.strip() for hop in forwarded_for.split(",") if hop.strip()]
+        if hops:
+            return hops[-1]
+
     return request.client.host if request.client else "unknown"
 
 

@@ -15,6 +15,7 @@ export default function OffersPage() {
   const [recs, setRecs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("offers");
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { loadData(); }, []);
   async function loadData() {
@@ -26,13 +27,19 @@ export default function OffersPage() {
   }
 
   async function handleCreate() {
+    if (busy) return;
     const name = prompt("Nama offer:");
     if (!name) return;
-    try { await createOffer({ name }); loadData(); } catch (e) { alert(e.message); }
+    setBusy(true);
+    try { await createOffer({ name }); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleApprove(id) {
-    try { await approveOfferRec(id); loadData(); } catch (e) { alert(e.message); }
+    if (busy) return;
+    setBusy(true);
+    try { await approveOfferRec(id); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}>⏳ Memuat...</div>;
@@ -41,7 +48,7 @@ export default function OffersPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h2>🎁 Dynamic Offers</h2>
-        <button className="btn btn-primary" onClick={handleCreate}>+ Buat Offer</button>
+        <button className="btn btn-primary" onClick={handleCreate} disabled={busy}>+ Buat Offer</button>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -74,7 +81,7 @@ export default function OffersPage() {
               <div className="text-sm text-muted">Segment: {r.customer_segment} · Est. impact: +{r.estimated_impact}%</div>
             </div>
             {r.status === "pending" && (
-              <button className="btn btn-sm btn-primary" onClick={() => handleApprove(r.id)}>✅ Approve</button>
+              <button className="btn btn-sm btn-primary" onClick={() => handleApprove(r.id)} disabled={busy}>✅ Approve</button>
             )}
           </div>
         </div>

@@ -32,14 +32,14 @@ export default function AdminLlmPage() {
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
-    try {
-      const p = await api.adminLlmProviders();
-      setProviders(p.providers || []);
-    } catch (e) { setMsg(e.message); }
-    try {
-      const s = await api.adminLlmGet();
-      setEnvInfo(s.env_fallback || null);
-    } catch { /* fallback info optional */ }
+    // Independent endpoints — one wave; provider errors still surface, env info stays optional.
+    const [provRes, envRes] = await Promise.allSettled([
+      api.adminLlmProviders(),
+      api.adminLlmGet(),
+    ]);
+    if (provRes.status === "fulfilled") setProviders(provRes.value.providers || []);
+    else setMsg(provRes.reason?.message || "Gagal memuat penyedia");
+    if (envRes.status === "fulfilled") setEnvInfo(envRes.value.env_fallback || null);
   };
   useEffect(() => { load(); }, []);
 

@@ -656,6 +656,9 @@ async def handle_workflow_run(db: AsyncSession, job: BackgroundJob) -> dict:
         result = await execute_workflow_run(db, run_id)
         return result
     except Exception as e:
+        # Leave the session usable so the worker's fenced finalize can commit;
+        # an aborted transaction would strand the job and the run in "running".
+        await db.rollback()
         return {"success": False, "error": str(e)}
 
 

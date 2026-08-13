@@ -23,6 +23,46 @@ const CACHE_TTL = 60000; // 1 minute default, but sensitive endpoints bypass cac
 let _sessionEpoch = 0;
 const ENABLE_AUTH_CACHE = false; // P0.3b containment: disable seller-sensitive caching
 
+// In-flight GET coalescing: concurrent identical GETs share one fetch.
+// Keyed by session epoch so a previous principal's in-flight request is never
+// handed to a new one. Not a time-based cache — entries live only while pending.
+const _inflight = new Map();
+
+// Default request timeout. Long-running endpoints (AI generation, imports,
+// proof runs) get LONG_TIMEOUT; any caller can still override via
+// `options.timeout`.
+const DEFAULT_TIMEOUT = 12000;
+const LONG_TIMEOUT = 60000;
+
+// Endpoint fragments that legitimately take longer than DEFAULT_TIMEOUT:
+// LLM generation, marketplace import, proof runs, reindex/recompute jobs.
+// ponytail: substring list, not per-call-site overrides — it also covers the
+// duplicated `export async function` wrappers at the bottom of this file.
+const LONG_RUNNING_ENDPOINTS = [
+  "/generate",
+  "/send",
+  "/ai-enrich",
+  "/evals/run",
+  "/dry-run",
+  "/reindex",
+  "/recompute-scores",
+  "/simulate-chat",
+  "/test-chat",
+  "/quick-start",
+  "/sample-products",
+  "/install-pack",
+  "/products/import",
+  "/proof/run",
+  "/llm-settings/test",
+  "/preview",
+];
+
+function defaultTimeoutFor(endpoint) {
+  return LONG_RUNNING_ENDPOINTS.some((p) => endpoint.includes(p))
+    ? LONG_TIMEOUT
+    : DEFAULT_TIMEOUT;
+}
+
 export class ApiError extends Error {
   constructor({ status, code, message, detail, requestId, retryAfter }) {
     super(message);
@@ -96,6 +136,7 @@ function clearCache(prefix) {
 export function clearAuthStateAndCache() {
   _sessionEpoch++;
   Object.keys(_cache).forEach((k) => delete _cache[k]);
+  _inflight.clear();
   if (typeof window !== "undefined") {
     try {
       localStorage.removeItem("jualin_token");
@@ -124,7 +165,7 @@ export function clearAuthStateAndCache() {
 }
 
 // ── Fetch wrapper with epoch-aware inflight guard + typed errors (P0.4) + P3.5 no Bearer ──
-async function fetchAPI(endpoint, options = {}) {
+async function performFetch(endpoint, options = {}) {
   const requestEpoch = _sessionEpoch;
   const { authPolicy = "seller", ...requestOptions } = options;
 
@@ -151,8 +192,9 @@ async function fetchAPI(endpoint, options = {}) {
     }
   }
 
-  // Timeout handling via AbortController (30s default, overridable via options.timeout)
-  const timeoutMs = requestOptions.timeout ?? 30000;
+  // Timeout via AbortController: 12s default, 60s for known long-running
+  // endpoints, overridable per call via options.timeout.
+  const timeoutMs = requestOptions.timeout ?? defaultTimeoutFor(endpoint);
   const ctrl = new AbortController();
   const timeoutId = setTimeout(() => ctrl.abort(), timeoutMs);
   const signal = requestOptions.signal || ctrl.signal;
@@ -271,6 +313,24 @@ async function fetchAPI(endpoint, options = {}) {
   return data;
 }
 
+// Coalesce concurrent identical GETs onto a single fetch. Mutations are never
+// shared. The rejected promise is removed too, so every sharer sees the error
+// and the next call retries.
+function fetchAPI(endpoint, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET") return performFetch(endpoint, options);
+
+  const key = `${_sessionEpoch}:${options.authPolicy || "seller"}:${endpoint}`;
+  const pending = _inflight.get(key);
+  if (pending) return pending;
+
+  const promise = performFetch(endpoint, options).finally(() => {
+    if (_inflight.get(key) === promise) _inflight.delete(key);
+  });
+  _inflight.set(key, promise);
+  return promise;
+}
+
 const apiFetch = fetchAPI;
 
 // ── Cached fetch (for data that rarely changes) ──
@@ -385,7 +445,13 @@ export const api = {
   // Chat
   sendChat: (body) =>
     fetchAPI("/api/chat/send", { method: "POST", body: JSON.stringify(body) }),
-  getChatHistory: (sessionId) => fetchAPI(`/api/chat/history/${sessionId}`),
+  // sellerSlug is required for anonymous callers (backend returns 403 without it);
+  // authenticated sellers are resolved from the cookie and may omit it.
+  getChatHistory: (sessionId, sellerSlug) =>
+    fetchAPI(
+      `/api/chat/history/${encodeURIComponent(sessionId)}` +
+        (sellerSlug ? `?seller_slug=${encodeURIComponent(sellerSlug)}` : "")
+    ),
   getConversations: () => fetchAPI("/api/chat/conversations"),
   getQuota: () => fetchCached("/api/chat/quota", {}, 30000), // Cache 30s
 

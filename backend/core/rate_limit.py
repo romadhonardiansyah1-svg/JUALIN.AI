@@ -49,10 +49,16 @@ async def check_rate_limit_typed(
         full_key = f"rate_limit:{key}"
         current = await r.incr(full_key)
 
-        if current == 1:
-            await r.expire(full_key, window_seconds)
-
+        # INCR and EXPIRE are separate calls, so a crash in between used to leave
+        # the key without a TTL and lock the identifier out forever. Re-arming on
+        # any missing TTL (-1) self-heals that instead of only handling current==1.
+        # ponytail: not atomic; a Lua script would be, but self-healing bounds the
+        # damage to a single window, which is what actually mattered here.
         ttl = await r.ttl(full_key)
+        if ttl < 0:
+            await r.expire(full_key, window_seconds)
+            ttl = window_seconds
+
         remaining = max(0, max_requests - current)
 
         if current > max_requests:

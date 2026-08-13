@@ -9,7 +9,7 @@ import secrets
 from config import get_settings
 from models.product import Product
 from models.order import Order, OrderStatus
-from ai.embeddings import generate_embedding
+from ai.embeddings import generate_embedding_async
 
 settings = get_settings()
 
@@ -31,7 +31,7 @@ async def tool_cek_produk(product_id: int, db: AsyncSession) -> dict:
 
 async def tool_cari_produk(query: str, seller_id: int, db: AsyncSession, limit: int = 5) -> list[dict]:
     """Semantic search produk berdasarkan deskripsi natural language."""
-    query_embedding = generate_embedding(query)
+    query_embedding = await generate_embedding_async(query)
     
     result = await db.execute(
         select(Product)
@@ -83,52 +83,72 @@ async def tool_buat_order(
     Buat order baru dari percakapan. Auto-kurangi stok produk.
     Validasi SEMUA item dulu (dengan row lock) — tidak ada mutasi sebelum semua valid,
     supaya kegagalan item ke-N tidak meninggalkan stok item lain sudah terpotong.
+    Mutasi stok + insert order dibungkus savepoint: kalau gagal, session pemanggil
+    tidak menyisakan potongan stok yang bisa ikut ter-commit oleh commit berikutnya.
     """
     ids = [it["product_id"] for it in items if it.get("product_id")]
-    prods = {}
-    if ids:
-        result = await db.execute(
-            select(Product)
-            .where(Product.id.in_(ids))
-            .where(Product.seller_id == seller_id)
-            .with_for_update()
-        )
-        prods = {p.id: p for p in result.scalars().all()}
+    total = 0
+    order = None
+    error = None
+    async with db.begin_nested():
+        prods = {}
+        if ids:
+            result = await db.execute(
+                select(Product)
+                .where(Product.id.in_(ids))
+                .where(Product.seller_id == seller_id)
+                .with_for_update()
+            )
+            prods = {p.id: p for p in result.scalars().all()}
 
-    # 1. Validasi semua dulu — belum ada mutasi
-    for it in items:
-        pid = it.get("product_id")
-        if not pid:
-            continue
-        p = prods.get(pid)
-        if not p:
-            return {"error": f"Produk #{pid} tidak ditemukan"}
-        if p.stok < it.get("qty", 1):
-            return {"error": f"Stok {p.nama} tidak cukup (sisa {p.stok})"}
+        # 1. Validasi semua dulu — belum ada mutasi
+        for it in items:
+            pid = it.get("product_id")
+            if not pid:
+                continue
+            p = prods.get(pid)
+            if not p:
+                error = {"error": f"Produk #{pid} tidak ditemukan"}
+                break
+            if p.stok < it.get("qty", 1):
+                error = {"error": f"Stok {p.nama} tidak cukup (sisa {p.stok})"}
+                break
 
-    # 2. Baru mutasi stok
-    for it in items:
-        p = prods.get(it.get("product_id"))
-        if p:
-            p.stok -= it.get("qty", 1)
+        if error is None:
+            # 2. Baru mutasi stok
+            for it in items:
+                p = prods.get(it.get("product_id"))
+                if p:
+                    p.stok -= it.get("qty", 1)
 
-    total = sum(item.get("harga", 0) * item.get("qty", 1) for item in items)
+            total = sum(item.get("harga", 0) * item.get("qty", 1) for item in items)
 
-    order = Order(
-        seller_id=seller_id,
-        conversation_id=conversation_id,
-        customer_name=customer_name,
-        customer_phone=customer_phone,
-        customer_address=customer_address,
-        items=items,
-        total=total,
-        status=OrderStatus.PENDING,
-        payment_access_token=secrets.token_urlsafe(32),
-    )
+            # Lazy import: api.routes_payments owns the legacy-link lifetime rule,
+            # importing it at module load would tie ai.tools to the route layer.
+            from api.routes_payments import legacy_payment_link_expiry
 
-    db.add(order)
+            order = Order(
+                seller_id=seller_id,
+                conversation_id=conversation_id,
+                customer_name=customer_name,
+                customer_phone=customer_phone,
+                customer_address=customer_address,
+                items=items,
+                total=total,
+                status=OrderStatus.PENDING,
+                payment_access_token=secrets.token_urlsafe(32),
+                # Stamp the hard deadline the verifier enforces, so the column is
+                # never NULL for AI-minted links and the ceiling is auditable.
+                payment_access_token_expires_at=legacy_payment_link_expiry(),
+            )
+
+            db.add(order)
+
+    if error is not None:
+        return error
+
     await db.commit()
-    await db.refresh(order)
+    # ponytail: tanpa db.refresh — expire_on_commit=False, id sudah terisi saat flush savepoint.
 
     return {
         "order_id": order.id,

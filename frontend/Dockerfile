@@ -15,6 +15,13 @@ ARG INTERNAL_API_URL=http://backend:8000
 ENV INTERNAL_API_URL=${INTERNAL_API_URL}
 ENV NEXT_PUBLIC_API_URL=""
 
+# NEXT_PUBLIC_* is inlined at build time, so the browser DSN must be present here.
+# Empty by default: the SDK stays inert when unset.
+ARG NEXT_PUBLIC_SENTRY_DSN=""
+ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT=production
+ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN}
+ENV NEXT_PUBLIC_SENTRY_ENVIRONMENT=${NEXT_PUBLIC_SENTRY_ENVIRONMENT}
+
 # Build
 RUN npm run build
 

@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from pydantic import BaseModel, Field
 from typing import Optional
+import asyncio
 import os
 import uuid as uuid_module
 import io
+from pathlib import Path
 
 from config import get_settings
 from models.database import get_db
@@ -17,7 +19,7 @@ from models.user import User
 from models.product import Product
 from api.routes_auth import get_current_user
 from cache import cache_get, cache_set, cache_invalidate_products
-from ai.embeddings import generate_embedding, build_embed_text
+from ai.embeddings import generate_embedding, generate_embedding_async, build_embed_text
 
 router = APIRouter()
 settings = get_settings()
@@ -173,7 +175,7 @@ async def create_product(
     
     # Generate embedding
     embed_text = build_embed_text(req.model_dump())
-    embedding = generate_embedding(embed_text)
+    embedding = await generate_embedding_async(embed_text)
     
     # Generate AI summary
     summary = f"{req.nama} - {req.deskripsi}. Harga Rp {req.harga:,.0f}. Kategori: {req.kategori}."
@@ -262,7 +264,7 @@ async def update_product(
             "kategori": product.kategori,
             "harga": product.harga,
         })
-        product.embedding = generate_embedding(embed_text)
+        product.embedding = await generate_embedding_async(embed_text)
         product.summary = f"{product.nama} - {product.deskripsi}. Harga Rp {product.harga:,.0f}. Kategori: {product.kategori}."
 
     await db.commit()
@@ -317,7 +319,7 @@ async def search_products(
     db: AsyncSession = Depends(get_db),
 ):
     """Semantic search: cari produk berdasarkan deskripsi natural language."""
-    query_embedding = generate_embedding(q)
+    query_embedding = await generate_embedding_async(q)
     
     # Use pgvector cosine distance for semantic search
     result = await db.execute(
@@ -379,7 +381,7 @@ async def upload_product_image(
     if not contents or not _has_valid_image_signature(file.content_type, contents):
         raise HTTPException(status_code=400, detail="File gambar tidak valid atau rusak")
     
-    contents = _sanitize_image_upload(file.content_type, contents)
+    contents = await asyncio.to_thread(_sanitize_image_upload, file.content_type, contents)
 
     # Save re-encoded file under a seller-specific path.
     uploads_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads", "products")
@@ -396,8 +398,7 @@ async def upload_product_image(
     filename = f"{product_id}_{uuid_module.uuid4().hex[:8]}.{ext}"
     filepath = os.path.join(seller_uploads_dir, filename)
     
-    with open(filepath, "wb") as f:
-        f.write(contents)
+    await asyncio.to_thread(Path(filepath).write_bytes, contents)
 
     old_foto_url = product.foto_url or ""
     if old_foto_url.startswith("/uploads/products/"):

@@ -15,8 +15,10 @@ from typing import Tuple
 from cryptography.fernet import Fernet
 
 from config import get_settings
+from core.logging_config import get_logger
 
 settings = get_settings()
+logger = get_logger(__name__)
 
 
 def _derive_fernet_key(raw_key: str) -> bytes:
@@ -44,7 +46,18 @@ def decrypt_address(ciphertext: bytes, key_version: int | None = None) -> str | 
         f, _ = get_fernet(key_version)
         pt = f.decrypt(ciphertext)
         return pt.decode("utf-8")
-    except Exception:
+    except Exception as exc:
+        # Actionable signal: a silent None here is indistinguishable from "no contact"
+        # and hides key rotation without a KEY_VERSION bump. Never log ciphertext or
+        # the decrypted phone number.
+        logger.error(
+            "contact_address_decrypt_failed",
+            extra={
+                "requested_key_version": key_version,
+                "current_key_version": settings.CONTACT_ENCRYPTION_KEY_VERSION,
+                "error_type": type(exc).__name__,
+            },
+        )
         return None
 
 

@@ -64,7 +64,19 @@ async def midtrans_webhook(request: Request):
     )
 
     try:
-        from services.payments.factory import process_webhook
+        from services.payments.factory import get_payment_gateway, process_webhook
+
+        # Verify the provider signature BEFORE persisting anything durable, so an
+        # unauthenticated POST cannot create a webhook_event row per request.
+        signature_check = await get_payment_gateway("midtrans").validate_webhook(
+            payload, dict(request.headers)
+        )
+        if not signature_check.valid:
+            logger.warning(
+                "Midtrans webhook rejected before persistence: invalid signature",
+                extra={"order_id": order_id},
+            )
+            return Response(status_code=403, content="Invalid signature")
 
         async with async_session() as db:
             event, is_new = await get_or_create_webhook_event(

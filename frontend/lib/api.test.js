@@ -202,3 +202,135 @@ describe('BUG-025 tenant cache isolation (P0.3b)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('in-flight GET coalescing', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    mockFetch.mockReset();
+    global.localStorage = {
+      store: {},
+      getItem(k) { return this.store[k] || null; },
+      setItem(k, v) { this.store[k] = v; },
+      removeItem(k) { delete this.store[k]; },
+      clear() { this.store = {}; },
+    };
+    global.window = {
+      localStorage: global.localStorage,
+      location: { href: '' },
+      caches: { keys: async () => [] },
+    };
+    global.navigator = { serviceWorker: { controller: null } };
+  });
+
+  const jsonHeaders = {
+    get: (name) => (name.toLowerCase() === 'content-type' ? 'application/json' : null),
+  };
+
+  // Resolvable response so both callers are still pending when the second starts.
+  function deferredResponse(body) {
+    let release;
+    const promise = new Promise((resolve) => {
+      release = () => resolve({
+        ok: true,
+        status: 200,
+        headers: jsonHeaders,
+        json: async () => body,
+      });
+    });
+    return { promise, release };
+  }
+
+  it('two concurrent GETs to the same endpoint issue one fetch', async () => {
+    const { api } = await import('./api.js');
+    const { promise, release } = deferredResponse({ items: [1] });
+    mockFetch.mockReturnValue(promise);
+
+    const first = api.getProducts();
+    const second = api.getProducts();
+
+    release();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+  });
+
+  it('different endpoints are not coalesced', async () => {
+    const { api } = await import('./api.js');
+    const { promise, release } = deferredResponse({ ok: true });
+    mockFetch.mockReturnValue(promise);
+
+    const both = Promise.all([api.getProducts(), api.getOrders()]);
+    release();
+    await both;
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('two concurrent POSTs issue two fetches', async () => {
+    const { api } = await import('./api.js');
+    const { promise, release } = deferredResponse({ id: 1 });
+    mockFetch.mockReturnValue(promise);
+
+    const both = Promise.all([
+      api.sendChat({ message: 'hi' }),
+      api.sendChat({ message: 'hi' }),
+    ]);
+    release();
+    await both;
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('a rejected shared GET reaches every caller and is not reused', async () => {
+    const { api } = await import('./api.js');
+
+    let rejectFirst;
+    mockFetch.mockReturnValueOnce(new Promise((_, reject) => { rejectFirst = reject; }));
+
+    const first = api.getProducts();
+    const second = api.getProducts();
+    rejectFirst(new Error('network down'));
+
+    await expect(first).rejects.toThrow('network down');
+    await expect(second).rejects.toThrow('network down');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // Failed entry evicted — the retry hits the network again.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: jsonHeaders,
+      json: async () => ({ items: [] }),
+    });
+    await expect(api.getProducts()).resolves.toEqual({ items: [] });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('clearAuthStateAndCache drops in-flight GETs so a new principal never shares them', async () => {
+    const { api, clearAuthStateAndCache } = await import('./api.js');
+
+    const dataA = { user: 'A' };
+    const dataB = { user: 'B' };
+    const first = deferredResponse(dataA);
+    mockFetch.mockReturnValueOnce(first.promise);
+
+    const staleCall = api.getProducts().catch((e) => e.code);
+
+    clearAuthStateAndCache();
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: jsonHeaders,
+      json: async () => dataB,
+    });
+    const freshCall = api.getProducts();
+
+    first.release();
+
+    expect(await staleCall).toBe('session_changed');
+    expect(await freshCall).toEqual(dataB);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});

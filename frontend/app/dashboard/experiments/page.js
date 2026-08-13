@@ -9,6 +9,7 @@ export default function ExperimentsPage() {
   const [experiments, setExperiments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [results, setResults] = useState(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => { loadData(); }, []);
   async function loadData() {
@@ -17,18 +18,27 @@ export default function ExperimentsPage() {
   }
 
   async function handleCreate() {
+    if (busy) return;
     const name = prompt("Nama experiment:");
     const type = prompt("Type (prompt / campaign_cta / storefront_cta / offer_wording):") || "prompt";
     if (!name) return;
-    try { await createExperiment({ name, type }); loadData(); } catch (e) { alert(e.message); }
+    setBusy(true);
+    try { await createExperiment({ name, type }); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleStart(id) {
-    try { await startExperiment(id); loadData(); } catch (e) { alert(e.message); }
+    if (busy) return;
+    setBusy(true);
+    try { await startExperiment(id); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleStop(id) {
-    try { await stopExperiment(id); loadData(); } catch (e) { alert(e.message); }
+    if (busy) return;
+    setBusy(true);
+    try { await stopExperiment(id); await loadData(); } catch (e) { alert(e.message); }
+    setBusy(false);
   }
 
   async function handleResults(id) {
@@ -41,7 +51,7 @@ export default function ExperimentsPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h2>🧪 A/B Experiments</h2>
-        <button className="btn btn-primary" onClick={handleCreate}>+ Buat Experiment</button>
+        <button className="btn btn-primary" onClick={handleCreate} disabled={busy}>+ Buat Experiment</button>
       </div>
 
       {experiments.length === 0 ? (
@@ -55,9 +65,9 @@ export default function ExperimentsPage() {
               <div className="text-sm text-muted">{e.type} · {e.description || "No description"}</div>
             </div>
             <div style={{ display: "flex", gap: 4 }}>
-              {e.status === "draft" && <button className="btn btn-sm btn-primary" onClick={() => handleStart(e.id)}>▶ Start</button>}
-              {e.status === "running" && <button className="btn btn-sm btn-danger" onClick={() => handleStop(e.id)}>⏹ Stop</button>}
-              <button className="btn btn-sm btn-outline" onClick={() => handleResults(e.id)}>📊</button>
+              {e.status === "draft" && <button className="btn btn-sm btn-primary" onClick={() => handleStart(e.id)} disabled={busy}>▶ Start</button>}
+              {e.status === "running" && <button className="btn btn-sm btn-danger" onClick={() => handleStop(e.id)} disabled={busy}>⏹ Stop</button>}
+              <button className="btn btn-sm btn-outline" onClick={() => handleResults(e.id)} aria-label={`Lihat hasil ${e.name}`}>📊</button>
             </div>
           </div>
         </div>

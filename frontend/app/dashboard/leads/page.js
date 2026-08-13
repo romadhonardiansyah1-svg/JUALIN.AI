@@ -8,6 +8,7 @@ export default function LeadsPage() {
   const [submissions, setSubs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("forms");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => { loadData(); }, []);
   async function loadData() {
@@ -19,13 +20,16 @@ export default function LeadsPage() {
   }
 
   async function handleCreate() {
+    if (creating) return;
     const title = prompt("Judul form:");
     const slug = prompt("Slug (URL-friendly):");
     if (!title || !slug) return;
+    setCreating(true);
     try {
       await createLeadForm({ title, slug });
-      loadData();
+      await loadData();
     } catch (e) { alert(e.message); }
+    setCreating(false);
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}>⏳ Memuat...</div>;
@@ -34,7 +38,7 @@ export default function LeadsPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h2>📋 Lead Capture</h2>
-        <button className="btn btn-primary" onClick={handleCreate}>+ Buat Form</button>
+        <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>+ Buat Form</button>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button className={`btn btn-sm ${tab === "forms" ? "btn-primary" : "btn-outline"}`} onClick={() => setTab("forms")}>Forms</button>

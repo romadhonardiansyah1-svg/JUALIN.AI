@@ -18,6 +18,7 @@ export default function CampaignsPage() {
   const [content, setContent] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(""); // "generate" | "save" | "preview" | "send"
 
   async function loadCampaigns() {
     try {
@@ -29,6 +30,8 @@ export default function CampaignsPage() {
 
   async function generate(e) {
     e.preventDefault();
+    if (busy) return;
+    setBusy("generate");
     setError("");
     setMessage("");
     try {
@@ -39,10 +42,12 @@ export default function CampaignsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy("");
   }
 
   async function saveDraft() {
-    if (!selected) return;
+    if (!selected || busy) return;
+    setBusy("save");
     try {
       const updated = await api.updateCampaign(selected.id, { content });
       setSelected(updated);
@@ -51,10 +56,12 @@ export default function CampaignsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy("");
   }
 
   async function preview() {
-    if (!selected) return;
+    if (!selected || busy) return;
+    setBusy("preview");
     try {
       const data = await api.previewCampaign(selected.id);
       setMessage(`Preview siap untuk ${data.recipient_count} recipient.`);
@@ -62,10 +69,13 @@ export default function CampaignsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy("");
   }
 
   async function send() {
-    if (!selected || !confirm("Approve dan queue campaign ini?")) return;
+    if (!selected || busy) return;
+    if (!confirm("Approve dan queue campaign ini?")) return;
+    setBusy("send");
     try {
       const data = await api.sendCampaign(selected.id);
       setMessage(`Campaign queued untuk ${data.recipient_count} recipient.`);
@@ -73,6 +83,7 @@ export default function CampaignsPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy("");
   }
 
   useEffect(() => {
@@ -107,7 +118,9 @@ export default function CampaignsPage() {
               <label>Offer</label>
               <input className="input" value={form.offer} onChange={(e) => setForm({ ...form, offer: e.target.value })} placeholder="contoh: bundle Ramadan 10%" />
             </div>
-            <button className="btn btn-primary" style={{ marginTop: 14 }}>Generate</button>
+            <button className="btn btn-primary" style={{ marginTop: 14 }} disabled={!!busy}>
+              {busy === "generate" ? "Generating..." : "Generate"}
+            </button>
           </form>
           <div className={styles.panelHeader}><strong>Campaigns</strong><span className="badge badge-primary">{campaigns.length}</span></div>
           <div className={styles.list}>
@@ -134,10 +147,10 @@ export default function CampaignsPage() {
               <div className={styles.panelBody}>
                 <textarea className={`input ${styles.textarea}`} value={content} onChange={(e) => setContent(e.target.value)} disabled={["queued", "sending", "sent", "partial_failed"].includes(selected.status)} />
                 <div className={styles.toolbar} style={{ marginTop: 12 }}>
-                  <button className="btn btn-outline" onClick={saveDraft} disabled={["queued", "sending", "sent"].includes(selected.status)}>Simpan Draft</button>
-                  <button className="btn btn-outline" onClick={preview} disabled={["queued", "sending", "sent"].includes(selected.status)}>Preview</button>
-                  <button className="btn btn-primary" onClick={send} disabled={["queued", "sending", "sent"].includes(selected.status)}>Approve Send</button>
-                  <button className="btn btn-outline" onClick={loadCampaigns}>Refresh</button>
+                  <button className="btn btn-outline" onClick={saveDraft} disabled={!!busy || ["queued", "sending", "sent"].includes(selected.status)}>{busy === "save" ? "Menyimpan..." : "Simpan Draft"}</button>
+                  <button className="btn btn-outline" onClick={preview} disabled={!!busy || ["queued", "sending", "sent"].includes(selected.status)}>{busy === "preview" ? "Memproses..." : "Preview"}</button>
+                  <button className="btn btn-primary" onClick={send} disabled={!!busy || ["queued", "sending", "sent"].includes(selected.status)}>{busy === "send" ? "Mengirim..." : "Approve Send"}</button>
+                  <button className="btn btn-outline" onClick={loadCampaigns} disabled={!!busy}>Refresh</button>
                 </div>
               </div>
             </>

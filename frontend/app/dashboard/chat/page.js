@@ -12,6 +12,7 @@ export default function ChatMonitorPage() {
   const [testMessage, setTestMessage] = useState("");
   const [testSession, setTestSession] = useState("");
   const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [convFilter, setConvFilter] = useState("");
   const chatEndRef = useRef(null);
 
@@ -57,6 +58,7 @@ export default function ChatMonitorPage() {
     setMessages((prev) => [...prev, userMsg]);
     setTestMessage("");
     setSending(true);
+    setSendError("");
 
     try {
       if (!user?.slug) throw new Error("Seller identity unavailable");
@@ -71,10 +73,8 @@ export default function ChatMonitorPage() {
         { role: "ai", content: data.response, created_at: new Date().toISOString() },
       ]);
     } catch (e) {
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", content: "Hai kak! Maaf, AI sedang offline. Coba lagi ya 😊", created_at: new Date().toISOString() },
-      ]);
+      // Never fake an AI bubble — monitoring must not show synthetic AI replies.
+      setSendError(e.message || "Gagal mengirim pesan test. AI tidak merespons.");
     }
 
     setSending(false);
@@ -182,6 +182,10 @@ export default function ChatMonitorPage() {
                     <span></span><span></span><span></span>
                   </div>
                 </div>
+              )}
+
+              {sendError && (
+                <div className={styles.sendError} role="alert">⚠️ {sendError}</div>
               )}
 
               <div ref={chatEndRef} />

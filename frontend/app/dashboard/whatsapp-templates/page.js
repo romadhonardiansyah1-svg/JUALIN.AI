@@ -25,6 +25,8 @@ export default function WATemplatesPage() {
   const [generating, setGenerating] = useState(false);
   const [editTemplate, setEditTemplate] = useState(null);
   const [customPrompt, setCustomPrompt] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => { loadTemplates(); }, []);
 
@@ -32,27 +34,33 @@ export default function WATemplatesPage() {
     try {
       const data = await api.getWATemplates();
       setTemplates(data || []);
-    } catch { /* empty */ }
+    } catch (e) { setError(e.message || "Gagal memuat templates"); }
     setLoading(false);
   };
 
   const handleGenerate = async () => {
+    if (generating) return;
     setGenerating(true);
+    setError("");
     try {
       const result = await api.generateWATemplate({ purpose, custom_prompt: customPrompt });
       setEditTemplate(result);
       setStep(3);
-    } catch { /* empty */ }
+    } catch (e) { setError(e.message || "Gagal generate template"); }
     setGenerating(false);
   };
 
   const handleSubmit = async (id) => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError("");
     try {
       await api.submitWATemplate(id);
       await loadTemplates();
       setStep(0);
       setEditTemplate(null);
-    } catch { /* empty */ }
+    } catch (e) { setError(e.message || "Gagal submit template"); }
+    setSubmitting(false);
   };
 
   const renderVariablePreview = (body, variables) => {
@@ -78,6 +86,8 @@ export default function WATemplatesPage() {
           </button>
         )}
       </div>
+
+      {error && <div className={styles.errorBox} role="alert">{error}</div>}
 
       {/* Step 1: Choose Purpose */}
       {step === 1 && (
@@ -147,9 +157,9 @@ export default function WATemplatesPage() {
           </div>
 
           <div className={styles.wizardActions}>
-            <button className="btn btn-outline" onClick={() => { setStep(0); setEditTemplate(null); }}>Simpan Draft</button>
-            <button className="btn btn-primary" onClick={() => handleSubmit(editTemplate.id)}>
-              📤 Submit for Review
+            <button className="btn btn-outline" onClick={() => { setStep(0); setEditTemplate(null); }} disabled={submitting}>Simpan Draft</button>
+            <button className="btn btn-primary" onClick={() => handleSubmit(editTemplate.id)} disabled={submitting}>
+              {submitting ? "Mengirim..." : "📤 Submit for Review"}
             </button>
           </div>
         </div>

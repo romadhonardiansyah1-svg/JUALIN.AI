@@ -17,11 +17,13 @@ export default function InboxPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [searchQ, setSearchQ] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [notes, setNotes] = useState([]);
   const [noteText, setNoteText] = useState("");
   const [cannedReplies, setCannedReplies] = useState([]);
   const [showCanned, setShowCanned] = useState(false);
   const [labelInput, setLabelInput] = useState("");
+  const [busy, setBusy] = useState(false);
   const detailRequestRef = useRef(0);
   const notesRequestRef = useRef(0);
   const activeIdRef = useRef(null);
@@ -29,7 +31,7 @@ export default function InboxPage() {
   const loadThreads = useCallback(async () => {
     setError("");
     try {
-      const params = searchQ ? `?q=${encodeURIComponent(searchQ)}&limit=50` : "?limit=50";
+      const params = searchTerm ? `?q=${encodeURIComponent(searchTerm)}&limit=50` : "?limit=50";
       const data = await api.getInboxThreads(params);
       setThreads(data);
       setActiveId((current) => current || data[0]?.id || null);
@@ -38,7 +40,7 @@ export default function InboxPage() {
     } finally {
       setLoading(false);
     }
-  }, [searchQ]);
+  }, [searchTerm]);
 
   async function loadDetail(id) {
     const requestId = ++detailRequestRef.current;
@@ -59,6 +61,12 @@ export default function InboxPage() {
   useEffect(() => {
     loadThreads();
   }, [loadThreads]);
+
+  // Debounce keystrokes: only the settled query triggers a request.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchTerm(searchQ), 350);
+    return () => clearTimeout(timer);
+  }, [searchQ]);
 
   useEffect(() => {
     activeIdRef.current = activeId;
@@ -86,8 +94,9 @@ export default function InboxPage() {
   }
 
   async function addNote() {
-    if (!noteText.trim() || !activeId) return;
+    if (!noteText.trim() || !activeId || busy) return;
     const threadId = activeId;
+    setBusy(true);
     try {
       await inboxAddNote(threadId, noteText.trim());
       if (activeIdRef.current === threadId) {
@@ -95,27 +104,34 @@ export default function InboxPage() {
         await loadNotes(threadId);
       }
     } catch (e) { setError(e.message); }
+    setBusy(false);
   }
 
   async function addLabel(threadId) {
-    if (!labelInput.trim()) return;
+    if (!labelInput.trim() || busy) return;
+    setBusy(true);
     try {
       await inboxManageLabel(threadId, labelInput.trim(), "add");
       setLabelInput("");
       await loadThreads();
     } catch (e) { setError(e.message); }
+    setBusy(false);
   }
 
   async function removeLabel(threadId, label) {
+    if (busy) return;
+    setBusy(true);
     try {
       await inboxManageLabel(threadId, label, "remove");
       await loadThreads();
     } catch (e) { setError(e.message); }
+    setBusy(false);
   }
 
   async function changeMode(mode) {
-    if (!activeId || detail?.id !== activeId) return;
+    if (!activeId || detail?.id !== activeId || busy) return;
     const threadId = activeId;
+    setBusy(true);
     try {
       await api.updateInboxThreadMode(threadId, { mode });
       if (activeIdRef.current === threadId) await loadDetail(threadId);
@@ -123,6 +139,17 @@ export default function InboxPage() {
     } catch (e) {
       setError(e.message);
     }
+    setBusy(false);
+  }
+
+  async function submitFeedback(messageId, rating) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.submitInboxFeedback(messageId, { rating });
+      alert(rating === "up" ? "Feedback disimpan 👍" : "Feedback disimpan 👎");
+    } catch (err) { setError(err.message); }
+    setBusy(false);
   }
 
   async function sendReply(e) {
@@ -158,7 +185,7 @@ export default function InboxPage() {
             placeholder="🔍 Cari nama/nomor..."
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && loadThreads()}
+            onKeyDown={(e) => { if (e.key === "Enter") setSearchTerm(searchQ); }}
             style={{ width: 200 }}
           />
           <button className="btn btn-outline" onClick={loadThreads}>Refresh</button>
@@ -212,8 +239,8 @@ export default function InboxPage() {
                   <div className={styles.muted}>{detail.channel?.display_name} / {detail.contact?.phone || "-"}</div>
                 </div>
                 <div className={styles.toolbar}>
-                  <button className={`btn btn-sm ${detail.mode === "ai" ? "btn-primary" : "btn-outline"}`} onClick={() => changeMode("ai")}>AI</button>
-                  <button className={`btn btn-sm ${detail.mode === "manual" ? "btn-primary" : "btn-outline"}`} onClick={() => changeMode("manual")}>Manual</button>
+                  <button className={`btn btn-sm ${detail.mode === "ai" ? "btn-primary" : "btn-outline"}`} onClick={() => changeMode("ai")} disabled={busy}>AI</button>
+                  <button className={`btn btn-sm ${detail.mode === "manual" ? "btn-primary" : "btn-outline"}`} onClick={() => changeMode("manual")} disabled={busy}>Manual</button>
                 </div>
               </div>
               <div className={styles.messages}>
@@ -234,22 +261,16 @@ export default function InboxPage() {
                         <button
                           className="btn btn-sm btn-outline"
                           style={{fontSize: "0.75em", padding: "2px 8px"}}
-                          onClick={async () => {
-                            try {
-                              await api.submitInboxFeedback(msg.id, { rating: "up" });
-                              alert("Feedback disimpan 👍");
-                            } catch (err) { setError(err.message); }
-                          }}
+                          disabled={busy}
+                          aria-label="Feedback positif"
+                          onClick={() => submitFeedback(msg.id, "up")}
                         >👍</button>
                         <button
                           className="btn btn-sm btn-outline"
                           style={{fontSize: "0.75em", padding: "2px 8px"}}
-                          onClick={async () => {
-                            try {
-                              await api.submitInboxFeedback(msg.id, { rating: "down" });
-                              alert("Feedback disimpan 👎");
-                            } catch (err) { setError(err.message); }
-                          }}
+                          disabled={busy}
+                          aria-label="Feedback negatif"
+                          onClick={() => submitFeedback(msg.id, "down")}
                         >👎</button>
                       </div>
                     )}
@@ -279,7 +300,7 @@ export default function InboxPage() {
                 <input className="input" value={labelInput} onChange={(e) => setLabelInput(e.target.value)}
                   placeholder="+ Label" style={{ width: 100, fontSize: "0.8rem" }}
                   onKeyDown={(e) => e.key === "Enter" && addLabel(detail.id)} />
-                <button className="btn btn-sm btn-outline" onClick={() => addLabel(detail.id)}>🏷</button>
+                <button className="btn btn-sm btn-outline" onClick={() => addLabel(detail.id)} disabled={busy} aria-label="Tambah label">🏷</button>
                 <span style={{ flex: 1 }} />
                 <span className="text-xs text-muted">{notes.length} notes</span>
               </div>
@@ -296,7 +317,7 @@ export default function InboxPage() {
                 <input className="input" value={noteText} onChange={(e) => setNoteText(e.target.value)}
                   placeholder="Tambah catatan internal..." style={{ flex: 1, fontSize: "0.8rem" }}
                   onKeyDown={(e) => e.key === "Enter" && addNote()} />
-                <button className="btn btn-sm btn-outline" onClick={addNote} disabled={!noteText.trim()}>📝</button>
+                <button className="btn btn-sm btn-outline" onClick={addNote} disabled={busy || !noteText.trim()} aria-label="Tambah catatan">📝</button>
               </div>
             </>
           ) : (

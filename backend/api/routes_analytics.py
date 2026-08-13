@@ -14,8 +14,35 @@ from models.conversation import Conversation, Message
 from models.order import Order, OrderStatus
 from models.chat_analytics import ChatAnalytics
 from api.routes_auth import get_current_user
+from cache import cache_get, cache_set
 
 router = APIRouter()
+
+# Analytics windows are dashboard-sized. Anything beyond 90 days is a full-table
+# scan that no chart renders, and `?days=100000` used to be accepted verbatim.
+MAX_DAYS = 90
+# Raw-row endpoints must never stream an unbounded result set into memory.
+MAX_RAW_ORDERS = 500
+# Cache keys use the `analytics:{seller_id}:` prefix so cache_invalidate_orders()
+# in cache.py already clears them. TTL is short because this module cannot call
+# that invalidator without editing routes_orders.py.
+# ponytail: TTL-only invalidation, wire cache_invalidate_orders into order writes
+# if 60s of staleness becomes visible.
+SELLER_TTL = 45
+
+
+def _clamp_days(days) -> int:
+    """Clamp a raw day count into 1..MAX_DAYS."""
+    try:
+        value = int(days)
+    except (TypeError, ValueError):
+        return 30
+    return max(1, min(MAX_DAYS, value))
+
+
+def _period_days(period: str) -> int:
+    """Parse a '30d'-style period into a clamped day count."""
+    return _clamp_days(str(period).strip().lower().removesuffix("d"))
 
 
 @router.get("/summary")
@@ -25,6 +52,11 @@ async def get_summary(
 ):
     """Get dashboard summary stats for the current seller."""
     seller_id = current_user.id
+    cache_key = f"analytics:{seller_id}:summary"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+
     today = datetime.now(timezone.utc).date()
     
     # Total chats today
@@ -71,7 +103,7 @@ async def get_summary(
         .where(func.date(Message.created_at) == today)
     )
     
-    return {
+    data = {
         "chat_today": chat_today.scalar() or 0,
         "orders_today": orders_today.scalar() or 0,
         "revenue_today": revenue_today.scalar() or 0,
@@ -80,6 +112,8 @@ async def get_summary(
         "messages_today": messages_today.scalar() or 0,
         "avg_response_time": 3,  # Simulated: 3 seconds
     }
+    await cache_set(cache_key, data, ttl=SELLER_TTL)
+    return data
 
 
 @router.get("/orders-daily")
@@ -90,6 +124,7 @@ async def get_orders_daily(
 ):
     """Get order count per day for chart (optimized: single query instead of N)."""
     seller_id = current_user.id
+    days = _clamp_days(days)
     start_date = datetime.now(timezone.utc).date() - timedelta(days=days - 1)
     
     # Single query: group by date
@@ -152,6 +187,12 @@ async def get_chat_stats(
 ):
     """Get chat analytics: intent distribution, avg response time, sales stages."""
     seller_id = current_user.id
+    days = _clamp_days(days)
+    cache_key = f"analytics:{seller_id}:chat-stats:{days}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+
     start_date = datetime.now(timezone.utc).date() - timedelta(days=days)
 
     # Intent distribution
@@ -188,7 +229,7 @@ async def get_chat_stats(
     )
     conversions = conv_result.scalar() or 0
 
-    return {
+    data = {
         "intent_distribution": intent_dist,
         "avg_response_time_ms": avg_response_ms,
         "total_interactions": total_interactions,
@@ -196,6 +237,8 @@ async def get_chat_stats(
         "conversion_rate": round((conversions / total_interactions * 100), 1) if total_interactions > 0 else 0,
         "period_days": days,
     }
+    await cache_set(cache_key, data, ttl=SELLER_TTL)
+    return data
 
 
 @router.get("/conversion-funnel")
@@ -206,6 +249,12 @@ async def get_conversion_funnel(
 ):
     """Get conversion funnel: unique visitors → chats → orders."""
     seller_id = current_user.id
+    days = _clamp_days(days)
+    cache_key = f"analytics:{seller_id}:conversion-funnel:{days}"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
+
     start_date = datetime.now(timezone.utc).date() - timedelta(days=days)
 
     # Unique conversations (visitors)
@@ -242,7 +291,7 @@ async def get_conversion_funnel(
     )
     paid = paid_result.scalar() or 0
 
-    return {
+    data = {
         "funnel": [
             {"stage": "Visitors", "count": visitors},
             {"stage": "Engaged Chats", "count": engaged},
@@ -251,6 +300,8 @@ async def get_conversion_funnel(
         ],
         "period_days": days,
     }
+    await cache_set(cache_key, data, ttl=SELLER_TTL)
+    return data
 
 
 @router.get("/sales-stages")
@@ -261,6 +312,7 @@ async def get_sales_stages(
 ):
     """Get distribution of sales stages from chat analytics."""
     seller_id = current_user.id
+    days = _clamp_days(days)
     start_date = datetime.now(timezone.utc).date() - timedelta(days=days)
 
     result = await db.execute(
@@ -303,7 +355,7 @@ async def get_revenue(
     """Revenue intelligence from pre-aggregated daily metrics."""
     from models.daily_metrics import DailySellerMetric
 
-    days = int(period.replace("d", ""))
+    days = _period_days(period)
     start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
 
     result = await db.execute(
@@ -355,6 +407,11 @@ async def get_campaign_roi(
     """Campaign ROI: sent, delivered, conversions."""
     from models.campaign import Campaign, CampaignRecipient
 
+    cache_key = f"analytics:{current_user.id}:campaign-roi:{campaign_id}"
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     query = select(Campaign).where(Campaign.seller_id == current_user.id)
     if campaign_id > 0:
         query = query.where(Campaign.id == campaign_id)
@@ -363,27 +420,34 @@ async def get_campaign_roi(
     result = await db.execute(query)
     campaigns = result.scalars().all()
 
-    roi_data = []
-    for c in campaigns:
-        # Get recipient stats
-        sent_count = await db.execute(
-            select(func.count(CampaignRecipient.id))
-            .where(CampaignRecipient.campaign_id == c.id, CampaignRecipient.status == "sent")
+    # One GROUP BY for every campaign instead of 2 COUNTs per campaign.
+    status_counts: dict[tuple[int, str], int] = {}
+    if campaigns:
+        counts_result = await db.execute(
+            select(
+                CampaignRecipient.campaign_id,
+                CampaignRecipient.status,
+                func.count(CampaignRecipient.id),
+            )
+            .where(CampaignRecipient.campaign_id.in_([c.id for c in campaigns]))
+            .where(CampaignRecipient.status.in_(["sent", "delivered"]))
+            .group_by(CampaignRecipient.campaign_id, CampaignRecipient.status)
         )
-        delivered_count = await db.execute(
-            select(func.count(CampaignRecipient.id))
-            .where(CampaignRecipient.campaign_id == c.id, CampaignRecipient.status == "delivered")
-        )
+        status_counts = {(row[0], row[1]): row[2] for row in counts_result.all()}
 
-        roi_data.append({
+    roi_data = [
+        {
             "id": c.id,
-            "name": c.name,
+            "name": c.title,
             "status": c.status,
-            "sent": sent_count.scalar() or 0,
-            "delivered": delivered_count.scalar() or 0,
+            "sent": status_counts.get((c.id, "sent"), 0),
+            "delivered": status_counts.get((c.id, "delivered"), 0),
             "created_at": c.created_at.isoformat() if c.created_at else "",
-        })
+        }
+        for c in campaigns
+    ]
 
+    await cache_set(cache_key, roi_data, ttl=SELLER_TTL)
     return roi_data
 
 
@@ -394,6 +458,10 @@ async def get_product_insights(
 ):
     """Product insights: best sellers, low stock, no-sales."""
     seller_id = current_user.id
+    cache_key = f"analytics:{seller_id}:product-insights"
+    cached = await cache_get(cache_key)
+    if cached:
+        return cached
 
     # All active products
     products_result = await db.execute(
@@ -401,19 +469,22 @@ async def get_product_insights(
     )
     products = products_result.scalars().all()
 
-    # Get order counts per product from last 30 days
+    # Get order counts per product from last 30 days.
+    # Only items/created_at are needed; selecting the whole ORM row pulled every
+    # column and left the row count unbounded.
     start_date = datetime.now(timezone.utc).date() - timedelta(days=30)
     orders_result = await db.execute(
-        select(Order)
+        select(Order.items)
         .where(Order.seller_id == seller_id)
         .where(Order.status != OrderStatus.CANCELLED)
         .where(func.date(Order.created_at) >= start_date)
+        .order_by(Order.created_at.desc())
+        .limit(MAX_RAW_ORDERS)
     )
-    orders = orders_result.scalars().all()
 
     product_sales = {}
-    for order in orders:
-        items = order.items if isinstance(order.items, list) else []
+    for (order_items,) in orders_result.all():
+        items = order_items if isinstance(order_items, list) else []
         for item in items:
             name = item.get("nama", "Unknown")
             product_sales[name] = product_sales.get(name, 0) + item.get("qty", 1)
@@ -422,13 +493,15 @@ async def get_product_insights(
     low_stock = [p for p in products if (p.stok or 0) <= 5 and (p.stok or 0) > 0]
     no_sales = [p for p in products if p.nama not in product_sales]
 
-    return {
+    data = {
         "total_products": len(products),
         "best_sellers": [{"name": n, "qty": q} for n, q in best_sellers],
         "low_stock": [{"id": p.id, "name": p.nama, "stock": p.stok} for p in low_stock[:10]],
         "no_sales_30d": [{"id": p.id, "name": p.nama} for p in no_sales[:10]],
         "period_days": 30,
     }
+    await cache_set(cache_key, data, ttl=SELLER_TTL)
+    return data
 
 
 # ── Money Dashboard (Market Acceptance Sprint 5) ──
@@ -445,7 +518,7 @@ async def get_money_dashboard(
     """
     from models.daily_metrics import DailySellerMetric
 
-    days = int(period.replace("d", ""))
+    days = _period_days(period)
     start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
 
     result = await db.execute(
@@ -494,7 +567,7 @@ async def get_ai_impact(
     """AI impact metrics: handoff rate, AI vs manual, top AI-assisted products."""
     from models.daily_metrics import DailySellerMetric
 
-    days = int(period.replace("d", ""))
+    days = _period_days(period)
     start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
 
     result = await db.execute(
@@ -528,7 +601,7 @@ async def get_recovery_stats(
     """Follow-up recovery stats: how much payment was recovered from follow-ups."""
     from models.daily_metrics import DailySellerMetric
 
-    days = int(period.replace("d", ""))
+    days = _period_days(period)
     start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
 
     result = await db.execute(

@@ -47,6 +47,9 @@ async def tick_workflows(db: AsyncSession):
         try:
             await _process_rule(db, rule)
         except Exception as e:
+            # A failed rule may have aborted the transaction; roll back so the
+            # remaining rules and the final commit are not poisoned.
+            await db.rollback()
             logger.error(f"Workflow rule {rule.id} error: {e}", exc_info=True)
 
     await db.commit()
@@ -199,20 +202,30 @@ async def execute_workflow_run(db: AsyncSession, run_id: int) -> dict:
         return step_result
 
     except Exception as e:
-        run.status = "failed"
-        run.error_message = str(e)
-        run.finished_at = datetime.now(timezone.utc)
-
-        step = AutomationRunStep(
-            run_id=run.id,
-            step_type=template_key,
-            status="error",
-            input_json=ctx,
-            error_message=str(e),
-        )
-        db.add(step)
-        await db.commit()
-        return {"success": False, "error": str(e)}
+        # The failure may have aborted the transaction; roll back before writing
+        # the terminal state, otherwise the commit fails and the run stays
+        # "running" forever (workflow_run jobs are not retryable).
+        error = str(e)
+        try:
+            await db.rollback()
+            refetch = await db.execute(select(AutomationRun).where(AutomationRun.id == run_id))
+            failed_run = refetch.scalar_one_or_none()
+            if failed_run:
+                failed_run.status = "failed"
+                failed_run.error_message = error
+                failed_run.finished_at = datetime.now(timezone.utc)
+                db.add(AutomationRunStep(
+                    run_id=run_id,
+                    step_type=template_key,
+                    status="error",
+                    input_json=ctx,
+                    error_message=error,
+                ))
+                await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.error(f"Workflow run {run_id} failed and could not be marked failed", exc_info=True)
+        return {"success": False, "error": error}
 
 
 async def _execute_step(db: AsyncSession, run: AutomationRun, template_key: str, ctx: dict) -> dict:

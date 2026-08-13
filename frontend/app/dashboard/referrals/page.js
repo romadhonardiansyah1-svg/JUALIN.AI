@@ -9,6 +9,7 @@ export default function ReferralsPage() {
   const [resellers, setResellers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("codes");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
@@ -21,13 +22,16 @@ export default function ReferralsPage() {
   }
 
   async function handleCreate() {
+    if (creating) return;
     const desc = prompt("Deskripsi kode referral:");
     if (!desc) return;
+    setCreating(true);
     try {
       const result = await createReferralCode({ description: desc });
       alert(`Kode: ${result.code}`);
-      loadData();
+      await loadData();
     } catch (e) { alert(e.message); }
+    setCreating(false);
   }
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}>⏳ Memuat...</div>;
@@ -36,7 +40,7 @@ export default function ReferralsPage() {
     <div className={styles.page}>
       <div className={styles.header}>
         <h2>🔗 Referral & Reseller</h2>
-        <button className="btn btn-primary" onClick={handleCreate}>+ Buat Kode</button>
+        <button className="btn btn-primary" onClick={handleCreate} disabled={creating}>+ Buat Kode</button>
       </div>
 
       {summary && (

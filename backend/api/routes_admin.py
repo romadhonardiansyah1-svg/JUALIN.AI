@@ -17,10 +17,16 @@ from models.product import Product
 from models.conversation import Conversation, Message
 from models.order import Order, OrderStatus
 from api.routes_auth import get_current_user, create_access_token
+from cache import cache_get, cache_set
 
 router = APIRouter()
 settings = get_settings()
 logger = get_logger("api.admin")
+
+# Platform-wide aggregate over 8 full tables. Not seller-scoped by design, so the
+# key carries no tenant component and cannot leak across sellers.
+ADMIN_STATS_TTL = 60
+ADMIN_STATS_CACHE_KEY = "analytics:admin:stats"
 
 
 def _worker_cron_names() -> frozenset[str] | None:
@@ -79,6 +85,10 @@ async def get_platform_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Get platform-wide statistics for admin dashboard."""
+    cached = await cache_get(ADMIN_STATS_CACHE_KEY)
+    if cached:
+        return cached
+
     # Total sellers
     total_sellers = await db.execute(
         select(func.count(User.id)).where(User.role == UserRole.SELLER)
@@ -117,7 +127,7 @@ async def get_platform_stats(
         .where(Order.status == OrderStatus.PENDING)
     )
     
-    return {
+    data = {
         "total_sellers": total_sellers.scalar() or 0,
         "total_products": total_products.scalar() or 0,
         "total_orders": total_orders.scalar() or 0,
@@ -127,6 +137,8 @@ async def get_platform_stats(
         "total_messages": total_messages.scalar() or 0,
         "pending_orders": pending_orders.scalar() or 0,
     }
+    await cache_set(ADMIN_STATS_CACHE_KEY, data, ttl=ADMIN_STATS_TTL)
+    return data
 
 
 @router.get("/sellers")
