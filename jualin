@@ -59,8 +59,8 @@ cmd_setup() {
     fi
     echo -e "${GREEN}✅ Docker Compose ready${NC}"
 
-    # Step 3: Install Node.js (untuk 9Router)
-    echo -e "${YELLOW}[3/7] Installing Node.js...${NC}"
+    # Step 3: Install Node.js (opsional — hanya bila pakai gateway LLM lokal)
+    echo -e "${YELLOW}[3/7] Installing Node.js (opsional)...${NC}"
     if command -v node &> /dev/null; then
         echo -e "${GREEN}Node.js already installed: $(node --version)${NC}"
     else
@@ -132,9 +132,12 @@ cmd_setup() {
     }
     echo -e "${GREEN}✅ All containers running${NC}"
 
-    # Step 7: Setup 9Router
-    echo -e "${YELLOW}[7/7] Setting up 9Router...${NC}"
-    cmd_9router_setup
+    # Step 7: LLM gateway — OPTIONAL. Backend points to LLM_BASE_URL directly
+    # (Groq/Gemini/OpenRouter/LiteLLM); a local gateway is only needed if you want
+    # one. Run `jualin 9router setup` explicitly if you do.
+    echo -e "${YELLOW}[7/7] LLM provider: set LLM_BASE_URL/LLM_API_KEY/LLM_MODEL in .env (atau lewat admin UI).${NC}"
+    echo -e "${CYAN}      Skip gateway — backend langsung ke API eksternal.${NC}"
+    echo -e "${CYAN}      Butuh gateway lokal? jalankan: jualin 9router setup${NC}"
 
     # Firewall
     echo -e "${YELLOW}Setting up firewall...${NC}"

@@ -57,10 +57,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
     
-    # LLM (9Router or direct)
-    LLM_BASE_URL: str = "http://localhost:20128/v1"  # 9Router
-    LLM_API_KEY: str = "not-needed"  # 9Router handles keys
-    LLM_MODEL: str = "llama-3.1-8b-instant"
+    # LLM — OpenAI-compatible endpoint. Provider/model are fully configurable via
+    # env or the admin "LLM Settings" table; no model is hardcoded anywhere.
+    # base_url must end with /v1 (e.g. https://api.groq.com/openai/v1, LiteLLM,
+    # OpenRouter, or a self-hosted gateway).
+    LLM_BASE_URL: str = "http://localhost:20128/v1"
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = ""
     
     # Gemini (backup / image AI)
     GEMINI_API_KEY: str = ""

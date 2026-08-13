@@ -156,8 +156,8 @@ export default function AdminLlmPage() {
               <tr style={{ background: "#0b1526" }}>
                 <td style={{ ...td, textAlign: "center", color: "#64748b" }}>➕</td>
                 <td style={td}><input style={cellInput} value={newProv.label} onChange={(e) => setNewProv({ ...newProv, label: e.target.value })} placeholder="Groq" /></td>
-                <td style={td}><input style={cellInput} value={newProv.base_url} onChange={(e) => setNewProv({ ...newProv, base_url: e.target.value })} placeholder="https://api.groq.com/openai/v1" /></td>
-                <td style={td}><input style={cellInput} value={newProv.model} onChange={(e) => setNewProv({ ...newProv, model: e.target.value })} placeholder="llama-3.3-70b-versatile" /></td>
+                <td style={td}><input style={cellInput} value={newProv.base_url} onChange={(e) => setNewProv({ ...newProv, base_url: e.target.value })} placeholder="https://.../v1 (OpenAI-compatible)" /></td>
+                <td style={td}><input style={cellInput} value={newProv.model} onChange={(e) => setNewProv({ ...newProv, model: e.target.value })} placeholder="model apa saja, bebas" /></td>
                 <td style={td}><input style={cellInput} type="password" value={newProv.api_keys} onChange={(e) => setNewProv({ ...newProv, api_keys: e.target.value })} placeholder="gsk_… (pisah koma)" /></td>
                 <td style={td}><input style={{ ...cellInput, width: 60 }} type="number" value={newProv.priority} onChange={(e) => setNewProv({ ...newProv, priority: e.target.value })} /></td>
                 <td style={td}><button style={miniBtn("#34d399")} disabled={busy} onClick={addProvider} title="Tambah penyedia">➕</button></td>
