@@ -116,6 +116,12 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     volumes:
       - model_cache:/root/.cache
       - uploads:/app/uploads
@@ -187,14 +193,22 @@ services:
     container_name: jualin-frontend
     restart: always
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       HOSTNAME: "0.0.0.0"
       INTERNAL_API_URL: http://backend:8000
       SENTRY_DSN: ${SENTRY_DSN_FRONTEND:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
-    ports:
-      - "127.0.0.1:3000:3000"
+    # No host port publish: frontend is only reached through nginx. A stray host
+    # process on 3000 used to make the container fail to bind ("address already in
+    # use") and, because nginx resolves "frontend" at config load, crash-loop nginx.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/manifest.json').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # ── Nginx (Production only) ──
   nginx:
@@ -202,8 +216,10 @@ services:
     container_name: jualin-nginx
     restart: always
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"

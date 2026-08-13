@@ -31,5 +31,6 @@ export default withSentryConfig(nextConfig, {
   project: "jualin-frontend",
   silent: !process.env.CI,
   sourcemaps: { disable: !process.env.SENTRY_AUTH_TOKEN },
+  telemetry: false,
   webpack: { treeshake: { removeDebugLogging: true } },
 });
