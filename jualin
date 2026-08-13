@@ -338,7 +338,8 @@ cmd_status() {
     echo ""
     echo -e "${CYAN}Health Check:${NC}"
     BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null)
-    FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 2>/dev/null)
+    # Frontend is no longer published on a host port; reach it through nginx.
+    FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null)
     ROUTER=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:20128/health 2>/dev/null)
 
     [ "$BACKEND" = "200" ] && echo -e "  Backend:  ${GREEN}✅ OK${NC}" || echo -e "  Backend:  ${RED}❌ Down${NC}"
