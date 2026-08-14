@@ -363,21 +363,21 @@ export default function PaymentPage() {
         )}
 
         {/* Consent — P2.4 */}
-        <div className={styles.methodSection} style={{ marginTop: 20, borderTop: "1px solid #f3f4f6", paddingTop: 16 }}>
+        <div className={`${styles.methodSection} ${styles.consentSection}`}>
           <h3 className={styles.methodTitle}>Pengingat Pembayaran</h3>
-          <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: "0.9rem", cursor: "pointer" }}>
-            <input type="checkbox" checked={consentGranted} onChange={(e) => setConsentGranted(e.target.checked)} style={{ marginTop: 4 }} />
+          <label className={styles.consentLabel}>
+            <input type="checkbox" checked={consentGranted} onChange={(e) => setConsentGranted(e.target.checked)} />
             <span>Saya setuju menerima status dan maksimal satu pengingat pembayaran untuk pesanan ini melalui WhatsApp.</span>
           </label>
-          <p className={styles.muted} style={{ fontSize: "0.78rem", marginTop: 8 }}>
+          <p className={`${styles.muted} ${styles.consentNote}`}>
             Izin ini hanya untuk pesanan ini, dapat ditarik kapan saja dengan membalas STOP/BERHENTI, dan terpisah dari izin marketing.
             <br />
-            <a href="/privacy" target="_blank" rel="noopener noreferrer" style={{ color: "#22c55e" }}>Kebijakan privasi</a>
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" className={styles.consentLink}>Kebijakan privasi</a>
           </p>
-          <button className={styles.createBtn} onClick={handleConsentSave} disabled={consentSaving} style={{ marginTop: 10, background: consentGranted ? "#22c55e" : "#6b7280" }}>
+          <button className={`${styles.createBtn} ${consentGranted ? styles.consentGrant : styles.consentRevoke}`} onClick={handleConsentSave} disabled={consentSaving}>
             {consentSaving ? "Menyimpan..." : consentGranted ? "Simpan Izin" : "Tarik Izin"}
           </button>
-          {consentMessage && <p className={styles.muted} style={{ marginTop: 8, color: "#16a34a" }}>{consentMessage}</p>}
+          {consentMessage && <p className={`${styles.muted} ${styles.consentSaved}`}>{consentMessage}</p>}
         </div>
 
         <div className={styles.footer}>Powered by <strong>JUALIN.AI</strong></div>

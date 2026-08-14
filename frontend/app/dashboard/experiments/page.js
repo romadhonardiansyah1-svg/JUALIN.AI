@@ -78,7 +78,7 @@ export default function ExperimentsPage() {
           <div className="card" style={{ padding: 24, maxWidth: 500, width: "90%" }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <h3>📊 {results.experiment?.name}</h3>
-              <button className="btn btn-sm btn-outline" onClick={() => setResults(null)}>✕</button>
+              <button className="btn btn-sm btn-outline" onClick={() => setResults(null)} aria-label="Tutup">✕</button>
             </div>
             <table style={{ width: "100%", marginTop: 12, fontSize: "0.9rem" }}>
               <thead><tr><th>Variant</th><th>Impr.</th><th>Conv.</th><th>Rate</th><th>Revenue</th></tr></thead>

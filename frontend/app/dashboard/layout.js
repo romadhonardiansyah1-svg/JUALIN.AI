@@ -195,7 +195,7 @@ export default function DashboardLayout({ children }) {
               </span>
             </div>
           </div>
-          <button onClick={handleLogout} className={styles.logoutBtn} title="Logout">
+          <button onClick={handleLogout} className={styles.logoutBtn} title="Logout" aria-label="Keluar">
             🚪
           </button>
         </div>
@@ -204,15 +204,17 @@ export default function DashboardLayout({ children }) {
       <main className={styles.mainContent}>
         <header className={styles.topBar}>
           <div className={styles.topBarLeft}>
-            <button className={styles.hamburger} onClick={() => setSidebarOpen(!sidebarOpen)}>
+            <button
+              className={styles.hamburger}
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              aria-label={sidebarOpen ? "Tutup menu" : "Buka menu"}
+              aria-expanded={sidebarOpen}
+            >
               <span></span><span></span><span></span>
             </button>
             <h2 className={styles.pageTitle}>{pageTitle}</h2>
           </div>
           <div className={styles.topBarRight}>
-            <button className={styles.notifBtn}>
-              🔔 <span className={styles.notifBadge}>3</span>
-            </button>
             <div className={`${styles.topAvatar} ${isAdmin ? styles.topAvatarAdmin : ""}`}>
               {user.nama_toko?.charAt(0) || "T"}
             </div>

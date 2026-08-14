@@ -374,6 +374,7 @@ export default function PublicChatPage() {
               type="submit"
               className={styles.sendBtn}
               disabled={sending || !input.trim()}
+              aria-label="Kirim pesan"
             >
               {sending ? "⏳" : "➤"}
             </button>

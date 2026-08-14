@@ -71,7 +71,7 @@ export default function LoginPage() {
                 type="button"
                 className={styles.passwordToggle}
                 onClick={() => setShowPassword(!showPassword)}
-                tabIndex={-1}
+                aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
               >
                 {showPassword ? "🙈" : "👁️"}
               </button>

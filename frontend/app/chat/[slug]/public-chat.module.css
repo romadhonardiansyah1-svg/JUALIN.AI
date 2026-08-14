@@ -58,11 +58,10 @@
   background: rgba(34, 197, 94, 0.12);
   color: var(--primary-dark);
   font-weight: 600;
-  animation: fadeIn 0.3s ease;
 }
 
 .poweredBy {
-  font-size: 0.7rem; color: var(--text-muted);
+  font-size: 0.7rem; color: var(--text-secondary);
 }
 
 .poweredBy strong { color: var(--primary); }
@@ -109,7 +108,7 @@
 
 .bubbleTime {
   display: block; font-size: 0.65rem;
-  margin-top: 4px; opacity: 0.6;
+  margin-top: 4px; color: var(--text-secondary);
   text-align: right;
 }
 
@@ -131,11 +130,6 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 /* Quick Replies */
 .quickReplies {
   padding: 10px 20px;
@@ -148,7 +142,7 @@
   padding: 7px 14px; font-size: 0.8rem;
   background: white; border: 1px solid var(--border);
   border-radius: var(--radius-full); color: var(--primary);
-  cursor: pointer; font-weight: 500;
+  cursor: pointer; font-weight: 500; min-height: 44px;
   transition: all 0.15s;
 }
 
@@ -173,8 +167,8 @@
   transition: border-color 0.2s;
 }
 
-.chatInput:focus { border-color: var(--primary); }
-.chatInput::placeholder { color: var(--text-muted); }
+.chatInput:focus { border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-glow); }
+.chatInput::placeholder { color: var(--text-secondary); }
 
 .sendBtn {
   width: 44px; height: 44px; border-radius: 50%;
@@ -201,7 +195,7 @@
   font-size: 11px;
   font-weight: 600;
   display: inline-block;
-  background: rgba(52, 211, 153, 0.12);
-  border: 1px solid rgba(52, 211, 153, 0.4);
-  color: #34d399;
+  background: var(--primary-light);
+  border: 1px solid var(--primary);
+  color: var(--primary-dark);
 }
