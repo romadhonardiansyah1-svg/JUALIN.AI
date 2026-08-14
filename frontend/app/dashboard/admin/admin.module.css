@@ -1,5 +1,5 @@
 /* Admin Panel */
-.adminPage { animation: fadeIn 0.3s ease; }
+.adminPage { }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
 .header h2 { font-size: 1.3rem; }
 .headerActions { display: flex; gap: 10px; }
@@ -53,7 +53,7 @@
 .tierBar { flex: 1; height: 10px; background: var(--border-light); border-radius: 4px; overflow: hidden; }
 
 /* Loading Skeleton */
-.loadingSkeleton { padding: 0; animation: fadeIn 0.3s ease; }
+.loadingSkeleton { padding: 0; }
 .skelRow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
 .skelCard {
   height: 110px; border-radius: var(--radius-md); 
@@ -68,11 +68,6 @@
   animation: shimmer 1.5s infinite;
 }
 
-@keyframes shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
 @media (max-width: 1024px) { 
   .statsGrid { grid-template-columns: repeat(2, 1fr); } 
   .mainGrid { grid-template-columns: 1fr; } 
@@ -80,3 +75,5 @@
 @media (max-width: 768px) { 
   .statsGrid { grid-template-columns: 1fr 1fr; } 
 }
+
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }

@@ -1,5 +1,5 @@
 /* Analytics Page */
-.analyticsPage { animation: fadeIn 0.3s ease; }
+.analyticsPage { }
 
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
 .header h2 { font-size: 1.3rem; }
@@ -40,7 +40,7 @@
 /* Top Products */
 .topProducts { display: flex; flex-direction: column; gap: 16px; }
 .topProduct { display: flex; align-items: center; gap: 12px; }
-.topRank { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); width: 24px; }
+.topRank { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); width: 24px; }
 .topName { font-size: 0.88rem; font-weight: 500; width: 160px; color: var(--text); }
 .topBarWrap { flex: 1; height: 8px; background: var(--border-light); border-radius: var(--radius-full); overflow: hidden; }
 .topBar { height: 100%; background: linear-gradient(90deg, var(--primary) 0%, #86EFAC 100%); border-radius: var(--radius-full); transition: width 0.5s ease; }

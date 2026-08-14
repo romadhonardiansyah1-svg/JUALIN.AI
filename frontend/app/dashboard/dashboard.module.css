@@ -16,7 +16,6 @@
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(4px);
   z-index: 45;
-  animation: fadeIn 0.2s ease;
 }
 
 /* ── Sidebar ── */
@@ -163,7 +162,6 @@
   height: 6px;
   border-radius: 50%;
   background: var(--primary);
-  animation: pulse-glow 2s infinite;
 }
 
 .navIcon { font-size: 1.15rem; }
@@ -281,36 +279,6 @@
   transition: all 0.2s;
 }
 
-.notifBtn {
-  background: none;
-  border: none;
-  font-size: 1.2rem;
-  cursor: pointer;
-  position: relative;
-  padding: 6px 10px;
-  border-radius: var(--radius);
-  transition: background 0.15s;
-}
-
-.notifBtn:hover { background: var(--bg); }
-
-.notifBadge {
-  position: absolute;
-  top: 1px;
-  right: 3px;
-  background: var(--danger);
-  color: white;
-  font-size: 0.6rem;
-  font-weight: 700;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid white;
-}
-
 .topAvatar {
   width: 36px;
   height: 36px;
@@ -339,7 +307,6 @@
 .content {
   padding: 28px 32px;
   flex: 1;
-  animation: fadeIn 0.3s ease;
 }
 
 /* ── Responsive — Mobile ── */

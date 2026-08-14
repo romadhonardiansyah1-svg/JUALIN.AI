@@ -1,5 +1,5 @@
 /* Settings Page */
-.settingsPage { animation: fadeIn 0.3s ease; max-width: 720px; }
+.settingsPage { max-width: 720px; }
 .title { font-size: 1.3rem; margin-bottom: 24px; }
 .sectionTitle { font-size: 1.05rem; margin-bottom: 20px; }
 .fieldGroup { display: flex; flex-direction: column; gap: 18px; }
@@ -36,4 +36,4 @@
 /* Save Row */
 .saveRow { display: flex; align-items: center; justify-content: flex-end; gap: 16px; padding-top: 8px; }
 .errorText { color: var(--danger); font-size: 0.85rem; font-weight: 500; }
-.savedText { color: var(--success); font-size: 0.85rem; font-weight: 500; animation: fadeIn 0.3s ease; }
+.savedText { color: var(--success); font-size: 0.85rem; font-weight: 500; }
