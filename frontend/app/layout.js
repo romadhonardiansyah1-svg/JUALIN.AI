@@ -9,7 +9,7 @@ const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], display: "swap", variabl
 const sora = Sora({ subsets: ["latin"], display: "swap", variable: "--font-sora" });
 
 export const metadata = {
-  title: "JUALIN.AI — AI Sales Assistant untuk UMKM",
+  title: "JUALIN.AI: Asisten Penjualan untuk UMKM",
   description:
     "Otomasi chat penjualan, proses pesanan, dan follow-up pembayaran dengan AI yang memahami katalog produkmu. Gratis untuk UMKM mikro.",
   keywords: "AI, sales assistant, UMKM, chatbot, jual online, toko online",
@@ -19,14 +19,14 @@ export const metadata = {
 export const viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#6366f1",
+  themeColor: "#22c55e",
 };
 
 export default function RootLayout({ children }) {
   return (
     <html lang="id" className={`${inter.variable} ${jakarta.variable} ${sora.variable}`}>
       <head>
-        <meta name="theme-color" content="#6366f1" />
+        <meta name="theme-color" content="#22c55e" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
         <link rel="manifest" href="/manifest.json" />

@@ -134,7 +134,7 @@ export default function DashboardOverview() {
         <div className={styles.alertBanner}>
           <span className={styles.alertIcon}>⚠️</span>
           <span>
-            <strong>{summary.orders_pending} customer belum bayar</strong> — periksa pesanan menunggu pembayaran
+            <strong>{summary.orders_pending} customer belum bayar</strong>. Periksa pesanan menunggu pembayaran.
           </span>
           <Link href="/dashboard/orders" className={styles.alertLink}>Lihat Order →</Link>
           <Link href="/dashboard/recovery" className={styles.alertLink}>Jualin Santai →</Link>

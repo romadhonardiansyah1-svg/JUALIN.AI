@@ -66,7 +66,7 @@ export default function LandingPage() {
       <nav className={`${styles.navbar} ${isScrolled ? styles.navScrolled : ""}`}>
         <div className={`container ${styles.navContent}`}>
           <Link href="/" className={styles.logo}>
-            <span className={styles.logoIcon}>🤖</span>
+            <span className={styles.logoIcon}>🏪</span>
             <span className={styles.logoText}>JUALIN.AI</span>
           </Link>
           <div className={styles.navLinks}>
@@ -76,7 +76,7 @@ export default function LandingPage() {
           </div>
           <div className={styles.navActions}>
             <Link href="/login" className="btn btn-ghost">Login</Link>
-            <Link href="/register" className="btn btn-primary">Coba Gratis</Link>
+            <Link href="/register" className="btn btn-primary">Buat Toko Gratis</Link>
           </div>
         </div>
       </nav>
@@ -93,20 +93,20 @@ export default function LandingPage() {
             <div className={styles.heroText}>
               <div className={styles.heroBadge}>
                 <span className={styles.badgeDot}></span>
-                🚀 AI-Powered Sales Assistant
+                Asisten Penjualan untuk UMKM
               </div>
               <h1 className={styles.heroTitle}>
                 Otomasi Chat Penjualan
                 <br />
-                <span className={styles.heroHighlight}>dengan AI Cerdas</span>
+                <span className={styles.heroHighlight}>yang Paham Produkmu</span>
               </h1>
               <p className={styles.heroDesc}>
                 JUALIN.AI membantu UMKM melayani customer 24/7, memproses pesanan dari chat,
-                dan follow-up pembayaran secara otomatis — semua dengan AI yang paham produkmu.
+                dan follow-up pembayaran secara otomatis. AI diarahkan menggunakan katalog produkmu.
               </p>
               <div className={styles.heroButtons}>
                 <Link href="/register" className="btn btn-primary btn-lg">
-                  Mulai Gratis →
+                  Buat Toko Gratis
                 </Link>
                 <Link href="/chat/toko-sari-fashion" className="btn btn-outline btn-lg">
                   ▶ Lihat Demo
@@ -125,14 +125,14 @@ export default function LandingPage() {
                     <span className={styles.chatDot}></span>
                     <span>Toko Sari Fashion · Online</span>
                   </div>
-                  <span className={styles.chatBadge}>AI ⚡</span>
+                  <span className={styles.chatBadge}>AI</span>
                 </div>
                 <div className={styles.chatMessages}>
                   <div className="chat-bubble customer">Kak, ada baju buat kondangan?</div>
                   <div className="chat-bubble ai">
                     Hai kak! Ada dong 😊 Kami punya:
-                    <br />1. Baju Pink Satin — <strong>Rp 89.000</strong>
-                    <br />2. Dress Emerald — <strong>Rp 189.000</strong>
+                    <br />1. Baju Pink Satin: <strong>Rp 89.000</strong>
+                    <br />2. Dress Emerald: <strong>Rp 189.000</strong>
                     <br />Mau lihat yang mana?
                   </div>
                   <div className="chat-bubble customer">Yang pink, ada ukuran M?</div>
@@ -146,8 +146,8 @@ export default function LandingPage() {
                   <span className={styles.sendIcon}>➤</span>
                 </div>
               </div>
-              <div className={styles.floatingBadge1}>⚡ Respons Cepat</div>
-              <div className={styles.floatingBadge2}>🛒 Auto Order</div>
+              <div className={styles.floatingBadge1}>Balasan otomatis</div>
+              <div className={styles.floatingBadge2}>Order dari chat</div>
             </div>
           </div>
         </div>
@@ -184,7 +184,7 @@ export default function LandingPage() {
       <section className={styles.features} id="fitur" data-animate>
         <div className={`container ${sectionClass("fitur")}`}>
           <div className={styles.sectionHeader}>
-            <span className={styles.sectionBadge}>✨ Fitur</span>
+            <span className={styles.sectionBadge}>Fitur</span>
             <h2 className={styles.sectionTitle}>Fitur yang Membuat Jualanmu Makin Cerdas</h2>
             <p className={styles.sectionDesc}>
               Semua tools yang dibutuhkan UMKM untuk otomasi penjualan via chat dalam satu platform
@@ -208,25 +208,20 @@ export default function LandingPage() {
       <section className={styles.howItWorks} data-animate id="how">
         <div className={`container ${sectionClass("how")}`}>
           <div className={styles.sectionHeader}>
-            <span className={styles.sectionBadge}>🎯 Cara Kerja</span>
-            <h2 className={styles.sectionTitle}>3 Langkah Mudah</h2>
+            <span className={styles.sectionBadge}>Cara Kerja</span>
+            <h2 className={styles.sectionTitle}>Cara Kerja</h2>
           </div>
           <div className={styles.stepsGrid}>
             <div className={styles.step}>
-              <div className={styles.stepNum}>1</div>
               <h3>Daftar & Input Katalog</h3>
               <p>Buat akun gratis, lalu tambahkan produk, harga, dan stok ke katalog AI kamu.</p>
             </div>
-            <div className={styles.stepArrow}>→</div>
             <div className={styles.step}>
-              <div className={styles.stepNum}>2</div>
-              <h3>Share Link Chat</h3>
+              <h3>Bagikan Link Chat</h3>
               <p>Bagikan link chat AI toko kamu ke customer via Instagram, WhatsApp, atau bio.</p>
             </div>
-            <div className={styles.stepArrow}>→</div>
             <div className={styles.step}>
-              <div className={styles.stepNum}>3</div>
-              <h3>AI Jualan 24/7</h3>
+              <h3>AI Layani & Proses Order</h3>
               <p>AI melayani customer, menjawab pertanyaan, dan memproses pesanan otomatis.</p>
             </div>
           </div>
@@ -237,7 +232,7 @@ export default function LandingPage() {
       <section className={styles.pricing} id="harga" data-animate>
         <div className={`container ${sectionClass("harga")}`}>
           <div className={styles.sectionHeader}>
-            <span className={styles.sectionBadge}>💰 Harga</span>
+            <span className={styles.sectionBadge}>Harga</span>
             <h2 className={styles.sectionTitle}>Harga Terjangkau untuk Semua UMKM</h2>
             <p className={styles.sectionDesc}>
               Mulai gratis, upgrade kapan saja sesuai kebutuhan bisnismu
@@ -246,7 +241,7 @@ export default function LandingPage() {
           <div className={styles.pricingGrid}>
             {pricing.map((p, i) => (
               <div key={i} className={`${styles.pricingCard} ${p.popular ? styles.pricingPopular : ""}`}>
-                {p.popular && <div className={styles.popularBadge}>⭐ Most Popular</div>}
+                {p.popular && <div className={styles.popularBadge}>Terpopuler</div>}
                 <h3 className={styles.pricingName}>{p.name}</h3>
                 <div className={styles.pricingPrice}>
                   <span className={styles.priceAmount}>{p.price}</span>
@@ -260,7 +255,7 @@ export default function LandingPage() {
                   ))}
                 </ul>
                 <Link href="/register" className={`btn ${p.popular ? "btn-primary" : "btn-outline"}`} style={{ width: "100%", marginTop: "auto" }}>
-                  {p.price === "Rp 0" ? "Mulai Gratis" : "Pilih Plan"}
+                  {p.price === "Rp 0" ? "Buat Toko Gratis" : "Pilih Plan"}
                 </Link>
               </div>
             ))}
@@ -272,7 +267,7 @@ export default function LandingPage() {
       <section className={styles.faq} id="faq" data-animate>
         <div className={`container ${sectionClass("faq")}`}>
           <div className={styles.sectionHeader}>
-            <span className={styles.sectionBadge}>❓ FAQ</span>
+            <span className={styles.sectionBadge}>FAQ</span>
             <h2 className={styles.sectionTitle}>Pertanyaan yang Sering Ditanyakan</h2>
           </div>
           <div className={styles.faqList}>
@@ -296,7 +291,7 @@ export default function LandingPage() {
         <div className={styles.ctaBg}></div>
         <div className="container text-center" style={{ position: "relative", zIndex: 1 }}>
           <h2 className={styles.ctaTitle}>Mulai Jual Lebih Cerdas Hari Ini</h2>
-          <p className={styles.ctaDesc}>Daftar gratis dan aktifkan AI Sales Assistant dalam 5 menit</p>
+          <p className={styles.ctaDesc}>Daftar gratis dan aktifkan asisten penjualan toko Anda</p>
           <div className={styles.ctaForm}>
             <input
               type="email"
@@ -307,7 +302,7 @@ export default function LandingPage() {
               style={{ maxWidth: 360 }}
             />
             <Link href={`/register${email ? `?email=${email}` : ""}`} className="btn btn-primary btn-lg">
-              Daftar Gratis →
+              Daftar Gratis
             </Link>
           </div>
           <p className={styles.ctaNote}>Dirancang untuk UMKM Indonesia 🇮🇩</p>
@@ -320,7 +315,7 @@ export default function LandingPage() {
           <div className={styles.footerContent}>
             <div>
               <div className={styles.logo}>
-                <span className={styles.logoIcon}>🤖</span>
+                <span className={styles.logoIcon}>🏪</span>
                 <span className={styles.logoText}>JUALIN.AI</span>
               </div>
               <p className="text-muted text-sm mt-2">AI Sales Assistant untuk UMKM Mikro Indonesia</p>
@@ -331,7 +326,7 @@ export default function LandingPage() {
               <a href="#faq">FAQ</a>
               <Link href="/login">Login</Link>
             </div>
-            <p className="text-muted text-sm">© 2026 Tim Digiboom — GEMASTIK DIGINEXS</p>
+            <p className="text-muted text-sm">© 2026 Tim Digiboom, GEMASTIK DIGINEXS</p>
           </div>
         </div>
       </footer>

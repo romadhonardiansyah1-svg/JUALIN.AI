@@ -42,10 +42,10 @@ export default function AnalyticsPage() {
   }, []);
 
   const metrics = [
-    { label: "Total Chat Bulan Ini", value: summary?.chat_today?.toLocaleString() || "0", change: "+18%", border: "var(--primary)", bg: "var(--stat-green-bg)", icon: "💬" },
-    { label: "Total Order", value: summary?.orders_today?.toLocaleString() || "0", change: "+12%", border: "var(--secondary)", bg: "var(--stat-blue-bg)", icon: "🛒" },
-    { label: "Revenue", value: `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)} Jt`, change: "+23%", border: "var(--tertiary)", bg: "var(--stat-purple-bg)", icon: "💰" },
-    { label: "Conversion Rate", value: summary ? `${summary.orders_today && summary.chat_today ? Math.round(summary.orders_today / summary.chat_today * 100) : 0}%` : "0%", change: "+5%", border: "var(--stat-orange)", bg: "var(--stat-orange-bg)", icon: "🎯" },
+    { label: "Total Chat Bulan Ini", value: summary?.chat_today?.toLocaleString() || "0", border: "var(--primary)", bg: "var(--stat-green-bg)", icon: "💬" },
+    { label: "Total Order", value: summary?.orders_today?.toLocaleString() || "0", border: "var(--secondary)", bg: "var(--stat-blue-bg)", icon: "🛒" },
+    { label: "Revenue", value: `Rp ${((summary?.revenue_today || 0) / 1000000).toFixed(1)} Jt`, border: "var(--tertiary)", bg: "var(--stat-purple-bg)", icon: "💰" },
+    { label: "Conversion Rate", value: summary ? `${summary.orders_today && summary.chat_today ? Math.round(summary.orders_today / summary.chat_today * 100) : 0}%` : "0%", border: "var(--stat-orange)", bg: "var(--stat-orange-bg)", icon: "🎯" },
   ];
 
   const maxProduct = topProducts.length > 0 ? Math.max(...topProducts.map(p => p.count)) : 1;
@@ -69,7 +69,6 @@ export default function AnalyticsPage() {
               <span className={styles.metricIcon}>{m.icon}</span>
             </div>
             <div className={styles.metricValue}>{m.value}</div>
-            <div className={styles.metricChange}>↑ {m.change} dari bulan lalu</div>
           </div>
         ))}
       </div>
@@ -110,7 +109,7 @@ export default function AnalyticsPage() {
             <div className={styles.aiStatItem}>
               <span className={styles.aiStatIcon}>⏱️</span>
               <div>
-                <div className={styles.aiStatValue}>{summary?.avg_response_time || 3} detik</div>
+                <div className={styles.aiStatValue}>{summary?.avg_response_time != null ? `${summary.avg_response_time} detik` : "—"}</div>
                 <div className={styles.aiStatLabel}>Rata-rata Respons</div>
               </div>
             </div>
