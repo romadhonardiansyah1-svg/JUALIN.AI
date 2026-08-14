@@ -52,7 +52,7 @@ export class ErrorBoundary extends Component {
             type="button"
             onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
             style={{
-              padding: "10px 24px", background: "#6366F1", color: "white",
+              padding: "10px 24px", background: "#16A34A", color: "white",
               border: "none", borderRadius: "8px", cursor: "pointer",
               fontSize: "0.95rem", fontWeight: 600,
             }}

@@ -1,5 +1,5 @@
 /* Products Page */
-.productsPage { animation: fadeIn 0.3s ease; }
+.productsPage { }
 .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }
 .title { font-size: 1.3rem; }
 .headerActions { display: flex; gap: 12px; align-items: center; }
@@ -35,7 +35,7 @@
 .productImageIcon { font-size: 2.5rem; opacity: 0.3; }
 
 .uploadHint {
-  font-size: 0.75rem; color: var(--text-muted); font-weight: 500;
+  font-size: 0.75rem; color: var(--text-secondary); font-weight: 500;
   opacity: 0; transition: opacity 0.2s;
 }
 .productImage:hover .uploadHint { opacity: 1; }
@@ -52,11 +52,6 @@
   color: white; font-size: 0.85rem; font-weight: 600;
 }
 .productImage:hover .imageOverlay { opacity: 1; }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
 
 .productInfo { padding: 16px; }
 .productName { font-size: 0.95rem; font-weight: 600; margin: 8px 0 6px; color: var(--text); }
@@ -75,7 +70,6 @@
 .modalOverlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000;
   display: flex; align-items: center; justify-content: center; padding: 24px;
-  animation: fadeIn 0.2s ease;
 }
 .modal {
   background: white; border-radius: var(--radius-lg); padding: 32px;
@@ -89,3 +83,5 @@
 
 @media (max-width: 1024px) { .productGrid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 768px) { .productGrid { grid-template-columns: repeat(2, 1fr); } .header { flex-direction: column; gap: 16px; } }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }

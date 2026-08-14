@@ -21,7 +21,7 @@
   cursor: pointer; transition: all 0.2s; text-align: center; background: var(--bg);
 }
 .sourceCard:hover { border-color: var(--primary); transform: translateY(-2px); }
-.sourceCard.selected { border-color: var(--primary); background: rgba(99,102,241,0.08); }
+.sourceCard.selected { border-color: var(--primary); background: var(--primary-light); }
 .sourceIcon { font-size: 1.5rem; }
 .sourceName { font-size: 0.85rem; font-weight: 600; }
 .sourceDesc { font-size: 0.7rem; color: var(--text-secondary); }
@@ -43,7 +43,7 @@
 .tableHeader { font-weight: 600; font-size: 0.8rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); }
 .tableRow { border-bottom: 1px solid var(--border); font-size: 0.9rem; }
 .tableRow:last-child { border-bottom: none; }
-.badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 6px; background: rgba(99,102,241,0.1); color: var(--primary); font-weight: 600; }
+.badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 6px; background: var(--primary-light); color: var(--primary-dark); font-weight: 600; }
 .num { font-weight: 600; }
 .copiedBtn { background: var(--success) !important; color: white !important; border-color: var(--success) !important; }
 .errorBox {

@@ -13,7 +13,7 @@
 }
 .progressStep.active .progressDot {
   background: var(--primary); color: #fff; border-color: var(--primary);
-  box-shadow: 0 0 0 4px rgba(99,102,241,0.2);
+  box-shadow: 0 0 0 4px var(--primary-glow);
 }
 .progressStep.done .progressDot {
   background: var(--success); color: #fff; border-color: var(--success);
@@ -48,7 +48,7 @@
   background: var(--bg); color: var(--text); font-size: 0.95rem; transition: border-color 0.2s;
 }
 .formInput:focus, .formSelect:focus, .formTextarea:focus {
-  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-glow);
 }
 .formTextarea { min-height: 80px; resize: vertical; }
 
@@ -61,7 +61,7 @@
   cursor: pointer; transition: all 0.2s; text-align: center; background: var(--bg);
 }
 .nicheCard:hover { border-color: var(--primary); transform: translateY(-2px); }
-.nicheCard.selected { border-color: var(--primary); background: rgba(99,102,241,0.08); }
+.nicheCard.selected { border-color: var(--primary); background: var(--primary-light); }
 .nicheIcon { font-size: 1.5rem; }
 .nicheName { font-size: 0.8rem; font-weight: 600; color: var(--text); }
 
@@ -73,7 +73,7 @@
   cursor: pointer; transition: all 0.2s; text-align: center; background: var(--bg);
 }
 .toneCard:hover { border-color: var(--primary); }
-.toneCard.selected { border-color: var(--primary); background: rgba(99,102,241,0.08); }
+.toneCard.selected { border-color: var(--primary); background: var(--primary-light); }
 .toneEmoji { font-size: 2rem; }
 .toneName { font-size: 0.9rem; font-weight: 700; }
 .toneDesc { font-size: 0.75rem; color: var(--text-secondary); }

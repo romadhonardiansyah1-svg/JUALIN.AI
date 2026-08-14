@@ -78,7 +78,7 @@ export default function OnboardingPage() {
         }}>
           <div style={{
             width: `${progress}%`, height: "100%",
-            background: "linear-gradient(90deg, #6366f1, #22c55e)",
+            background: "linear-gradient(90deg, #22c55e, #16a34a)",
             borderRadius: 12, transition: "width 0.5s ease",
           }} />
         </div>
@@ -102,7 +102,7 @@ export default function OnboardingPage() {
           return (
             <div key={step.key} className="card" style={{
               padding: "16px 20px",
-              border: isCurrent ? "2px solid #6366f1" : "1px solid var(--border, #334155)",
+              border: isCurrent ? "2px solid var(--primary)" : "1px solid var(--border, #334155)",
               opacity: done ? 0.7 : 1,
               transition: "all 0.3s ease",
             }}>

@@ -4,8 +4,7 @@
 .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-top: 0.25rem; }
 
 /* Wizard */
-.wizardCard { animation: fadeIn 0.3s ease; }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+.wizardCard { }
 .purposeGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.75rem; margin-top: 1rem; }
 @media (min-width: 640px) { .purposeGrid { grid-template-columns: repeat(4, 1fr); } }
 .purposeCard {
@@ -14,7 +13,7 @@
   cursor: pointer; transition: all 0.2s; text-align: center; background: var(--bg);
 }
 .purposeCard:hover { border-color: var(--primary); transform: translateY(-2px); }
-.purposeCard.selected { border-color: var(--primary); background: rgba(99,102,241,0.08); }
+.purposeCard.selected { border-color: var(--primary); background: var(--primary-light); }
 .purposeIcon { font-size: 1.5rem; }
 .purposeName { font-size: 0.85rem; font-weight: 600; }
 .purposeDesc { font-size: 0.7rem; color: var(--text-secondary); }
@@ -45,7 +44,7 @@
 .variableList h4 { font-size: 0.85rem; margin-bottom: 0.5rem; }
 .variableTag {
   display: inline-block; padding: 0.25rem 0.5rem; margin: 0.25rem;
-  background: rgba(99,102,241,0.1); color: var(--primary); border-radius: 6px; font-size: 0.8rem; font-family: monospace;
+  background: var(--primary-light); color: var(--primary-dark); border-radius: 6px; font-size: 0.8rem; font-family: monospace;
 }
 
 /* Template List */
